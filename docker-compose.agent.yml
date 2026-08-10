@@ -1,0 +1,35 @@
+# CitadelPanel Bun node backend — deploy this on every machine that runs game servers.
+#
+# The Bun backend owns this node's Docker daemon and server data. The Next.js
+# control plane reaches it with a bearer token and never touches Docker itself.
+#
+# SECURITY: AGENT_TOKEN is root-equivalent for this host — the agent drives the
+# Docker socket, and a container can be given any mount the agent allows. Treat
+# it like a root password:
+#   - never expose port 8081 to the public internet;
+#   - keep the agent on a private network, or put TLS in front of it;
+#   - generate the token with: openssl rand -base64 48
+#
+# Register the node afterwards from the panel's first-run setup or admin UI.
+
+services:
+  backend:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    # Or, once published:
+    # image: ghcr.io/your-org/citadel-agent:latest
+    restart: unless-stopped
+    environment:
+      NODE_TOKEN: ${AGENT_TOKEN:?AGENT_TOKEN is required}
+      AGENT_PORT: 8081
+      SERVER_DATA_ROOT: /var/lib/citadel/servers
+    ports:
+      # Bind to a private interface in production, e.g. "10.0.0.5:8081:8081".
+      - "8081:8081"
+    volumes:
+      # The daemon this agent manages. This is why the token matters so much.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Server data. A host bind (not a named volume) so the path the agent
+      # reports is the same path the daemon bind-mounts into game containers.
+      - /var/lib/citadel/servers:/var/lib/citadel/servers

@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Environment / secrets — never commit these
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+
+# Per-server game data (worlds, plugins) — large and machine-local
+data/
+
+# Build output
+.next/
+out/
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+bun-debug.log*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

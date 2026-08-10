@@ -1,0 +1,83 @@
+# CitadelPanel control plane and one local Docker node.
+#
+# Next.js is the only public web service and owns auth, users, setup, PostgreSQL
+# metadata, and all browser-facing APIs. The Bun backend is a node-only service:
+# it owns Docker and server files and is reachable only from Next.js.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-citadel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-citadel}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - panel_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-citadel}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-citadel}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-citadel}
+      PANEL_ENCRYPTION_KEY: ${PANEL_ENCRYPTION_KEY:?PANEL_ENCRYPTION_KEY is required}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      FIRST_USER_BECOMES_ADMIN: ${FIRST_USER_BECOMES_ADMIN:-true}
+      NODE_API_TIMEOUT_MS: ${NODE_API_TIMEOUT_MS:-15000}
+      WATCHER_INTERVAL_SECONDS: ${WATCHER_INTERVAL_SECONDS:-60}
+      SUSPICION_FLAG_THRESHOLD: ${SUSPICION_FLAG_THRESHOLD:-60}
+      SUSPICION_AUTO_SUSPEND: ${SUSPICION_AUTO_SUSPEND:-false}
+      SUSPICION_AUTO_SUSPEND_THRESHOLD: ${SUSPICION_AUTO_SUSPEND_THRESHOLD:-115}
+    ports:
+      - "3000:3000"
+    networks:
+      - panel_net
+      - node_net
+
+  backend:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_TOKEN: ${AGENT_TOKEN:?AGENT_TOKEN is required}
+      AGENT_PORT: 8081
+      SERVER_DATA_ROOT: /var/lib/citadel/servers
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/citadel/servers:/var/lib/citadel/servers
+    networks:
+      node_net:
+        aliases:
+          - agent
+    healthcheck:
+      test: ["CMD", "bun", "--eval", "await fetch('http://localhost:8081/v1/health', { headers: { authorization: 'Bearer ' + process.env.NODE_TOKEN } }).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  panel_net:
+    driver: bridge
+  node_net:
+    driver: bridge
+
+volumes:
+  postgres_data:

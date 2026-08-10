@@ -1,0 +1,16 @@
+{
+  "name": "citadelpanel",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:backend": "bun run --cwd apps/backend dev",
+    "dev:frontend": "bun run --cwd apps/frontend dev",
+    "test": "bun run --cwd apps/backend test",
+    "typecheck": "bun run --cwd apps/backend typecheck && bun run --cwd apps/frontend typecheck",
+    "setup": "bun run --cwd apps/frontend setup",
+    "compose:up": "docker compose up -d --build",
+    "compose:down": "docker compose down"
+  }
+}
