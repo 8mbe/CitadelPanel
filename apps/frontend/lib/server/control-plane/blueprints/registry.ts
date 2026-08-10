@@ -1,0 +1,217 @@
+/**
+ * Blueprint registry.
+ *
+ * Two roles:
+ *  1. Holds the built-in blueprints defined in code, and syncs them into the
+ *     `blueprints` table on boot (`syncBlueprintsToDatabase`).
+ *  2. Reads blueprints back OUT of the database (`getBlueprintByKey` etc.).
+ *
+ * The database is the source of truth at run time: the create flow, the abuse
+ * watcher and the admin routes all read from it, so an admin-created blueprint
+ * (is_builtin = false) behaves exactly like a shipped one. Code only seeds the
+ * built-ins; it is not consulted when resolving a blueprint for a server.
+ */
+
+import { sql } from "../db/client";
+import { minecraftBedrock } from "./definitions/minecraft-bedrock";
+import { minecraftJava } from "./definitions/minecraft-java";
+import type {
+  Blueprint,
+  BlueprintEnvField,
+  BlueprintInstall,
+  BlueprintPort,
+  ResourceProfile,
+} from "./types";
+
+/** Every blueprint the panel ships. Add new built-in games here. */
+export const BUILT_IN_BLUEPRINTS: readonly Blueprint[] = [
+  minecraftJava,
+  minecraftBedrock,
+];
+
+/** The row shape of the `blueprints` table. */
+interface BlueprintRow {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  docker_image: string;
+  default_ports: BlueprintPort[];
+  env_schema: Record<string, BlueprintEnvField>;
+  startup_command: string | null;
+  stop_command: string | null;
+  install_image: string | null;
+  install_script: string | null;
+  install_entrypoint: string[] | null;
+  data_path: string;
+  min_cpu: string | number;
+  min_memory_mb: number;
+  min_disk_mb: number;
+  supports_readonly_root: boolean;
+  expected_resource_profile: ResourceProfile;
+  run_as: string | null;
+}
+
+/** Reconstruct a full {@link Blueprint} from a database row. */
+function rowToBlueprint(row: BlueprintRow): Blueprint {
+  const install: BlueprintInstall | undefined =
+    row.install_image && row.install_script
+      ? {
+          image: row.install_image,
+          script: row.install_script,
+          ...(row.install_entrypoint
+            ? { entrypoint: row.install_entrypoint }
+            : {}),
+        }
+      : undefined;
+
+  return {
+    key: row.key,
+    name: row.name,
+    ...(row.description ? { description: row.description } : {}),
+    dockerImage: row.docker_image,
+    defaultPorts: row.default_ports,
+    envSchema: row.env_schema,
+    ...(row.startup_command ? { startupCommand: row.startup_command } : {}),
+    ...(row.stop_command ? { stopCommand: row.stop_command } : {}),
+    ...(install ? { install } : {}),
+    expectedResourceProfile: row.expected_resource_profile,
+    dataPath: row.data_path,
+    minimums: {
+      cpuLimit: Number(row.min_cpu),
+      memoryLimitMb: row.min_memory_mb,
+      diskLimitMb: row.min_disk_mb,
+    },
+    supportsReadOnlyRoot: row.supports_readonly_root,
+    ...(row.run_as ? { user: row.run_as } : {}),
+  };
+}
+
+const BLUEPRINT_COLUMNS = sql`
+  id, key, name, description, docker_image, default_ports, env_schema,
+  startup_command, stop_command, install_image, install_script,
+  install_entrypoint, data_path, min_cpu, min_memory_mb, min_disk_mb,
+  supports_readonly_root, expected_resource_profile, run_as
+`;
+
+/**
+ * Upsert every code-defined built-in blueprint into the database.
+ *
+ * Idempotent, and safe to run on every boot: `key` is unique, so an existing
+ * row is updated in place and any `servers.blueprint_id` referencing it stays
+ * valid. Only built-in rows are written here — admin-created blueprints
+ * (is_builtin = false) are never touched. Built-ins removed from code are
+ * deliberately NOT deleted, because existing servers may still reference them.
+ */
+export async function syncBlueprintsToDatabase(): Promise<void> {
+  for (const bp of BUILT_IN_BLUEPRINTS) {
+    await sql`
+      INSERT INTO blueprints (
+        key, name, description, docker_image, default_ports, env_schema,
+        startup_command, stop_command, install_image, install_script,
+        install_entrypoint, data_path, min_cpu, min_memory_mb, min_disk_mb,
+        supports_readonly_root, expected_resource_profile, run_as, is_builtin, updated_at
+      ) VALUES (
+        ${bp.key},
+        ${bp.name},
+        ${bp.description ?? null},
+        ${bp.dockerImage},
+        ${sql.json(bp.defaultPorts as never)},
+        ${sql.json(bp.envSchema as never)},
+        ${bp.startupCommand ?? null},
+        ${bp.stopCommand ?? null},
+        ${bp.install?.image ?? null},
+        ${bp.install?.script ?? null},
+        ${bp.install?.entrypoint ? sql.json(bp.install.entrypoint as never) : null},
+        ${bp.dataPath},
+        ${bp.minimums.cpuLimit},
+        ${bp.minimums.memoryLimitMb},
+        ${bp.minimums.diskLimitMb},
+        ${bp.supportsReadOnlyRoot === true},
+        ${bp.expectedResourceProfile},
+        ${bp.user ?? null},
+        TRUE,
+        now()
+      )
+      ON CONFLICT (key) DO UPDATE SET
+        name                   = EXCLUDED.name,
+        description            = EXCLUDED.description,
+        docker_image           = EXCLUDED.docker_image,
+        default_ports          = EXCLUDED.default_ports,
+        env_schema             = EXCLUDED.env_schema,
+        startup_command        = EXCLUDED.startup_command,
+        stop_command           = EXCLUDED.stop_command,
+        install_image          = EXCLUDED.install_image,
+        install_script         = EXCLUDED.install_script,
+        install_entrypoint     = EXCLUDED.install_entrypoint,
+        data_path              = EXCLUDED.data_path,
+        min_cpu                = EXCLUDED.min_cpu,
+        min_memory_mb          = EXCLUDED.min_memory_mb,
+        min_disk_mb            = EXCLUDED.min_disk_mb,
+        supports_readonly_root = EXCLUDED.supports_readonly_root,
+        expected_resource_profile = EXCLUDED.expected_resource_profile,
+        run_as                 = EXCLUDED.run_as,
+        is_builtin             = TRUE,
+        updated_at             = now()
+    `;
+  }
+
+  console.log(
+    `[blueprints] synced ${BUILT_IN_BLUEPRINTS.length} built-in blueprint(s) to database`,
+  );
+}
+
+/** Every blueprint in the database, built-in and custom, by name. */
+export async function listBlueprints(): Promise<Blueprint[]> {
+  const rows = (await sql`
+    SELECT ${BLUEPRINT_COLUMNS} FROM blueprints ORDER BY name ASC
+  `) as BlueprintRow[];
+  return rows.map(rowToBlueprint);
+}
+
+/** Resolve a full blueprint by its stable key, or null when unknown. */
+export async function getBlueprintByKey(key: string): Promise<Blueprint | null> {
+  const rows = (await sql`
+    SELECT ${BLUEPRINT_COLUMNS} FROM blueprints WHERE key = ${key}
+  `) as BlueprintRow[];
+  return rows[0] ? rowToBlueprint(rows[0]) : null;
+}
+
+/** Resolve a full blueprint by database id, or null when unknown. */
+export async function getBlueprintById(id: string): Promise<Blueprint | null> {
+  const rows = (await sql`
+    SELECT ${BLUEPRINT_COLUMNS} FROM blueprints WHERE id = ${id}
+  `) as BlueprintRow[];
+  return rows[0] ? rowToBlueprint(rows[0]) : null;
+}
+
+/** Look up the database id for a blueprint key. */
+export async function getBlueprintIdByKey(key: string): Promise<string | null> {
+  const rows = (await sql`
+    SELECT id FROM blueprints WHERE key = ${key}
+  `) as { id: string }[];
+  return rows[0]?.id ?? null;
+}
+
+/** Look up the blueprint key for a database id, for reverse resolution. */
+export async function getBlueprintKeyById(id: string): Promise<string | null> {
+  const rows = (await sql`
+    SELECT key FROM blueprints WHERE id = ${id}
+  `) as { key: string }[];
+  return rows[0]?.key ?? null;
+}
+
+/**
+ * The expected resource profile for a blueprint id, defaulting to "bursty".
+ *
+ * Read directly rather than via {@link getBlueprintById} because the abuse
+ * watcher only needs this one field per server on every sweep.
+ */
+export async function getResourceProfileById(
+  id: string,
+): Promise<ResourceProfile> {
+  const rows = (await sql`
+    SELECT expected_resource_profile FROM blueprints WHERE id = ${id}
+  `) as { expected_resource_profile: ResourceProfile }[];
+  return rows[0]?.expected_resource_profile ?? "bursty";
+}

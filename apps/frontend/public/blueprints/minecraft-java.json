@@ -1,0 +1,63 @@
+{
+  "key": "minecraft-java",
+  "name": "Minecraft: Java Edition",
+  "description": "Vanilla, Paper, Purpur, Fabric, Forge or Spigot via the itzg image. Type and version are selected with environment variables.",
+  "dockerImage": "itzg/minecraft-server:latest",
+  "dataPath": "/data",
+  "expectedResourceProfile": "bursty",
+  "supportsReadOnlyRoot": false,
+  "startupCommand": null,
+  "stopCommand": "stop",
+  "defaultPorts": [
+    { "container": 25565, "protocol": "tcp", "primary": true }
+  ],
+  "envSchema": {
+    "EULA": {
+      "required": true,
+      "default": "TRUE",
+      "description": "Accept the Minecraft EULA"
+    },
+    "TYPE": {
+      "required": false,
+      "default": "PAPER",
+      "description": "Server software",
+      "options": ["VANILLA", "PAPER", "PURPUR", "FABRIC", "FORGE", "SPIGOT"]
+    },
+    "VERSION": {
+      "required": false,
+      "default": "LATEST",
+      "description": "Minecraft version, or LATEST"
+    },
+    "MEMORY": {
+      "required": false,
+      "description": "JVM heap size (e.g. 2G). Derived from the server's memory limit when unset."
+    },
+    "MOTD": {
+      "required": false,
+      "default": "A CitadelPanel server",
+      "description": "Message of the day shown in the server list"
+    },
+    "DIFFICULTY": {
+      "required": false,
+      "default": "normal",
+      "options": ["peaceful", "easy", "normal", "hard"]
+    },
+    "MAX_PLAYERS": {
+      "required": false,
+      "default": "20",
+      "description": "Maximum concurrent players"
+    },
+    "ONLINE_MODE": {
+      "required": false,
+      "default": "TRUE",
+      "options": ["TRUE", "FALSE"],
+      "description": "Verify players against Mojang auth. Disabling allows cracked clients."
+    }
+  },
+  "install": null,
+  "minimums": {
+    "cpuLimit": 0.5,
+    "memoryLimitMb": 1024,
+    "diskLimitMb": 2048
+  }
+}

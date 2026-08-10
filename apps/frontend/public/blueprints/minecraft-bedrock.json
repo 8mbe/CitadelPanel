@@ -1,0 +1,63 @@
+{
+  "key": "minecraft-bedrock",
+  "name": "Minecraft: Bedrock Edition",
+  "description": "Bedrock dedicated server (itzg image). Connects over UDP; version and gameplay options are set with environment variables.",
+  "dockerImage": "itzg/minecraft-bedrock-server:latest",
+  "dataPath": "/data",
+  "expectedResourceProfile": "bursty",
+  "supportsReadOnlyRoot": false,
+  "startupCommand": null,
+  "stopCommand": null,
+  "defaultPorts": [
+    { "container": 19132, "protocol": "udp", "primary": true }
+  ],
+  "envSchema": {
+    "EULA": {
+      "required": true,
+      "default": "TRUE",
+      "description": "Accept the Minecraft EULA"
+    },
+    "VERSION": {
+      "required": false,
+      "default": "LATEST",
+      "description": "Bedrock server version, or LATEST"
+    },
+    "SERVER_NAME": {
+      "required": false,
+      "default": "CitadelPanel Server",
+      "description": "Name shown in the server list"
+    },
+    "GAMEMODE": {
+      "required": false,
+      "default": "survival",
+      "options": ["survival", "creative", "adventure"]
+    },
+    "DIFFICULTY": {
+      "required": false,
+      "default": "normal",
+      "options": ["peaceful", "easy", "normal", "hard"]
+    },
+    "MAX_PLAYERS": {
+      "required": false,
+      "default": "10",
+      "description": "Maximum concurrent players"
+    },
+    "ONLINE_MODE": {
+      "required": false,
+      "default": "true",
+      "options": ["true", "false"],
+      "description": "Require Xbox Live authentication"
+    },
+    "ALLOW_CHEATS": {
+      "required": false,
+      "default": "false",
+      "options": ["true", "false"]
+    }
+  },
+  "install": null,
+  "minimums": {
+    "cpuLimit": 0.5,
+    "memoryLimitMb": 512,
+    "diskLimitMb": 1024
+  }
+}

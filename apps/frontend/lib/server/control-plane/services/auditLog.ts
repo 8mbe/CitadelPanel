@@ -1,0 +1,135 @@
+/**
+ * Audit logging (plan.md section 4).
+ *
+ * Every state-changing action gets a row. Audit writes must never break the
+ * operation they are recording, so failures are logged and swallowed rather
+ * than propagated — a lost log line is preferable to a failed server start.
+ */
+
+import { sql } from "../db/client";
+import { clientIp } from "../lib/http";
+
+/** Canonical action names. Kept as a union so typos fail at compile time. */
+export type AuditAction =
+  | "server.create"
+  | "server.start"
+  | "server.stop"
+  | "server.restart"
+  | "server.kill"
+  | "server.delete"
+  | "server.suspend"
+  | "server.unsuspend"
+  | "server.env.update"
+  | "server.resources.update"
+  | "server.console.command"
+  | "server.file.write"
+  | "server.file.delete"
+  | "subuser.invite"
+  | "subuser.update"
+  | "subuser.remove"
+  | "database.create"
+  | "database.delete"
+  | "node.create"
+  | "node.update"
+  | "node.delete"
+  | "node.drain"
+  | "node.portpool.add"
+  | "node.portpool.delete"
+  | "blueprint.create"
+  | "blueprint.update"
+  | "blueprint.delete"
+  | "suspicious.review"
+  | "suspicious.flag"
+  | "user.role.update"
+  | "user.ban"
+  | "user.unban"
+  | "user.delete"
+  | "setup.admin.create"
+  | "setup.complete"
+  | "settings.update";
+
+export type AuditTargetType =
+  | "server"
+  | "node"
+  | "user"
+  | "subuser"
+  | "database"
+  | "blueprint"
+  | "suspicious_activity"
+  | "settings";
+
+export interface AuditEntry {
+  userId?: string | null;
+  action: AuditAction;
+  targetType?: AuditTargetType;
+  targetId?: string;
+  ip?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Write an audit row.
+ *
+ * Metadata should describe *what changed*, never *secret values* — callers must
+ * not put passwords, tokens or TLS keys in here.
+ */
+export async function recordAudit(entry: AuditEntry): Promise<void> {
+  try {
+    await sql`
+      INSERT INTO audit_logs (user_id, action, target_type, target_id, ip, metadata)
+      VALUES (
+        ${entry.userId ?? null},
+        ${entry.action},
+        ${entry.targetType ?? null},
+        ${entry.targetId ?? null},
+        ${entry.ip ?? null},
+        ${sql.json((entry.metadata ?? {}) as never)}
+      )
+    `;
+  } catch (error) {
+    console.error("[audit] failed to write audit entry:", entry.action, error);
+  }
+}
+
+/** Convenience wrapper that extracts the client IP from a request. */
+export async function recordAuditFromRequest(
+  request: Request,
+  entry: Omit<AuditEntry, "ip">,
+): Promise<void> {
+  await recordAudit({ ...entry, ip: clientIp(request) });
+}
+
+export interface AuditLogRow {
+  id: string;
+  user_id: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  ip: string | null;
+  metadata: Record<string, unknown>;
+  created_at: Date;
+}
+
+/** Read recent audit entries, optionally filtered to one target. */
+export async function listAuditLogs(options: {
+  limit?: number;
+  targetType?: AuditTargetType;
+  targetId?: string;
+}): Promise<AuditLogRow[]> {
+  const limit = Math.min(options.limit ?? 100, 500);
+
+  if (options.targetType && options.targetId) {
+    return (await sql`
+      SELECT * FROM audit_logs
+      WHERE target_type = ${options.targetType} AND target_id = ${options.targetId}
+      ORDER BY created_at DESC
+      LIMIT ${limit}
+    `) as AuditLogRow[];
+  }
+
+  return (await sql`
+    SELECT * FROM audit_logs
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `) as AuditLogRow[];
+}
