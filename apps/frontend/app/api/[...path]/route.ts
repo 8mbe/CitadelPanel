@@ -133,6 +133,12 @@ const patterns: Array<{
   { pattern: /^servers\/([^/]+)\/env$/, methods: { GET: handleGetServerEnv, PATCH: handleUpdateServerEnv } },
   { pattern: /^servers\/([^/]+)\/links$/, methods: { GET: handleListServerLinks, POST: handleCreateServerLink } },
   { pattern: /^servers\/([^/]+)\/links\/([^/]+)$/, methods: { DELETE: handleRemoveServerLink } },
+  { pattern: /^servers\/([^/]+)\/databases$/, methods: { GET: handleListServerDatabases, POST: handleAddServerDatabase } },
+  // `reset-password` must be matched before the `:databaseId` pattern, otherwise
+  // POST /databases/<id>/reset-password matches the DELETE-only database route
+  // and returns 405.
+  { pattern: /^servers\/([^/]+)\/databases\/([^/]+)\/reset-password$/, methods: { POST: handleResetServerDatabasePassword } },
+  { pattern: /^servers\/([^/]+)\/databases\/([^/]+)$/, methods: { DELETE: handleRemoveServerDatabase } },
   { pattern: /^servers\/([^/]+)\/command$/, methods: { POST: handleConsoleCommand } },
   { pattern: /^servers\/([^/]+)\/console\/session$/, methods: { POST: handleConsoleSession } },
   { pattern: /^servers\/([^/]+)\/console\/revoke$/, methods: { POST: handleConsoleRevoke } },

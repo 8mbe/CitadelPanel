@@ -83,6 +83,13 @@ export const config = {
    * callbacks. Empty string disables the browser-direct console (the WS path
    * returns 503); the panel→agent lifecycle routes are unaffected either way.
    */
+  nodeDbNetwork: optional("NODE_DB_NETWORK", "node_db_net"),
+
+  /**
+   * The MariaDB container name on the node DB network. The agent execs SQL
+   * inside this container and resolves its IP to report back to the panel.
+   */
+  nodeDbContainer: optional("NODE_DB_CONTAINER", "citadel-node-db"),
 } as const;
 
 export type AgentConfig = typeof config;

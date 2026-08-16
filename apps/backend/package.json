@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "bun --hot src/server.ts",
     "start": "bun run src/server.ts",
+    "setup-db": "bun run scripts/setup-node-db.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/archiver": "^8.0.0",
     "@types/bun": "latest",
     "@types/dockerode": "^4.0.1"
   },

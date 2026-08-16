@@ -77,6 +77,11 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
   const [memReserve, setMemReserve] = React.useState("0");
   const [diskReserve, setDiskReserve] = React.useState("0");
   const [overcommit, setOvercommit] = React.useState(false);
+  const [enableDb, setEnableDb] = React.useState(false);
+  const [dbHost, setDbHost] = React.useState("");
+  const [dbPort, setDbPort] = React.useState("3306");
+  const [dbUser, setDbUser] = React.useState("root");
+  const [dbPassword, setDbPassword] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<{
@@ -111,6 +116,11 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
     setMemReserve("0");
     setDiskReserve("0");
     setOvercommit(false);
+    setEnableDb(false);
+    setDbHost("");
+    setDbPort("3306");
+    setDbUser("root");
+    setDbPassword("");
     setError(null);
     setResult(null);
     setProbe(null);
@@ -170,6 +180,14 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
         memoryReservePct: Number(memReserve) || 0,
         diskReservePct: Number(diskReserve) || 0,
         allowOvercommit: overcommit,
+        ...(enableDb && dbHost.trim() && dbUser.trim() && dbPassword
+          ? {
+              dbAdminHost: dbHost.trim(),
+              dbAdminPort: Number(dbPort) || 3306,
+              dbAdminUser: dbUser.trim(),
+              dbAdminPassword: dbPassword,
+            }
+          : {}),
       });
       setResult({
         token: response.token,
@@ -196,7 +214,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
         <Plus />
         Add node
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md">
         {result ? (
           <>
             <DialogHeader>
@@ -273,6 +291,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                     that machine.
                   </FieldDescription>
                 </Field>
+                <Field>
                 <Field>
                   <FieldLabel htmlFor="node-token">Agent token</FieldLabel>
                   <Input
@@ -365,6 +384,74 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                     for nodes that intentionally oversubscribe.
                   </FieldDescription>
                 </Field>
+                    <FieldLabel htmlFor="node-enable-db" className="font-normal">
+                      Set up a shared database
+                    </FieldLabel>
+                    <FieldDescription>
+                      Run <code className="font-mono">bun run setup-db</code> on
+                      the node first, then enter the credentials it prints. This
+                      is a one-time step — enables database provisioning for all
+                      servers on this node.
+                    </FieldDescription>
+                  </div>
+                  <Switch
+                    id="node-enable-db"
+                    checked={enableDb}
+                    onCheckedChange={setEnableDb}
+                  />
+                </Field>
+                {enableDb && (
+                  <>
+                    <Field>
+                      <FieldLabel htmlFor="node-db-host">DB admin host</FieldLabel>
+                      <Input
+                        id="node-db-host"
+                        placeholder="172.18.0.2"
+                        value={dbHost}
+                        onChange={(e) => setDbHost(e.target.value)}
+                      />
+                      <FieldDescription>
+                        The MariaDB container&apos;s IP on the node&apos;s
+                        internal network (from the setup-db output).
+                      </FieldDescription>
+                    </Field>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field>
+                        <FieldLabel htmlFor="node-db-port">DB port</FieldLabel>
+                        <Input
+                          id="node-db-port"
+                          type="number"
+                          min={1}
+                          max={65535}
+                          value={dbPort}
+                          onChange={(e) => setDbPort(e.target.value)}
+                        />
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor="node-db-user">DB admin user</FieldLabel>
+                        <Input
+                          id="node-db-user"
+                          value={dbUser}
+                          onChange={(e) => setDbUser(e.target.value)}
+                          autoComplete="off"
+                        />
+                      </Field>
+                    </div>
+                    <Field>
+                      <FieldLabel htmlFor="node-db-password">
+                        DB admin password
+                      </FieldLabel>
+                      <Input
+                        id="node-db-password"
+                        type="password"
+                        placeholder="From the setup-db output"
+                        value={dbPassword}
+                        onChange={(e) => setDbPassword(e.target.value)}
+                        autoComplete="off"
+                      />
+                    </Field>
+                  </>
+                )}
               </FieldGroup>
               {probe && (
                 <div

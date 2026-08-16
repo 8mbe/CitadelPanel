@@ -292,6 +292,86 @@ export async function unlinkServerContainers(
   });
 }
 
+// --- Database provisioning ----------------------------------------------------
+
+/** The node DB container's reachability info, as the agent reports it. */
+export interface NodeDbInfo {
+  /** The MariaDB container's IP on node_db_net, or null when not set up. */
+  host: string | null;
+  port: number;
+  networkName: string;
+  containerName: string;
+}
+
+/**
+ * GET /v1/database/info — the node DB container's address.
+ *
+ * The panel calls this to show the database host when a server owner creates a
+ * database, and to check the node has a DB before offering the option. `host`
+ * is null when the node has not run `setup-db`.
+ */
+export async function getNodeDbInfo(nodeId: string): Promise<NodeDbInfo> {
+  return nodeRequest(nodeId, "/v1/database/info");
+}
+
+/** The connection details returned when a database is provisioned. */
+export interface ProvisionedDatabase {
+  name: string;
+  user: string;
+  /** The host address server containers connect to (the DB container's IP). */
+  host: string;
+  port: number;
+}
+
+/**
+ * POST /v1/servers/:id/database — create a database + scoped user on the node.
+ *
+ * The admin credentials are decrypted from the node row and passed through; the
+ * agent execs SQL inside the MariaDB container. The `dbPassword` is generated
+ * panel-side (and stored encrypted) — the agent never persists it.
+ *
+ * `dbName` and `dbUser` are generated panel-side (server-id prefix + random
+ * suffix) so each database on a server gets a distinct name. The agent
+ * validates them before interpolating into SQL.
+ */
+export async function provisionServerDatabase(
+  nodeId: string,
+  serverId: string,
+  dbName: string,
+  dbUser: string,
+  adminUser: string,
+  adminPassword: string,
+  dbPassword: string,
+): Promise<ProvisionedDatabase> {
+  return nodeRequest(nodeId, `/v1/servers/${serverId}/database`, {
+    method: "POST",
+    body: { adminUser, adminPassword, dbPassword, dbName, dbUser },
+    // MariaDB first-boot init or a slow exec can take a few seconds.
+    timeoutMs: 60_000,
+  });
+}
+
+/**
+ * DELETE /v1/servers/:id/database — drop the database and user.
+ *
+ * The admin credentials and the stored `dbName`/`dbUser` are passed in the body
+ * (the agent needs them to exec the DROP). Idempotent: a missing database or
+ * user is not an error.
+ */
+export async function dropServerDatabase(
+  nodeId: string,
+  serverId: string,
+  dbName: string,
+  dbUser: string,
+  adminUser: string,
+  adminPassword: string,
+): Promise<void> {
+  await nodeRequest(nodeId, `/v1/servers/${serverId}/database`, {
+    method: "DELETE",
+    body: { adminUser, adminPassword, dbName, dbUser },
+    timeoutMs: 60_000,
+  });
+}
 
 // --- File manager -------------------------------------------------------------
 export interface FileEntry {

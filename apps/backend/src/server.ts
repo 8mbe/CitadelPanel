@@ -18,6 +18,9 @@ import { probeDataRoot, reportDataRootAtBoot } from "./dataRoot";
 import { readDaemonInfo } from "./docker/client";
 import { probePorts, type PortProtocol } from "./docker/ports";
 import {
+  provisionServerDatabase,
+  dropServerDatabase,
+} from "./docker/database";
   copyPath,
   createDirectory,
   deletePath,
@@ -376,6 +379,105 @@ const server = Bun.serve<ConsoleSocket, never>({
         });
 
         return json({ results: await probePorts(probes) });
+      }),
+    },
+
+    // --- Database provisioning ------------------------------------------------
+    //
+    // The panel calls these to create/drop per-server databases on the shared
+    // node MariaDB. The admin credentials arrive in the request body (the panel
+    // decrypts them from `nodes.db_admin_password_encrypted`); the agent never
+    // stores them. SQL is executed by `docker exec`-ing the mariadb client
+    // inside the node DB container — see `docker/database.ts`.
+
+    /**
+     * GET /v1/database/info — report the node DB container's IP and port.
+     *
+     * The panel uses this to show the host address when a server owner creates
+     * a database, and to verify the node DB is set up before offering the
+     * option. `host` is null when the container does not exist.
+     */
+    "/v1/database/info": {
+      GET: route(async () => {
+        const info = await getNodeDbInfo();
+        return json({
+          host: info.host,
+          port: info.port,
+          networkName: info.networkName,
+          containerName: info.containerName,
+        });
+      }),
+    },
+
+    /**
+     * POST /v1/servers/:id/database — create a database + scoped user.
+     *
+     * Body: { adminUser, adminPassword, dbPassword }
+     *
+     * Creates `db_<serverId>` and `u_<serverId>` on the node MariaDB, grants
+     * the user ALL on that one database, and attaches the server's container to
+     * `node_db_net` so the game can reach it. Returns the connection details the
+     * panel stores and surfaces to the owner.
+     */
+    "/v1/servers/:id/database": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+
+        const adminUser = body.adminUser;
+        if (typeof adminUser !== "string" || adminUser.length === 0) {
+          throw badRequest('"adminUser" is required.');
+        }
+        const adminPassword = body.adminPassword;
+        if (typeof adminPassword !== "string" || adminPassword.length === 0) {
+          throw badRequest('"adminPassword" is required.');
+        }
+        const dbPassword = body.dbPassword;
+        if (typeof dbPassword !== "string" || dbPassword.length < 16) {
+          throw badRequest('"dbPassword" must be at least 16 characters.');
+        }
+        const dbName = body.dbName;
+        if (typeof dbName !== "string" || dbName.length === 0) {
+          throw badRequest('"dbName" is required.');
+        }
+        const dbUser = body.dbUser;
+        if (typeof dbUser !== "string" || dbUser.length === 0) {
+          throw badRequest('"dbUser" is required.');
+        }
+
+        const result = await provisionServerDatabase(
+          serverId,
+          dbName,
+          dbUser,
+          adminUser,
+          adminPassword,
+          dbPassword,
+        );
+        return json(result, 201);
+      }),
+      DELETE: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+
+        const adminUser = body.adminUser;
+        if (typeof adminUser !== "string" || adminUser.length === 0) {
+          throw badRequest('"adminUser" is required.');
+        }
+        const adminPassword = body.adminPassword;
+        if (typeof adminPassword !== "string" || adminPassword.length === 0) {
+          throw badRequest('"adminPassword" is required.');
+        }
+        const dbName = body.dbName;
+        if (typeof dbName !== "string" || dbName.length === 0) {
+          throw badRequest('"dbName" is required.');
+        }
+        const dbUser = body.dbUser;
+        if (typeof dbUser !== "string" || dbUser.length === 0) {
+          throw badRequest('"dbUser" is required.');
+        }
+
+        await dropServerDatabase(serverId, dbName, dbUser, adminUser, adminPassword);
+        return noContent();
       }),
     },
 

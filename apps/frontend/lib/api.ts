@@ -223,6 +223,14 @@ export function adminCreateNode(payload: {
   diskReservePct?: number;
   /** When true, ignore the reserves and allocate the full total. */
   allowOvercommit?: boolean;
+  /** Node DB admin host (the MariaDB container IP from setup-db). Optional. */
+  dbAdminHost?: string;
+  /** Node DB admin port (default 3306 when host is given). */
+  dbAdminPort?: number;
+  /** Node DB admin username (typically "root"). */
+  dbAdminUser?: string;
+  /** Node DB admin password (from setup-db output). */
+  dbAdminPassword?: string;
 }): Promise<{
   node: ApiNode;
   health: { reachable: boolean; error?: string };
@@ -435,6 +443,69 @@ export async function removeServerLink(
   });
 }
 
+// --- Databases ----------------------------------------------------------------
+
+/** A database provisioned for a server, as the UI displays it. */
+export interface ServerDatabase {
+  id: string;
+  name: string;
+  user: string;
+  /** The host address the game server connects to (the DB container's IP). */
+  host: string;
+/** GET /api/servers/:id/databases — the server's provisioned databases. */
+export async function getServerDatabases(
+  serverId: string,
+): Promise<ServerDatabase[]> {
+  const data = await request<{ databases: ServerDatabase[] }>(
+    `/api/servers/${serverId}/databases`,
+  );
+  return data.databases;
+}
+
+/**
+ * POST /api/servers/:id/databases — provision a database.
+ *
+ * The database name, user, and host are generated server-side. The password is
+ * generated, stored encrypted, and returned **once** — the caller must show it
+ * immediately because it can never be retrieved again.
+ */
+export async function addServerDatabase(
+  serverId: string,
+): Promise<ServerDatabase> {
+  const data = await request<{ database: ServerDatabase }>(
+    `/api/servers/${serverId}/databases`,
+    { method: "POST" },
+  );
+  return data.database;
+}
+
+/** DELETE /api/servers/:id/databases/:databaseId — drop a database. */
+export async function removeServerDatabase(
+  serverId: string,
+  databaseId: string,
+): Promise<void> {
+  await request(`/api/servers/${serverId}/databases/${databaseId}`, {
+    method: "DELETE",
+  });
+}
+
+/**
+ * POST /api/servers/:id/databases/:databaseId/reset-password — generate a new
+ * password for the database user.
+ *
+ * Returns the new plaintext password once; the old one is unrecoverable.
+ */
+export async function resetServerDatabasePassword(
+  serverId: string,
+  databaseId: string,
+): Promise<{ password: string }> {
+  return request<{ password: string }>(
+    `/api/servers/${serverId}/databases/${databaseId}/reset-password`,
+    { method: "POST" },
+  );
+}
+
+/**
 export async function listServerFiles(
   serverId: string,
   path = "/",

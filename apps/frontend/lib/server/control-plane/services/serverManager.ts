@@ -13,9 +13,10 @@
  * data lands on the machine that actually runs the container.
  */
 
+import { randomBytes } from "node:crypto";
 import { sql } from "../db/client";
 import { badRequest, conflict, notFound } from "../lib/http";
-import { encryptSecret } from "../lib/crypto";
+import { decryptSecret, encryptSecret, generateStrongPassword } from "../lib/crypto";
 import {
   getBlueprintByKey,
   getBlueprintIdByKey,
@@ -42,6 +43,8 @@ import {
   runServerInstall,
   startServerContainer,
   stopServerContainer,
+  provisionServerDatabase,
+  dropServerDatabase,
   type PortBinding,
 } from "../nodes/nodeServerApi";
 import { assertNodeReadyToProvision } from "../nodes/nodeApi";
@@ -703,6 +706,36 @@ export async function deleteServer(
     );
   }
 
+  // Drop any provisioned databases on the node's MariaDB before the panel
+  // record disappears. Best-effort: an unreachable node leaves orphaned DBs
+  // (a manual cleanup task), but that is better than blocking the delete. The
+  // stored name/user are passed so the agent drops each one by its real name.
+  const dbRows = (await sql`
+    SELECT id, db_name, db_user, node_id FROM server_databases
+    WHERE server_id = ${serverId}
+  `) as { id: string; db_name: string; db_user: string; node_id: string }[];
+
+  for (const row of dbRows) {
+    const node = await getNodeWithSecrets(row.node_id);
+    if (node?.db.host && node.db.user && node.db.password) {
+      try {
+        await dropServerDatabase(
+          row.node_id,
+          serverId,
+          row.db_name,
+          row.db_user,
+          node.db.user,
+          node.db.password,
+        );
+      } catch (error) {
+        console.error(
+          `[serverManager] DB drop failed for ${serverId}/${row.id} (continuing):`,
+          error,
+        );
+      }
+    }
+  }
+
   // Cascades clear server_ports, server_env, server_subusers, server_databases.
   await sql`DELETE FROM servers WHERE id = ${serverId}`;
 
@@ -741,7 +774,16 @@ export async function reconcileServerStatus(serverId: string): Promise<ServerSta
   }
   return mapped;
 }
+
+// --- Additional port assignment ------------------------------------------------
+
+/**
+ * Load a server's resolved env vars for re-creating its container.
+ *
+ * `server_env` stores secret values encrypted; the container needs the plaintext.
       tty: blueprint.tty === true,
+      // Re-attach the DB network if the server has databases — the old
+      // container's network attachments are lost when it is removed.
       extraNetworks: await extraNetworksForServer(serverId),
     });
 
@@ -774,9 +816,361 @@ export async function reconcileServerStatus(serverId: string): Promise<ServerSta
 }
 
 /** Count a server's owner-added (additional) ports, for limit checks. */
+// --- Database provisioning ----------------------------------------------------
+
+/**
+ * A database provisioned for a server, as the API returns it.
+ *
+ * The password is included **only** at creation time (and on a reset). The list
+ * endpoint returns `null` for `password` — the stored value is encrypted and
+ * never decrypted for display. The owner is told to copy it when it is shown.
+ */
+export interface ServerDatabaseSummary {
+  id: string;
+  name: string;
+  user: string;
+  host: string;
+  port: number;
+  /** Plaintext password — only present at creation/reset, null on list. */
+  password: string | null;
+  createdAt: Date;
+}
+
+/** List a server's provisioned databases (passwords never decrypted for display). */
+export async function listServerDatabases(
+  serverId: string,
+): Promise<ServerDatabaseSummary[]> {
+  return loadDatabases(serverId);
+}
+
+/** Load a server's provisioned databases, with passwords decrypted for the DB
+ *  name/user/host (never for display — password stays encrypted in the row). */
+async function loadDatabases(
+  serverId: string,
+): Promise<ServerDatabaseSummary[]> {
+  const rows = (await sql`
+    SELECT id, db_name, db_user, db_password_encrypted, host, port, created_at
+    FROM server_databases
+    WHERE server_id = ${serverId}
+    ORDER BY created_at ASC
+  `) as {
+    id: string;
+    db_name: string;
+    db_user: string;
+    db_password_encrypted: string;
+    host: string;
+    port: number;
+    created_at: Date;
+  }[];
+
+  // The password is never decrypted for the list view — only at creation.
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.db_name,
+    user: row.db_user,
+    host: row.host,
+    port: row.port,
+    password: null,
+    createdAt: row.created_at,
+  }));
+}
+
+/** Count a server's provisioned databases, for limit checks. */
+export async function countServerDatabases(serverId: string): Promise<number> {
+  const rows = (await sql`
+    SELECT COUNT(*)::int AS count FROM server_databases
+    WHERE server_id = ${serverId}
+  `) as { count: number }[];
+  return rows[0]?.count ?? 0;
+}
+
+/**
+ * Generate a unique, safe DB name and user for a new database.
+ *
+ * The name is `db_<short-server-id>_<6 random hex chars>` and the user is the
+ * matching `u_` form. The random suffix is what lets one server own multiple
+ * databases — a name derived from the server id alone would collide on the
+ * `(node_id, db_name)` unique constraint on the second database.
+ *
+ * The suffix (2^24 possibilities) is checked against existing names on this
+ * node, and regenerated on the astronomically rare collision.
+ */
+async function generateDbIdentifiers(
+  serverId: string,
+  nodeId: string,
+): Promise<{ dbName: string; dbUser: string }> {
+  const shortId = serverId.replace(/[^0-9a-f]/gi, "").slice(0, 12).toLowerCase();
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const suffix = randomBytes(3).toString("hex"); // 6 hex chars
+    const dbName = `db_${shortId}${suffix}`;
+    const dbUser = `u_${shortId}${suffix}`;
+    // Confirm this name is not already taken on this node before handing it out.
+    const existing = (await sql`
+      SELECT 1 FROM server_databases
+      WHERE node_id = ${nodeId} AND db_name = ${dbName}
+      LIMIT 1
+    `) as { 1: number }[];
+    if (existing.length === 0) {
+      return { dbName, dbUser };
+    }
+  }
+  // Five 1-in-16M collisions in a row is not a real outcome; fail loudly.
+  throw conflict("Could not generate a unique database name. Please try again.");
+}
+
+/**
+ * The extra Docker networks a server's container should be attached to.
+ *
+ * A server with at least one provisioned database needs to be on the node's
+ * `node_db_net` so it can reach the shared MariaDB. The network name is the
+ * well-known default the agent's `setup-db` script creates; if the agent is
+ * configured with a custom name it still matches because the agent owns the
+ * attach logic and treats an already-present network as a no-op.
+ *
+ * Server links each contribute their pairwise network, so a recreate restores
+ * the link's connectivity — see `serverLinks.ts`.
+ */
 async function extraNetworksForServer(serverId: string): Promise<string[]> {
   const networks: string[] = [];
+  if ((await countServerDatabases(serverId)) > 0) {
+    networks.push("node_db_net");
+  }
   networks.push(...(await listServerLinkNetworks(serverId)));
   return networks;
+}
+
+export interface AddServerDatabaseInput {
+  serverId: string;
+  actorId: string;
+}
+
+/**
+ * Provision a database for a server on its node's shared MariaDB.
+ *
+ * Generates a database name, a scoped user, and a random password (32 chars,
+ * alphanumeric only so it is safe in connection strings). The agent executes
+ * the CREATE DATABASE / CREATE USER / GRANT SQL via `docker exec` against the
+ * node DB container, and attaches the server's container to `node_db_net`.
+ *
+ * The password is stored encrypted and returned **once** in the result so the
+ * owner can copy it; it is never decryptable again.
+ *
+ * Enforces the panel-wide `maxDatabasesPerServer` limit before touching the
+ * node. A node without a configured DB admin credential (or without the
+ * container running) fails with a clear error.
+ */
+export async function addServerDatabase(
+  input: AddServerDatabaseInput,
+): Promise<ServerDatabaseSummary> {
+  const server = await loadServerRow(input.serverId);
+
+  // Enforce the per-server database limit before generating anything.
+  const limits = await getServerLimits();
+  const current = await countServerDatabases(input.serverId);
+  if (current >= limits.maxDatabasesPerServer) {
+    throw conflict(
+      `This server already has the maximum of ${limits.maxDatabasesPerServer} database(s). ` +
+        "Remove one before adding another, or ask an administrator to raise the limit.",
+    );
+  }
+
+  // Load the node's DB admin credentials. A node without them configured cannot
+  // provision databases — the operator needs to run setup-db and re-register.
+  const node = await getNodeWithSecrets(server.node_id);
+  if (!node) throw notFound("Node not found");
+  if (!node.db.host || !node.db.user || !node.db.password) {
+    throw conflict(
+      `Node "${node.name}" does not have a database server configured. ` +
+        "An administrator must run the node database setup and configure the node's DB admin credentials.",
+    );
+  }
+
+  // Generate the per-server database password. Alphanumeric only so it is safe
+  // to embed in a connection string or a game-server config file.
+  const dbPassword = generateStrongPassword(32);
+
+  // Generate a unique DB name + user for this database. The random suffix is
+  // what lets a server own multiple databases — a name derived from the server
+  // id alone would collide on the (node_id, db_name) unique constraint.
+  const { dbName, dbUser } = await generateDbIdentifiers(
+    input.serverId,
+    server.node_id,
+  );
+
+  const result = await provisionServerDatabase(
+    server.node_id,
+    input.serverId,
+    dbName,
+    dbUser,
+    node.db.user,
+    node.db.password,
+    dbPassword,
+  );
+
+  // Persist the record. The host comes from the agent (the DB container's IP on
+  // node_db_net), which is what the game server will connect to.
+  const inserted = (await sql`
+    INSERT INTO server_databases (
+      server_id, node_id, db_name, db_user, db_password_encrypted, host, port
+    ) VALUES (
+      ${input.serverId}, ${server.node_id}, ${result.name}, ${result.user},
+      ${encryptSecret(dbPassword)}, ${result.host}, ${result.port}
+    )
+    RETURNING *
+  `) as {
+    id: string;
+    db_name: string;
+    db_user: string;
+    host: string;
+    port: number;
+    created_at: Date;
+  }[];
+
+  const row = inserted[0]!;
+
+  await recordAudit({
+    userId: input.actorId,
+    action: "server.database.add",
+    targetType: "server",
+    targetId: input.serverId,
+    metadata: {
+      databaseId: row.id,
+      dbName: result.name,
+      dbUser: result.user,
+      host: result.host,
+      port: result.port,
+    },
+  });
+
+  return {
+    id: row.id,
+    name: row.db_name,
+    user: row.db_user,
+    host: row.host,
+    port: row.port,
+    password: dbPassword,
+    createdAt: row.created_at,
+  };
+}
+
+/**
+ * Remove a server's database: drop the DB and user on the node MariaDB, detach
+ * the container from `node_db_net`, and delete the panel record.
+ *
+ * Best-effort on the node side: a node that is unreachable still loses its
+ * panel record (the orphaned DB is a manual cleanup task, better than blocking
+ * the owner's request). The stored encrypted password is not needed for the
+ * DROP (the admin credential is), so it is simply deleted.
+ */
+export async function removeServerDatabase(
+  serverId: string,
+  databaseId: string,
+  actorId: string,
+): Promise<void> {
+  const rows = (await sql`
+    DELETE FROM server_databases
+    WHERE id = ${databaseId} AND server_id = ${serverId}
+    RETURNING db_name, db_user, node_id
+  `) as { db_name: string; db_user: string; node_id: string }[];
+
+  if (rows.length === 0) {
+    throw notFound("Database not found on this server.");
+  }
+
+  const removed = rows[0]!;
+
+  // Drop the DB and user on the node. Best-effort: an unreachable node should
+  // not block the panel-side removal. Pass the stored name/user so the agent
+  // drops exactly this database, not a name re-derived from the server id.
+  const node = await getNodeWithSecrets(removed.node_id);
+  if (node?.db.host && node.db.user && node.db.password) {
+    try {
+      await dropServerDatabase(
+        removed.node_id,
+        serverId,
+        removed.db_name,
+        removed.db_user,
+        node.db.user,
+        node.db.password,
+      );
+    } catch (error) {
+      console.error(
+        `[serverManager] node DB drop failed for ${serverId}/${databaseId} (continuing):`,
+        error,
+      );
+    }
+  }
+
+  await recordAudit({
+    userId: actorId,
+    action: "server.database.remove",
+    targetType: "server",
+    targetId: serverId,
+    metadata: {
+      databaseId,
+      dbName: removed.db_name,
+      dbUser: removed.db_user,
+    },
+  });
+}
+
+/**
+ * Reset a database's password: generate a new one, run ALTER USER on the node,
+ * and update the encrypted record. Returns the new plaintext password once.
+ */
+export async function resetServerDatabasePassword(
+  serverId: string,
+  databaseId: string,
+  actorId: string,
+): Promise<{ password: string }> {
+  const rows = (await sql`
+    SELECT id, db_name, db_user, node_id FROM server_databases
+    WHERE id = ${databaseId} AND server_id = ${serverId}
+  `) as { id: string; db_name: string; db_user: string; node_id: string }[];
+
+  if (rows.length === 0) {
+    throw notFound("Database not found on this server.");
+  }
+
+  const db = rows[0]!;
+  const node = await getNodeWithSecrets(db.node_id);
+  if (!node?.db.host || !node.db.user || !node.db.password) {
+    throw conflict("This node's database server is not configured.");
+  }
+
+  const newPassword = generateStrongPassword(32);
+
+  // ALTER USER via the agent's SQL exec path. We reuse provisionServerDatabase's
+  // exec by calling a dedicated node endpoint is overkill; instead, the agent's
+  // existing provision endpoint is CREATE-or-replace, so re-calling it with the
+  // stored name/user but a new password re-creates the user with the new
+  // password (DROP USER IF EXISTS + CREATE USER). The database itself survives
+  // (CREATE DATABASE IF NOT EXISTS). The name/user come from the stored row so
+  // the reset targets exactly this database.
+  await provisionServerDatabase(
+    db.node_id,
+    serverId,
+    db.db_name,
+    db.db_user,
+    node.db.user,
+    node.db.password,
+    newPassword,
+  );
+
+  await sql`
+    UPDATE server_databases
+    SET db_password_encrypted = ${encryptSecret(newPassword)}
+    WHERE id = ${databaseId}
+  `;
+
+  await recordAudit({
+    userId: actorId,
+    action: "server.database.reset_password",
+    targetType: "server",
+    targetId: serverId,
+    metadata: { databaseId },
+  });
+
+  return { password: newPassword };
 }
 

@@ -40,6 +40,12 @@ import {
   startServer,
   stopServer,
   killServer,
+  addServerPort,
+  removeServerPort,
+  addServerDatabase,
+  removeServerDatabase,
+  resetServerDatabasePassword,
+  listServerDatabases,
 } from "../services/serverManager";
 import {
   createServerLink,
@@ -369,5 +375,91 @@ export async function handleRemoveServerLink(
 
   await removeServerLink(id, linkParam, user.id);
   return noContent();
+}
+
+// --- Database provisioning -----------------------------------------------------
+
+/**
+ * GET /api/servers/:id/databases — the server's provisioned databases.
+ *
+ * Requires the "database" permission, matching every mutation on this
+ * resource; the password column is always null here.
+ */
+export async function handleListServerDatabases(
+  request: Request,
+  serverId: string,
+): Promise<Response> {
+  const id = requireUuidParam(serverId, "serverId");
+  await requireServerPermission(request, id, "database");
+
+  const databases = await listServerDatabases(id);
+  return json({ databases });
+}
+
+/**
+ * POST /api/servers/:id/databases — provision a database for this server.
+ *
+ * Requires the "database" permission. The database name, user, and host are
+ * generated server-side; the owner does not choose them. The password is
+ * generated, stored encrypted, and returned **once** in the response so the
+ * owner can copy it — it is never decryptable again.
+ *
+ * The panel calls the node agent, which execs SQL against the shared MariaDB
+ * container and attaches the server's container to `node_db_net`.
+ */
+export async function handleAddServerDatabase(
+  request: Request,
+  serverId: string,
+): Promise<Response> {
+  const id = requireUuidParam(serverId, "serverId");
+  const { user } = await requireServerPermission(request, id, "database");
+
+  const server = await getServer(id);
+  const database = await addServerDatabase({
+    serverId: id,
+    actorId: user.id,
+  });
+
+  return json({ database }, 201);
+}
+
+/**
+ * DELETE /api/servers/:id/databases/:databaseId — drop a database.
+ *
+ * Requires the "database" permission. Drops the DB and user on the node MariaDB
+ * and removes the panel record. Best-effort on the node: an unreachable node
+ * still loses the panel record.
+ */
+export async function handleRemoveServerDatabase(
+  request: Request,
+  serverId: string,
+  databaseId: string,
+): Promise<Response> {
+  const id = requireUuidParam(serverId, "serverId");
+  const dbId = requireUuidParam(databaseId, "databaseId");
+  const { user } = await requireServerPermission(request, id, "database");
+
+  await removeServerDatabase(id, dbId, user.id);
+  return noContent();
+}
+
+/**
+ * POST /api/servers/:id/databases/:databaseId/reset-password — generate a new
+ * password for the database user.
+ *
+ * Requires the "database" permission. The new plaintext password is returned
+ * once; the old one is unrecoverable.
+ */
+export async function handleResetServerDatabasePassword(
+  request: Request,
+  serverId: string,
+  databaseId: string,
+): Promise<Response> {
+  const id = requireUuidParam(serverId, "serverId");
+  const dbId = requireUuidParam(databaseId, "databaseId");
+  const { user } = await requireServerPermission(request, id, "database");
+
+  const result = await resetServerDatabasePassword(id, dbId, user.id);
+  return json({ password: result.password });
 }
 

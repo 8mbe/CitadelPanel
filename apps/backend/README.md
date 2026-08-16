@@ -15,6 +15,9 @@ credential because this process controls the Docker socket.
 
 | `AGENT_MAX_UPLOAD_BYTES` | `134217728` | Cap on a single uploaded file or URL pull (128 MB). |
 | `AGENT_MAX_DIR_ENTRIES` | `2000` | Cap on directory listing size. |
+| `NODE_DB_NETWORK` | `node_db_net` | Docker network the shared node database lives on. The setup script creates it; the agent attaches server containers to it when their owner provisions a database. |
+| `NODE_DB_CONTAINER` | `citadel-node-db` | Name of the MariaDB container on `NODE_DB_NETWORK`. Used by the agent to exec SQL and resolve the database's IP. |
+
 ## Development
 
 ```bash
@@ -57,6 +60,32 @@ fixes it — and on every `/v1/health` call, which the panel checks before placi
 a server on the node. A node whose root is unwritable refuses creation with 503
 and that same remediation text, shown to the admin who requested the server;
 `Test connection` in the panel's node UI reports it too.
+
+## Shared node database (optional)
+
+A node can host one shared MariaDB instance that server owners request
+databases from (for plugins/mods that need MySQL). It is optional: a node
+without it simply cannot provision databases, and servers on it work normally.
+
+Set it up once per node:
+
+```bash
+bun run setup-db
+```
+
+This creates a `node_db_net` Docker network (with inter-container communication
+disabled, so tenants on it can reach the database but not each other) and a
+MariaDB container with a randomly-generated root password. No host ports are
+published — the database is only reachable from containers attached to
+`node_db_net`.
+
+The script prints the connection details (`dbAdminHost`, `dbAdminPort`,
+`dbAdminUser`, `dbAdminPassword`). Paste those into the node registration form
+in the panel; they are stored encrypted and used to create/drop per-server
+databases and users on demand.
+
+The host it prints is the MariaDB container's IP on `node_db_net` — that is the
+address the agent (and therefore server containers) use to connect.
 
 For remote nodes, deploy `docker-compose.agent.yml`, keep port 8081 on a private
 network or behind TLS, then register its URL and token in the panel.

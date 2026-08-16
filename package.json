@@ -10,6 +10,8 @@
     "test": "bun run --cwd apps/backend test",
     "typecheck": "bun run --cwd apps/backend typecheck && bun run --cwd apps/frontend typecheck",
     "setup": "bun run --cwd apps/frontend setup",
+    "setup-db": "bun run --cwd apps/backend setup-db",
+    "rescue": "bun run --cwd apps/frontend rescue",
     "compose:up": "docker compose up -d --build",
     "compose:down": "docker compose down"
   }

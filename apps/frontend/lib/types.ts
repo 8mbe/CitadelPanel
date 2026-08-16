@@ -126,6 +126,11 @@ export interface ServerPortView {
   containerPort: number;
   protocol: string;
   isPrimary: boolean;
+  | "database";
+
+/**
+ * What the current caller can do on a server, as reported by the server
+ * detail endpoint. Owners and admins implicitly hold every permission (their
 }
 
 /** A game server as the UI displays it. */
