@@ -88,7 +88,9 @@ export async function handleListBlueprints(request: Request): Promise<Response> 
   });
 }
 
-/** GET /api/servers — servers visible to the caller. */
+/**
+ * GET /api/servers — servers the caller owns or is a subuser on.
+ *
  * The dashboard is a personal view, so admins see their own servers here too;
  * the fleet-wide listing lives on the admin endpoints (GET /api/admin/servers).
  * Admins still reach any individual server via the admin panel —
@@ -391,6 +393,63 @@ export async function handleUpdateServerEnv(
 }
 
 /**
+ * GET /api/servers/:id/activity — per-server audit feed.
+ *
+ * Visible to anyone with access to the server (owner, subuser, admin). The
+ * underlying `listAuditLogs` already filters by `targetType: "server"`,
+ * `targetId`; this route layers on actor identity (email/name) via a join so the
+ * UI can show *who* without a second round-trip.
+ */
+export async function handleListServerActivity(
+  request: Request,
+  serverId: string,
+): Promise<Response> {
+  const id = requireUuidParam(serverId, "serverId");
+  // Console permission is the baseline "can look at this server" grant, matching
+  // handleGetServer. Activity is server-scoped, so any access suffices.
+  await requireServerPermission(request, id, "console");
+
+  const url = new URL(request.url);
+  const limit = Number(url.searchParams.get("limit")) || 100;
+
+  const rows = await listAuditLogs({
+    targetType: "server",
+    targetId: id,
+    limit,
+  });
+
+  if (rows.length === 0) {
+    return json({ entries: [] });
+  }
+
+  // Resolve actor identities in one query rather than N. System actions
+  // (userId is null) pass through with null email/name.
+  const userIds = [...new Set(rows.map((r) => r.user_id).filter((v): v is string => v !== null))];
+  let usersById = new Map<string, { email: string; name: string | null }>();
+  if (userIds.length > 0) {
+    const userRows = (await sql`
+      SELECT id, email, name FROM "user" WHERE id = ANY(${sql.array(userIds)})
+    `) as { id: string; email: string; name: string | null }[];
+    usersById = new Map(userRows.map((u) => [u.id, { email: u.email, name: u.name }]));
+  }
+
+  return json({
+    entries: rows.map((row) => {
+      const actor = row.user_id ? usersById.get(row.user_id) ?? null : null;
+      return {
+        id: row.id,
+        action: row.action,
+        userId: row.user_id,
+        actorEmail: actor?.email ?? null,
+        actorName: actor?.name ?? null,
+        ip: row.ip,
+        metadata: row.metadata ?? {},
+        createdAt: row.created_at,
+      };
+    }),
+  });
+}
+
 // --- Additional port assignment -----------------------------------------------
 
 /** GET /api/servers/:id/ports — the server's published ports. */

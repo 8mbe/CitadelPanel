@@ -1948,7 +1948,37 @@ export async function adminListAuditLogs(limit = 100): Promise<AdminAuditEntry[]
   }));
 }
 
+// --- Per-server activity -----------------------------------------------------
+
+/**
  * A single audit entry scoped to one server. Mirrors {@link AdminAuditEntry}
+ * but adds actor identity (resolved server-side via a join) since the activity
+ * feed needs to show *who* without leaking fleet-wide context.
+ */
+export interface ServerActivityEntry {
+  id: string;
+  action: string;
+  userId: string | null;
+  actorEmail: string | null;
+  actorName: string | null;
+  ip: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+/** GET /api/servers/:id/activity — per-server audit feed. */
+export async function listServerActivity(
+  serverId: string,
+  limit = 100,
+): Promise<ServerActivityEntry[]> {
+  // The handler already returns camelCase keys (unlike the admin audit route,
+  // which returns raw snake_case rows), so no normalization is needed here.
+  const data = await request<{ entries: ServerActivityEntry[] }>(
+    `/api/servers/${serverId}/activity?limit=${limit}`,
+  );
+  return data.entries ?? [];
+}
+
 // --- Admin general settings ---------------------------------------------------
 
 /** Mail providers the panel can send through. Mirrors services/settings.ts. */

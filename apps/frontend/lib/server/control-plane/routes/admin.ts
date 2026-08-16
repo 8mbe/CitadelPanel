@@ -337,6 +337,15 @@ export async function handleListUsers(request: Request): Promise<Response> {
 }
 
 /**
+ * GET /api/admin/users/:id — a single account's profile plus the servers they
+ * own, for the admin user-detail page.
+ *
+ * Returns 404 (not "deleted") when the account is gone, so the detail page can
+ * show its not-found state. Server rows are the owner's only — subuser access
+ * is intentionally excluded from this view to keep the page focused on what the
+ * account *owns*.
+ */
+/**
  * PATCH /api/admin/users/:id/role — promote or demote a user.
  *
  * Two guards, both deliberate:
@@ -519,14 +528,115 @@ export async function handleUnbanUser(
 
 // --- Audit log ----------------------------------------------------------------
 
-/** GET /api/admin/audit-logs */
+/**
+ * GET /api/admin/audit-logs — fleet-wide audit feed for the admin page.
+ *
+ * The raw `audit_logs` rows carry opaque IDs: a `user_id` (the actor) and a
+ * `target_id` whose table depends on `target_type`. Resolving those into names
+ * client-side would mean an N+1 round-trip per row, so the join is done here in
+ * two batched passes — one for actors, one per target type — and the enriched
+ * rows are returned in snake_case to match the existing contract.
+ *
+ * System actions (`user_id` is null) and deleted targets (the actor's user row
+ * is gone, or a server/node was removed) pass through with null names; the UI
+ * falls back to "system" / a truncated ID rather than hiding the row.
+ */
 export async function handleListAuditLogs(request: Request): Promise<Response> {
   await requireAdmin(request);
 
   const url = new URL(request.url);
   const limit = Number(url.searchParams.get("limit")) || 100;
 
-  return json({ logs: await listAuditLogs({ limit }) });
+  const rows = await listAuditLogs({ limit });
+
+  if (rows.length === 0) {
+    return json({ logs: [] });
+  }
+
+  // Resolve actors (who performed the action) in one query. user_id is TEXT
+  // because Better Auth user IDs are opaque nanoid-style strings, not UUIDs.
+  const actorIds = [
+    ...new Set(rows.map((r) => r.user_id).filter((v): v is string => v !== null)),
+  ];
+  let actorsById = new Map<string, { email: string; name: string | null }>();
+  if (actorIds.length > 0) {
+    const actorRows = (await sql`
+      SELECT id, email, name FROM "user" WHERE id = ANY(${sql.array(actorIds)})
+    `) as { id: string; email: string; name: string | null }[];
+    actorsById = new Map(
+      actorRows.map((u) => [u.id, { email: u.email, name: u.name }]),
+    );
+  }
+
+  // Resolve target names in one query per target type. Only server/node/user/
+  // blueprint have human-readable names worth showing (and linkable detail
+  // pages); subuser/database/suspicious_activity/settings targets are described
+  // by their metadata instead, so their name is left null.
+  const targetIdsByType = new Map<string, string[]>();
+  for (const row of rows) {
+    if (!row.target_type || !row.target_id) continue;
+    if (!["server", "node", "user", "blueprint"].includes(row.target_type)) continue;
+    const list = targetIdsByType.get(row.target_type) ?? [];
+    list.push(row.target_id);
+    targetIdsByType.set(row.target_type, list);
+  }
+
+  // Build "type:id" -> name maps. Keys are namespaced so a server id and a user
+  // id (both UUIDs) never collide.
+  const nameByKey = new Map<string, string>();
+
+  // target_id is stored as TEXT in audit_logs, but these tables key on UUID.
+  // Pass the UUID type OID (2950) so the array is typed uuid[] and Postgres can
+  // compare uuid = uuid. The "user" lookup needs no cast — user.id is TEXT.
+  if (targetIdsByType.has("server")) {
+    const serverRows = (await sql`
+      SELECT id, name FROM servers WHERE id = ANY(${sql.array(targetIdsByType.get("server")!, 2950)})
+    `) as { id: string; name: string }[];
+    for (const s of serverRows) nameByKey.set(`server:${s.id}`, s.name);
+  }
+  if (targetIdsByType.has("node")) {
+    const nodeRows = (await sql`
+      SELECT id, name FROM nodes WHERE id = ANY(${sql.array(targetIdsByType.get("node")!, 2950)})
+    `) as { id: string; name: string }[];
+    for (const n of nodeRows) nameByKey.set(`node:${n.id}`, n.name);
+  }
+  if (targetIdsByType.has("user")) {
+    const userTargetRows = (await sql`
+      SELECT id, name, email FROM "user" WHERE id = ANY(${sql.array(targetIdsByType.get("user")!)})
+    `) as { id: string; name: string | null; email: string }[];
+    for (const u of userTargetRows) {
+      nameByKey.set(`user:${u.id}`, u.name ?? u.email);
+    }
+  }
+  if (targetIdsByType.has("blueprint")) {
+    const blueprintRows = (await sql`
+      SELECT id, name FROM blueprints WHERE id = ANY(${sql.array(targetIdsByType.get("blueprint")!, 2950)})
+    `) as { id: string; name: string }[];
+    for (const b of blueprintRows) nameByKey.set(`blueprint:${b.id}`, b.name);
+  }
+
+  return json({
+    logs: rows.map((row) => {
+      const actor = row.user_id ? actorsById.get(row.user_id) ?? null : null;
+      const targetName =
+        row.target_type && row.target_id
+          ? nameByKey.get(`${row.target_type}:${row.target_id}`) ?? null
+          : null;
+      return {
+        id: row.id,
+        user_id: row.user_id,
+        action: row.action,
+        target_type: row.target_type,
+        target_id: row.target_id,
+        ip: row.ip,
+        metadata: row.metadata ?? {},
+        created_at: row.created_at,
+        actor_email: actor?.email ?? null,
+        actor_name: actor?.name ?? null,
+        target_name: targetName,
+      };
+    }),
+  });
 }
 
 // --- Admin server list ---------------------------------------------------------

@@ -76,7 +76,18 @@ import {
   handleGetServerStats,
   handleKillServer,
   handleListBlueprints,
+  handleListServerActivity,
+  handleListServerDatabases,
+  handleListServerLinks,
+  handleListServerPorts,
   handleListServers,
+  handleAddServerPort,
+  handleRemoveServerPort,
+  handleCreateServerLink,
+  handleRemoveServerLink,
+  handleAddServerDatabase,
+  handleRemoveServerDatabase,
+  handleResetServerDatabasePassword,
   handleRestartServer,
   handleStartServer,
   handleStopServer,
@@ -98,6 +109,7 @@ import {
   handleUpdateSubuser,
 } from "@/lib/server/control-plane/routes/subusers";
 import { handleDeleteAccount, handleGetMe } from "@/lib/server/control-plane/routes/users";
+import {
   handleInstallPlugin,
   handleListPluginVersions,
   handleListServerPlugins,
@@ -167,6 +179,7 @@ const patterns: Array<{
   // and returns 405.
   { pattern: /^servers\/([^/]+)\/databases\/([^/]+)\/reset-password$/, methods: { POST: handleResetServerDatabasePassword } },
   { pattern: /^servers\/([^/]+)\/databases\/([^/]+)$/, methods: { DELETE: handleRemoveServerDatabase } },
+  { pattern: /^servers\/([^/]+)\/activity$/, methods: { GET: handleListServerActivity } },
   { pattern: /^servers\/([^/]+)\/command$/, methods: { POST: handleConsoleCommand } },
   { pattern: /^servers\/([^/]+)\/console\/session$/, methods: { POST: handleConsoleSession } },
   { pattern: /^servers\/([^/]+)\/console\/revoke$/, methods: { POST: handleConsoleRevoke } },
