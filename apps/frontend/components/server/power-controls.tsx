@@ -5,6 +5,7 @@ import { OctagonX, Play, RotateCw, Square } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useServerData } from "@/components/server/server-data-context";
+import { viewerAllows } from "@/lib/permissions";
 import { ApiError, killServer, restartServer, startServer, stopServer } from "@/lib/api";
 
 /**
@@ -15,20 +16,26 @@ import { ApiError, killServer, restartServer, startServer, stopServer } from "@/
  * (starting/stopping) is shown while the request is in flight, then reconciled
  * to whatever the backend reports.
  *
- * Kill: when a graceful Stop or Restart is in flight (status `stopping`), the
- * Stop button morphs into a red Kill. It is disabled for a short grace window
- * after the transition starts (so the graceful shutdown gets a fair chance),
- * then arms — at which point clicking it sends SIGKILL to force the container
- * down immediately. Kill is the escape hatch for a container wedged in a
- * graceful stop; it is never shown while the server is simply running.
+ * Rendered only for viewers holding `start_stop` — for anyone else the row is
+ * absent rather than disabled, since there is nothing they could do with it.
+ * The backend rejects the calls regardless; this is presentation.
+ *
+ * Kill: whenever the server is in a graceful stop (status `stopping` — whether
+ * this client initiated it or not), the Stop button morphs into a red Kill. It
+ * is disabled for a short grace window after the transition starts (so the
+ * graceful shutdown gets a fair chance), then arms — at which point clicking it
+ * sends SIGKILL to force the container down immediately. Kill is the escape
+ * hatch for a container wedged in a graceful stop; it is never shown while the
+ * server is simply running.
  */
 export function PowerControls() {
   const { server, status, setStatus, refresh } = useServerData();
   const [pending, setPending] = React.useState(false);
-  /** Which graceful action is in flight, so Kill knows it's the fallback. */
-  const [pendingAction, setPendingAction] = React.useState<
-    "stop" | "restart" | null
-  >(null);
+  // Separate from `pending`: a graceful stop can block on Docker for a long time
+  // (a game server saving its world), and Kill is the escape hatch for exactly
+  // that situation. If Kill shared `pending`, it would stay disabled for the
+  // whole graceful stop — defeating its purpose.
+  const [killPending, setKillPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   const stopping = status === "stopping";
@@ -44,20 +51,23 @@ export function PowerControls() {
     return () => clearTimeout(t);
   }, [stopping]);
 
+  // After the hooks: a viewer without `start_stop` gets no controls at all.
+  if (!viewerAllows(server.viewer, "start_stop")) return null;
+
   const isBusy =
     pending ||
     ["starting", "stopping", "installing", "creating"].includes(status);
-  const canStart = ["stopped", "suspended", "error"].includes(status);
+  // A suspended server is never startable by its owner — the layout replaces
+  // the whole shell with a notice, and the backend rejects it regardless.
+  const canStart = ["stopped", "error"].includes(status);
   const canStop = status === "running";
 
   const act = async (
     optimistic: "starting" | "stopping",
-    action: "stop" | "restart" | null,
     fn: (id: string) => Promise<unknown>,
   ) => {
     setPending(true);
     setError(null);
-    setPendingAction(action);
     setStatus(optimistic);
     try {
       await fn(server.id);
@@ -67,14 +77,12 @@ export function PowerControls() {
       await refresh();
     } finally {
       setPending(false);
-      setPendingAction(null);
     }
   };
 
   const kill = async () => {
-    setPending(true);
+    setKillPending(true);
     setError(null);
-    setPendingAction("stop");
     try {
       await killServer(server.id);
       await refresh();
@@ -82,8 +90,7 @@ export function PowerControls() {
       setError(err instanceof ApiError ? err.message : "Kill failed.");
       await refresh();
     } finally {
-      setPending(false);
-      setPendingAction(null);
+      setKillPending(false);
     }
   };
 
@@ -91,7 +98,7 @@ export function PowerControls() {
     <div className="flex flex-col items-end gap-1">
       <div className="flex flex-wrap items-center gap-2">
         <Button
-          onClick={() => act("starting", null, startServer)}
+          onClick={() => act("starting", startServer)}
           disabled={!canStart || isBusy}
           size="sm"
         >
@@ -100,19 +107,21 @@ export function PowerControls() {
         </Button>
         <Button
           variant="secondary"
-          onClick={() => act("stopping", "restart", restartServer)}
+          onClick={() => act("stopping", restartServer)}
           disabled={!canStop || isBusy}
           size="sm"
         >
           <RotateCw />
           Restart
         </Button>
-        {stopping && pendingAction ? (
-          // A graceful stop/restart is in flight: offer Kill as the escape hatch.
+        {stopping ? (
+          // The server is in a graceful stop (whether or not this client is the
+          // one that initiated it). Offer Kill as the escape hatch once the grace
+          // window elapses, so a wedged shutdown can always be forced.
           <Button
             variant="destructive"
             onClick={kill}
-            disabled={!killArmed || pending}
+            disabled={!killArmed || killPending}
             size="sm"
             title={
               killArmed
@@ -126,7 +135,7 @@ export function PowerControls() {
         ) : (
           <Button
             variant="outline"
-            onClick={() => act("stopping", "stop", stopServer)}
+            onClick={() => act("stopping", stopServer)}
             disabled={!canStop || isBusy}
             size="sm"
           >
