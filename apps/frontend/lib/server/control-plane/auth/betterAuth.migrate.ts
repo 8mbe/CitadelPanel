@@ -22,6 +22,7 @@
 import { betterAuth } from "better-auth";
 import { apiKey } from "@better-auth/api-key";
 import { admin } from "better-auth/plugins";
+import { twoFactor } from "better-auth/plugins/two-factor";
 import { Pool } from "pg";
 
 import { loadRepositoryEnv } from "../config/load-repository-env";
@@ -58,6 +59,10 @@ export const auth = betterAuth({
     // adds `banned`/`banReason`/`banExpires` on `user` + `impersonatedBy` on
     // `session`, so the CLI migrator must see it here to create those columns.
     admin(),
+    // Mirrors auth/betterAuth.ts: the twoFactor plugin adds the `twoFactor`
+    // table (secret, backup codes, lockout state) and the `twoFactorEnabled`
+    // boolean on `user`. The CLI migrator must see it here to create them.
+    twoFactor({ issuer: "CitadelPanel" }),
   ],
 
   // `role` is no longer declared as an additionalField: the admin plugin owns

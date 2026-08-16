@@ -10,6 +10,7 @@
 import { betterAuth } from "better-auth";
 import { apiKey } from "@better-auth/api-key";
 import { admin } from "better-auth/plugins";
+import { twoFactor } from "better-auth/plugins/two-factor";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { authPool, sql } from "../db/client";
 import { env } from "../config/env";
@@ -298,6 +299,28 @@ async function sendChangeEmailConfirmation({
 }
 
 /**
+ * Email a one-time 2FA code during sign-in. Only invoked when the operator has
+ * configured mail; without it the twoFactor plugin's OTP method is simply not
+ * offered and TOTP / backup codes are the only second factors. Like the other
+ * email callbacks, `sendMail` is a no-op + log-when-unconfigured, so a missing
+ * mail server never blocks a sign-in.
+ */
+async function sendTwoFactorOtp({
+  user,
+  otp,
+}: {
+  user: { email: string };
+  otp: string;
+}): Promise<void> {
+  await sendMail({
+    to: user.email,
+    subject: "Your CitadelPanel verification code",
+    text: `Your verification code is: ${otp}\n\nIf you did not attempt to sign in, you can safely ignore this email.`,
+    html: `<p>Your verification code is: <strong>${otp}</strong></p><p style="color:#666">If you did not attempt to sign in, you can safely ignore this email.</p>`,
+  });
+}
+
+/**
  * The single `before` hook Better Auth runs on every auth request.
  *
  * `hooks.before` accepts one middleware, so the captcha gate and the email-
@@ -344,6 +367,17 @@ export const auth = betterAuth({
     admin({
       defaultBanReason: "No reason provided",
     }),
+    // Two-factor authentication (TOTP authenticator app + email OTP + backup
+    // codes). TOTP is always available; OTP is only offered when mail is
+    // configured (the `sendOTP` callback reads live settings and is a no-op
+    // when mail is off, but Better Auth only advertises OTP as a method when
+    // `sendOTP` is defined). Backup codes are encrypted at rest by the plugin.
+    twoFactor({
+      issuer: "CitadelPanel",
+      otpOptions: {
+        sendOTP: sendTwoFactorOtp,
+      },
+    }),
   ],
 
   emailAndPassword: {
@@ -358,6 +392,9 @@ export const auth = betterAuth({
     requireEmailVerification: false,
     // Sends the password-reset link. A no-op when mail is unconfigured.
     sendResetPassword,
+    // Invalidate every existing session after a password reset so a stolen
+    // password cannot be used to keep a compromised session alive.
+    revokeSessionsOnPasswordReset: true,
   },
 
   // Email verification. `sendOnSignUp` sends a verify link on registration —
@@ -408,11 +445,20 @@ export const auth = betterAuth({
     },
   },
 
-  // Blunt credential stuffing against the auth endpoints.
+  // Blunt credential stuffing against the auth endpoints. The global window is
+  // generous for legitimate traffic; the custom rules below are deliberately
+  // tighter on the endpoints an attacker scripts (brute-force sign-in, mass
+  // account creation, reset-email flooding).
   rateLimit: {
     enabled: true,
     window: 60,
     max: 20,
+    customRules: {
+      "/sign-in/email": { window: 60, max: 5 },
+      "/sign-up/email": { window: 60, max: 3 },
+      "/request-password-reset": { window: 60, max: 3 },
+      "/forget-password": { window: 60, max: 3 },
+    },
   },
 
   hooks: {

@@ -1331,6 +1331,8 @@ export interface ApiMe {
   /** Display name from the Better Auth user row; null if never set. */
   name: string | null;
   role: "admin" | "user";
+  /** Whether the user has two-factor authentication enabled. */
+  twoFactorEnabled: boolean;
   ownedServers: number;
   subuserServers: number;
   pendingReviews?: number;
@@ -1344,6 +1346,7 @@ export async function getMe(): Promise<ApiMe> {
       email: string;
       name: string | null;
       role: string | null;
+      twoFactorEnabled?: boolean;
       ownedServers?: number;
       subuserServers?: number;
       pendingReviews?: number;
@@ -1355,6 +1358,7 @@ export async function getMe(): Promise<ApiMe> {
     email: data.user.email,
     name: data.user.name ?? null,
     role: data.user.role === "admin" ? "admin" : "user",
+    twoFactorEnabled: data.user.twoFactorEnabled ?? false,
     ownedServers: data.user.ownedServers ?? 0,
     subuserServers: data.user.subuserServers ?? 0,
     pendingReviews: data.user.pendingReviews,

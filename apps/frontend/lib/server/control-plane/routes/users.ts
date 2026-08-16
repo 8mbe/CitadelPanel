@@ -26,8 +26,8 @@ export async function handleGetMe(request: Request): Promise<Response> {
   // lives on the Better Auth user row, so fetch it here. `name` may be null for
   // accounts created before a name was required.
   const profile = (await sql`
-    SELECT name FROM "user" WHERE id = ${user.id}
-  `) as { name: string | null }[];
+    SELECT name, "twoFactorEnabled" FROM "user" WHERE id = ${user.id}
+  `) as { name: string | null; twoFactorEnabled: boolean | null }[];
 
   const counts = (await sql`
     SELECT
@@ -44,6 +44,7 @@ export async function handleGetMe(request: Request): Promise<Response> {
       email: user.email,
       name: profile[0]?.name ?? null,
       role: user.role,
+      twoFactorEnabled: profile[0]?.twoFactorEnabled ?? false,
       ownedServers: counts[0]?.owned_servers ?? 0,
       subuserServers: counts[0]?.subuser_servers ?? 0,
       ...(pendingReviews !== undefined ? { pendingReviews } : {}),

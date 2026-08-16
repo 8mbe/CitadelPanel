@@ -21,6 +21,8 @@ export interface SessionUser {
   email: string;
   role: "admin" | "user";
   avatarSeed: string;
+  /** Whether two-factor authentication is active on this account. */
+  twoFactorEnabled: boolean;
   ownedServers: number;
   subuserServers: number;
   /** Unreviewed suspicious-activity flags. Admin-only, hence optional. */
@@ -64,6 +66,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       email: me.email,
       role: me.role,
       avatarSeed: initials(name),
+      twoFactorEnabled: me.twoFactorEnabled,
       ownedServers: me.ownedServers,
       subuserServers: me.subuserServers,
       pendingReviews: me.pendingReviews,

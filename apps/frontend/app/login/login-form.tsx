@@ -147,6 +147,20 @@ function AuthForm({
         setCaptchaToken(null);
         captchaRef.current?.reset();
       } else {
+        // A 200 with `twoFactorRedirect` means the credentials were correct but
+        // the account has 2FA enabled — Better Auth has NOT issued a session
+        // cookie yet. Send the user to the verification page; the next-URL is
+        // forwarded so they land where they were heading after verifying.
+        const body = (await res.json().catch(() => null)) as
+          | { twoFactorRedirect?: boolean; twoFactorMethods?: string[] }
+          | null;
+        if (body?.twoFactorRedirect) {
+          const params = new URLSearchParams();
+          if (next) params.set("next", next);
+          window.location.href = `/2fa${params.toString() ? `?${params}` : ""}`;
+          return;
+        }
+
         setNotice("Success! Redirecting…");
         if (next) {
           window.location.href = next;

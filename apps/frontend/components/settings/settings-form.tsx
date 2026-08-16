@@ -6,6 +6,7 @@ import { KeyRound, Trash2, TriangleAlert } from "lucide-react";
 import { ApiError, authRequest } from "@/lib/api";
 import { useSession } from "@/components/session-provider";
 import { ApiKeysSection } from "@/components/settings/api-keys-section";
+import { TwoFactorSection } from "@/components/settings/two-factor-section";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -43,6 +44,7 @@ export function SettingsForm() {
       <UsernameSection />
       <EmailSection />
       <PasswordSection />
+      <TwoFactorSection />
       <ApiKeysSection />
       <DangerZoneSection />
     </div>
@@ -209,7 +211,13 @@ function PasswordSection() {
 
   const save = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const data = new FormData(e.currentTarget);
+    // React 19 nulls `event.currentTarget` once the synchronous portion of the
+    // handler returns (at the first `await`). Capture the form now so the
+    // post-`await` `reset()` still has a live reference — otherwise it throws a
+    // null TypeError that the catch turns into a misleading "Could not change
+    // your password." even though the 200 response means it *was* changed.
+    const form = e.currentTarget;
+    const data = new FormData(form);
     const currentPassword = String(data.get("currentPassword") ?? "");
     const newPassword = String(data.get("newPassword") ?? "");
     const confirm = String(data.get("confirm") ?? "");
@@ -232,7 +240,7 @@ function PasswordSection() {
         method: "POST",
         body: JSON.stringify({ currentPassword, newPassword }),
       });
-      e.currentTarget.reset();
+      form.reset();
       setSaved(true);
     } catch (err) {
       setError(
