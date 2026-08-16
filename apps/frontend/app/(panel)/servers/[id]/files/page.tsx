@@ -1,28 +1,17 @@
-import { FolderOpen } from "lucide-react";
+"use client";
 
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
+import { FilesManager } from "@/components/server/files-manager";
+import { useServerData } from "@/components/server/server-data-context";
 
-export const metadata = { title: "Files" };
-
+/**
+ * The files section: a file manager for the server's data directory. Supports
+ * browsing, multi-select, download, clone, move, rename, delete, inline
+ * text-file editing, and SFTP access (via the toolbar button → modal). Data
+ * comes from the shared server context the layout provides; only the server id
+ * is needed to address the file endpoints.
+ */
 export default function FilesPage() {
-  return (
-    <Empty className="min-h-[18rem]">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <FolderOpen />
-        </EmptyMedia>
-        <EmptyTitle>File manager coming soon</EmptyTitle>
-        <EmptyDescription>
-          Browse, edit and upload your server&apos;s files directly from the
-          panel. This section is not implemented yet.
-        </EmptyDescription>
-      </EmptyHeader>
-    </Empty>
-  );
+  const { server } = useServerData();
+
+  return <FilesManager serverId={server.id} />;
 }

@@ -12,6 +12,20 @@ export function formatMb(mb: number): string {
 }
 
 /**
+ * Format a raw byte count for display.
+ *
+ * File sizes from the agent arrive as raw bytes (not MB), so this prints B/KB/
+ * MB/GB with a sensible precision: whole numbers for small units, one decimal
+ * once the number gets large enough that the decimal carries information.
+ */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+/**
  * Format a CPU core count for display.
  *
  * Live docker-stats samples are fractions of a core that can be tiny (e.g.

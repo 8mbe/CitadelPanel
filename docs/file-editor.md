@@ -1,0 +1,87 @@
+# File editor
+
+The in-panel code editor for server files. Clicking a file in the Files
+section opens it in a full-width in-place editor (it replaces the file
+listing while open) instead of a small textarea dialog.
+
+## Flow
+
+The editor uses the same endpoints the rest of the file manager uses —
+nothing about the backend changed:
+
+1. Browser calls `GET /api/servers/:id/files/content?path=…`
+   (`readServerFile` in `apps/frontend/lib/api.ts`).
+2. The panel route (`lib/server/control-plane/routes/files.ts`) checks the
+   `files` subuser permission, then proxies to the node agent
+   (`nodeServerApi.ts`).
+3. The agent resolves the path through `paths.ts` (the containment
+   boundary — `..` and symlink escapes are caught there) and returns the
+   file decoded as UTF-8 text.
+
+Saves go back through `PUT` on the same route. Writes are audited by path
+only (contents can hold secrets). Size is capped agent-side by
+`AGENT_MAX_FILE_BYTES` (8 MiB default) for both reads and writes; an
+oversized file surfaces as the agent's 413 message in the editor's error
+state.
+
+## Why CodeMirror 6
+
+The editor is [CodeMirror 6](https://codemirror.net/), chosen over Monaco
+because it is roughly an order of magnitude lighter, needs no web workers,
+and can load grammars lazily: `@codemirror/language-data` maps file
+extensions to `LanguageDescription`s whose `load()` is a dynamic import, so
+only the language actually being edited (YAML, JSON, shell, Lua, …) is ever
+fetched.
+
+The React wrapper is hand-rolled (`components/code-editor.tsx`, ~100
+lines) instead of using a wrapper package: the view is created once and
+reconfigured through `Compartment`s (language, wrap, read-only), callbacks
+are read through a ref so re-renders never rebuild the editor, and the
+controlled `value` only dispatches a document replace when it diverges from
+the view's doc (i.e. a different file was opened — typing round-trips
+through `onChange` and never moves the cursor).
+
+## Theming
+
+The CodeMirror theme is defined entirely with CSS variables from
+`app/globals.css` (`--card`, `--border`, `--primary`, …), and syntax
+colors come from dedicated `--syntax-*` tokens (defined for both light and
+`.dark`). Dark mode therefore switches purely in CSS when the `.dark` class
+flips — the editor is never re-themed from JS, and no color literals live
+in the component (selection/match highlights are `color-mix()`s of the
+`--primary` token).
+
+## Binary files
+
+The agent's read endpoint decodes *everything* as UTF-8 text — a 2 MiB
+`.jar` comes back as mojibake, and the old textarea editor would happily
+save it back as re-encoded UTF-8, corrupting it. The client is the only
+layer that can prevent this, so `file-editor.tsx` runs `looksBinary()` on
+the fetched text before showing the editor: any NUL byte in the first 8 KiB,
+or >1% U+FFFD replacement characters, opens a non-editable state offering
+Download and Back instead. It's a heuristic (a text file with one odd byte
+still edits; a binary with no NULs and clean UTF-8 is indistinguishable from
+text anyway), but it catches the corruption cases that matter.
+
+## Dirty state and saving
+
+- Dirty is `contents !== lastSavedSnapshot`; the Save button and the
+  header dot reflect it.
+- Ctrl/Cmd+S saves (a `Prec.highest` keymap inside the editor, so it wins
+  over anything else and `preventDefault` stops the browser dialog).
+- Going back with unsaved changes shows a discard confirmation; a
+  `beforeunload` guard covers closing the tab.
+- A successful save refreshes the directory listing in the background so
+  size/mtime are current when the listing comes back.
+- The "New file" modal embeds the same editor component, resolving its
+  language from the filename as it's typed.
+
+## Code layout
+
+- `components/code-editor.tsx` — CodeMirror wrapper, theme, highlight
+  style, language resolution. Heavy; only ever imported lazily.
+- `components/server/file-editor.tsx` — the in-place view: load/binary
+  states, dirty tracking, save, status bar (cursor, size, language).
+- `components/server/files-manager.tsx` — owns the `editing` state and
+  lazy-loads both modules with `next/dynamic` (`ssr: false`), so
+  CodeMirror stays out of both the server and the main client bundle.
