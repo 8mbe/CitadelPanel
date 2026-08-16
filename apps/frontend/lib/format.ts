@@ -94,15 +94,6 @@ export function scoreTone(score: number): "destructive" | "secondary" | "outline
   return "outline";
 }
 
-/** Format a throughput sample in bits per second for compact display. */
-export function formatNet(bps: number): string {
-  if (bps <= 0) return "0";
-  if (bps >= 1e9) return `${(bps / 1e9).toFixed(1)} Gbps`;
-  if (bps >= 1e6) return `${(bps / 1e6).toFixed(1)} Mbps`;
-  if (bps >= 1e3) return `${(bps / 1e3).toFixed(0)} Kbps`;
-  return `${Math.round(bps)} bps`;
-}
-
 /** Initials for an avatar fallback. */
 export function initials(name: string): string {
   return name
@@ -112,6 +103,7 @@ export function initials(name: string): string {
     .slice(0, 2)
     .toUpperCase();
 }
+
 // --- Game versions ---------------------------------------------------------------
 
 /**

@@ -71,8 +71,6 @@ export function ServerDataProvider({
           cpuPercent: Math.round(stats.cpuPercent),
           memoryUsedMb: Math.round(stats.memoryUsageMb),
           diskUsedMb: Math.round(stats.diskUsageMb),
-          networkRxBps: stats.networkRxBytes * 8,
-          networkTxBps: stats.networkTxBytes * 8,
         }));
       } catch {
         // A transient sample failure should not tear down the page.

@@ -1,6 +1,6 @@
 "use client";
 
-import { Cpu, HardDrive, MemoryStick, Network, Users } from "lucide-react";
+import { Cpu, HardDrive, MemoryStick } from "lucide-react";
 
 import {
   Card,
@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { useServerStatus } from "@/components/server/server-data-context";
-import { formatMb, formatNet, formatUptime } from "@/lib/format";
+import { formatMb } from "@/lib/format";
 import type { ServerView } from "@/lib/types";
 
 export function ResourceStats({ server }: { server: ServerView }) {
@@ -25,9 +25,12 @@ export function ResourceStats({ server }: { server: ServerView }) {
   const diskPct = server.diskLimitMb
     ? Math.round((server.diskUsedMb / server.diskLimitMb) * 100)
     : 0;
+  // `cpuPercent` is already a share of the allocated vCPUs (100 = one core
+  // saturated), so it maps directly onto the bar without a used/limit divide.
+  const cpuPct = active ? Math.min(100, Math.max(0, server.cpuPercent)) : 0;
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
       <Card size="sm">
         <CardHeader>
           <CardDescription>CPU load</CardDescription>
@@ -36,16 +39,14 @@ export function ResourceStats({ server }: { server: ServerView }) {
             {active ? `${server.cpuPercent}%` : "0%"}
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          <p className="text-xs text-muted-foreground">
-            of allocated container vCPU
-          </p>
-          <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Network className="size-3.5" />
-            {running
-              ? `↓${formatNet(server.networkRxBps)} ↑${formatNet(server.networkTxBps)}`
-              : "no traffic"}
-          </p>
+        <CardContent className="grid gap-1.5">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>Allocated</span>
+            <span className="tabular-nums">
+              {server.cpuLimit} vCPU{server.cpuLimit === 1 ? "" : "s"}
+            </span>
+          </div>
+          <Progress value={cpuPct} className="w-full" />
         </CardContent>
       </Card>
 
@@ -80,21 +81,6 @@ export function ResourceStats({ server }: { server: ServerView }) {
             <span className="tabular-nums">{formatMb(server.diskLimitMb)}</span>
           </div>
           <Progress value={diskPct} className="w-full" />
-        </CardContent>
-      </Card>
-
-      <Card size="sm">
-        <CardHeader>
-          <CardDescription>Players</CardDescription>
-          <CardTitle className="flex items-center gap-2 text-lg tabular-nums">
-            <Users className="size-4 text-muted-foreground" />
-            {running ? `${server.playerCount}/${server.playerMax}` : "—"}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-xs text-muted-foreground">
-            Uptime {formatUptime(server.uptimeSeconds)}
-          </p>
         </CardContent>
       </Card>
     </div>
