@@ -9,14 +9,25 @@ database, or browser-facing API. The Next.js control plane is its only caller.
 - Read/write server files below `SERVER_DATA_ROOT`
 - Return logs, state, health, capacity, and runtime statistics
 - Accept console commands
+- Serve the direct console WebSocket (browser → agent, capability-token gated)
+- Serve a custom SFTP server (per-(user,server) credentials, panel-callback auth,
+  chrooted to each server's data directory)
 
 Every `/v1/*` request requires a bearer token. Treat that token as a root
 credential because this process controls the Docker socket.
 
 | `AGENT_MAX_UPLOAD_BYTES` | `134217728` | Cap on a single uploaded file or URL pull (128 MB). |
 | `AGENT_MAX_DIR_ENTRIES` | `2000` | Cap on directory listing size. |
+| `PANEL_URL` | `""` | Panel base URL for direct-console validate/audit callbacks. Empty disables the browser-direct console (the WS path returns 503). |
+| `AGENT_TLS_CERT` | `""` | Path to PEM cert. When set with `AGENT_TLS_KEY`, the agent serves HTTPS/WSS. |
+| `AGENT_TLS_KEY` | `""` | Path to PEM key. |
 | `NODE_DB_NETWORK` | `node_db_net` | Docker network the shared node database lives on. The setup script creates it; the agent attaches server containers to it when their owner provisions a database. |
 | `NODE_DB_CONTAINER` | `citadel-node-db` | Name of the MariaDB container on `NODE_DB_NETWORK`. Used by the agent to exec SQL and resolve the database's IP. |
+
+The direct console (`/v1/sessions/:token/console`) is the one path that does
+**not** use the bearer token — it authenticates with a short-lived, single-use
+capability token the panel mints. See `docs/direct-console.md`.
+
 
 ## Development
 

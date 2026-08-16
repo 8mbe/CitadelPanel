@@ -25,6 +25,8 @@ export interface NodeView {
   name: string;
   hostname: string;
   apiUrl: string;
+  /** Public browser URL for the direct console WS, or null to derive from apiUrl. */
+  consoleUrl: string | null;
   cpuTotal: number;
   memoryTotalMb: number;
   diskTotalMb: number;
@@ -137,6 +139,11 @@ export interface ServerPortView {
  * client code never imports server modules.
  */
 export type ServerPermission =
+  | "console"
+  | "files"
+  | "start_stop"
+  | "settings"
+  | "backups"
   | "database";
 
 /**

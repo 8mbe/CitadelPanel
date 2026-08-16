@@ -59,9 +59,24 @@ services:
       NODE_TOKEN: ${AGENT_TOKEN:?AGENT_TOKEN is required}
       AGENT_PORT: 8081
       SERVER_DATA_ROOT: /var/lib/citadel/servers
+      # Base URL of the panel, for the direct-console WebSocket's validate +
+      # audit callbacks (agent → panel). Required for the browser-direct console.
+      PANEL_URL: ${PANEL_URL:-http://frontend:3000}
+      # Optional TLS for the agent's HTTP/WS server. Required for the browser-
+      # direct console when the panel is served over HTTPS (browsers block ws://
+      # from an https:// page as mixed content). Mount certs and set both paths.
+      AGENT_TLS_CERT: ${AGENT_TLS_CERT:-}
+      AGENT_TLS_KEY: ${AGENT_TLS_KEY:-}
+    ports:
+      # Published so browsers can open the direct console WebSocket. In a homelab
+      # this is fine on localhost/LAN; in production put it behind a TLS-
+      # terminating reverse proxy (Caddy/Nginx) rather than exposing 8081 bare.
+      - "8081:8081"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/citadel/servers:/var/lib/citadel/servers
+      # Uncomment to provide TLS material for the agent's wss:// server.
+      # - ./certs:/certs:ro
     networks:
       node_net:
         aliases:

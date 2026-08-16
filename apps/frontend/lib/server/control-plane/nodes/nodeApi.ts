@@ -340,6 +340,7 @@ export async function probeAgent(
     hostname: apiUrl,
     apiUrl,
     apiToken,
+    consoleUrl: null,
     cpuTotal: 0,
     memoryTotalMb: 0,
     diskTotalMb: 0,

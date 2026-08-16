@@ -361,6 +361,12 @@ export async function handleCreateNode(request: Request): Promise<Response> {
   const allowOvercommit =
     body.allowOvercommit === undefined ? undefined : body.allowOvercommit === true;
 
+  // Optional public browser URL for the direct console WebSocket. When omitted,
+  // the panel derives it from apiUrl (ws/wss from its scheme) — the zero-config
+  // homelab case. Only validated for shape when supplied.
+  const consoleUrl = optionalString(body, "consoleUrl", { max: 512 });
+  if (consoleUrl) assertValidApiUrl(consoleUrl);
+
   let node;
   try {
     node = await createNode({
@@ -368,6 +374,7 @@ export async function handleCreateNode(request: Request): Promise<Response> {
       hostname,
       apiUrl,
       apiToken: token,
+      consoleUrl,
       cpuTotal,
       memoryTotalMb,
       diskTotalMb,
@@ -500,6 +507,8 @@ export async function handleUpdateNode(
     typeof body.apiToken === "string" && body.apiToken.length > 0
       ? body.apiToken
       : undefined;
+  const consoleUrl =
+    typeof body.consoleUrl === "string" ? body.consoleUrl.trim() : undefined;
 
   // Resource reservations: optional percentages (0-95) that must stay free.
   // `body.allowOvercommit === false` is a real value, so distinguish "absent"
@@ -519,7 +528,7 @@ export async function handleUpdateNode(
   const allowOvercommit =
     body.allowOvercommit === undefined ? undefined : body.allowOvercommit === true;
 
-  const hasDetailEdit = Boolean(name || hostname || apiUrl || apiToken);
+  const hasDetailEdit = Boolean(name || hostname || apiUrl || apiToken || consoleUrl);
   const hasReserveEdit =
     cpuReservePct !== undefined ||
     memoryReservePct !== undefined ||
@@ -528,12 +537,13 @@ export async function handleUpdateNode(
   if (!hasActiveToggle && !hasDetailEdit && !hasReserveEdit) {
     throw badRequest(
       'Provide "isActive" and/or one of "name", "hostname", "apiUrl", "apiToken", ' +
-        '"cpuReservePct", "memoryReservePct", "diskReservePct", "allowOvercommit".',
+        '"consoleUrl", "cpuReservePct", "memoryReservePct", "diskReservePct", "allowOvercommit".',
     );
   }
 
   // Validate any supplied URL before writing it.
   if (apiUrl !== undefined) assertValidApiUrl(apiUrl);
+  if (consoleUrl !== undefined && consoleUrl.length > 0) assertValidApiUrl(consoleUrl);
 
   let node = null;
 
@@ -547,6 +557,7 @@ export async function handleUpdateNode(
       hostname,
       apiUrl,
       apiToken,
+      consoleUrl,
       cpuReservePct,
       memoryReservePct,
       diskReservePct,
@@ -575,6 +586,7 @@ export async function handleUpdateNode(
       ...(hostname ? { hostname } : {}),
       ...(apiUrl ? { apiUrl } : {}),
       ...(apiToken ? { apiToken: true } : {}), // present, never the value
+      ...(consoleUrl !== undefined ? { consoleUrl } : {}),
       ...(cpuReservePct !== undefined ? { cpuReservePct } : {}),
       ...(memoryReservePct !== undefined ? { memoryReservePct } : {}),
       ...(diskReservePct !== undefined ? { diskReservePct } : {}),
@@ -588,8 +600,8 @@ export async function handleUpdateNode(
 /**
  * DELETE /api/admin/nodes/:id
  *
- * Blocked while any server still references the node (FK is ON DELETE RESTRICT).
- * Orphaning running containers would be worse than refusing the request.
+ * Two safety gates, checked before the row is touched:
+ *
  */
 export async function handleDeleteNode(
   request: Request,

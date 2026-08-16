@@ -72,6 +72,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
   const [hostname, setHostname] = React.useState("");
   const [apiUrl, setApiUrl] = React.useState("");
   const [token, setToken] = React.useState("");
+  const [consoleUrl, setConsoleUrl] = React.useState("");
   const [diskGb, setDiskGb] = React.useState("100");
   const [cpuReserve, setCpuReserve] = React.useState("0");
   const [memReserve, setMemReserve] = React.useState("0");
@@ -111,6 +112,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
     setHostname("");
     setApiUrl("");
     setToken("");
+    setConsoleUrl("");
     setDiskGb("100");
     setCpuReserve("0");
     setMemReserve("0");
@@ -175,11 +177,14 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
         hostname,
         apiUrl,
         token: token.trim() || undefined,
+        consoleUrl: consoleUrl.trim() || undefined,
         diskTotalMb: Math.round(Number(diskGb) * 1024),
         cpuReservePct: Number(cpuReserve) || 0,
         memoryReservePct: Number(memReserve) || 0,
         diskReservePct: Number(diskReserve) || 0,
         allowOvercommit: overcommit,
+        // Only send DB credentials when the operator opted in AND filled all
+        // three required fields. The backend rejects a partial config.
         ...(enableDb && dbHost.trim() && dbUser.trim() && dbPassword
           ? {
               dbAdminHost: dbHost.trim(),
@@ -292,6 +297,19 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                   </FieldDescription>
                 </Field>
                 <Field>
+                  <FieldLabel htmlFor="node-console-url">Console URL</FieldLabel>
+                  <Input
+                    id="node-console-url"
+                    placeholder="wss://node1.example.com:8081"
+                    value={consoleUrl}
+                    onChange={(e) => setConsoleUrl(e.target.value)}
+                  />
+                  <FieldDescription>
+                    Public address browsers use for the direct console
+                    (wss://). Leave blank to derive it from the Agent URL —
+                    fine when that URL is already browser-reachable.
+                  </FieldDescription>
+                </Field>
                 <Field>
                   <FieldLabel htmlFor="node-token">Agent token</FieldLabel>
                   <Input
@@ -384,6 +402,10 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                     for nodes that intentionally oversubscribe.
                   </FieldDescription>
                 </Field>
+
+                <Separator />
+                <Field orientation="horizontal">
+                  <div className="flex flex-1 flex-col gap-0.5">
                     <FieldLabel htmlFor="node-enable-db" className="font-normal">
                       Set up a shared database
                     </FieldLabel>

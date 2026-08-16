@@ -30,6 +30,13 @@ import {
   handleAdminUpdateBlueprint,
 } from "@/lib/server/control-plane/routes/blueprints";
 import {
+  handleConsoleAudit,
+  handleConsoleRevoke,
+  handleConsoleSession,
+  handleConsoleSessionValidate,
+} from "@/lib/server/control-plane/routes/console";
+import {
+  handleCopyFile,
   handleCreateDirectory,
   handleDeleteFiles,
   handleDownloadFile,
@@ -125,6 +132,11 @@ const exact = new Map<string, Partial<Record<string, Handler>>>([
   ["admin/blueprints/import-url", { POST: handleAdminImportBlueprintUrl }],
   ["admin/users", { GET: handleListUsers }],
   ["admin/audit-logs", { GET: handleListAuditLogs }],
+  // Agent callbacks for the direct-console WebSocket (see routes/console.ts).
+  ["internal/console/sessions/validate", { POST: handleConsoleSessionValidate }],
+  ["internal/console/audit", { POST: handleConsoleAudit }],
+  // Agent callback for SFTP auth (see routes/sftp.ts).
+  ["internal/sftp/authenticate", { POST: handleSftpAuthenticate }],
 ]);
 
 const patterns: Array<{

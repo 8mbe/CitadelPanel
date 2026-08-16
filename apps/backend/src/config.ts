@@ -83,6 +83,18 @@ export const config = {
    * callbacks. Empty string disables the browser-direct console (the WS path
    * returns 503); the panel→agent lifecycle routes are unaffected either way.
    */
+  panelUrl: optional("PANEL_URL", ""),
+
+  /**
+   * Optional TLS material for the HTTP/WS server. When both are set the agent
+   * serves HTTPS/WSS — required when the panel is HTTPS and the browser connects
+   * directly (a `ws://` URL from an `https://` page is blocked as mixed content).
+   * Paths are resolved lazily via `Bun.file` at server start.
+   */
+  tlsCert: optional("AGENT_TLS_CERT", ""),
+  tlsKey: optional("AGENT_TLS_KEY", ""),
+
+  /**
   nodeDbNetwork: optional("NODE_DB_NETWORK", "node_db_net"),
 
   /**

@@ -3,14 +3,22 @@
 # The Bun backend owns this node's Docker daemon and server data. The Next.js
 # control plane reaches it with a bearer token and never touches Docker itself.
 #
+# The live console opens a browser → agent WebSocket directly. The panel mints a
+# short-lived, single-use capability token; the browser presents it in the WS URL
+# and the agent calls the panel back to validate it and audit each command. The
+# long-lived AGENT_TOKEN still guards every lifecycle route and the callbacks.
+#
 # SECURITY: AGENT_TOKEN is root-equivalent for this host — the agent drives the
 # Docker socket, and a container can be given any mount the agent allows. Treat
 # it like a root password:
-#   - never expose port 8081 to the public internet;
 #   - keep the agent on a private network, or put TLS in front of it;
+#   - for the browser-direct console, expose 8081 ONLY behind a TLS-terminating
+#     reverse proxy (Caddy/Nginx); if the panel is HTTPS, the agent MUST be wss://
+#     (browsers block ws:// from an https:// page as mixed content);
 #   - generate the token with: openssl rand -base64 48
 #
-# Register the node afterwards from the panel's first-run setup or admin UI.
+# Register the node afterwards from the panel's first-run setup or admin UI,
+# setting its Console URL to the public wss:// address browsers will use.
 
 services:
   backend:
@@ -24,6 +32,14 @@ services:
       NODE_TOKEN: ${AGENT_TOKEN:?AGENT_TOKEN is required}
       AGENT_PORT: 8081
       SERVER_DATA_ROOT: /var/lib/citadel/servers
+      # Panel base URL for the direct-console validate + audit callbacks.
+      # Required for the browser-direct console.
+      PANEL_URL: ${PANEL_URL:?PANEL_URL is required}
+      # Optional TLS for the agent's HTTP/WS server. Recommended for any
+      # browser-reachable agent; required when the panel is HTTPS. Mount certs
+      # below and set both paths (e.g. /certs/agent.pem, /certs/agent-key.pem).
+      AGENT_TLS_CERT: ${AGENT_TLS_CERT:-}
+      AGENT_TLS_KEY: ${AGENT_TLS_KEY:-}
     ports:
       # Bind to a private interface in production, e.g. "10.0.0.5:8081:8081".
       - "8081:8081"

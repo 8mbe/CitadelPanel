@@ -223,6 +223,8 @@ export function adminCreateNode(payload: {
   hostname: string;
   apiUrl: string;
   token?: string;
+  /** Public browser WS URL for the direct console; omit to derive from apiUrl. */
+  consoleUrl?: string;
   diskTotalMb: number;
   cpuTotal?: number;
   memoryTotalMb?: number;
@@ -651,6 +653,51 @@ export async function resetServerDatabasePassword(
 }
 
 /**
+ * POST /api/servers/:id/console/session — mint a direct-console capability token.
+ *
+ * Returns the one-time token and the agent WebSocket URL the browser should
+ * open. The token is single-use and short-lived; a new one is minted on each
+ * (re)connection.
+ */
+export async function requestConsoleSession(
+  id: string,
+): Promise<{ token: string; url: string; tty: boolean }> {
+  return request<{ token: string; url: string; tty: boolean }>(
+    `/api/servers/${id}/console/session`,
+    { method: "POST" },
+  );
+}
+
+/**
+ * POST /api/servers/:id/console/revoke — give up a console session token.
+ *
+ * Fire-and-forget: this is called from a `pagehide` / unmount path where the
+ * page may be torn down before the response arrives, so it uses `keepalive`
+ * (the browser will flush the request even as the tab closes) and never awaits.
+ * Errors are swallowed — a failed revoke is not worth surfacing to the user,
+ * and the token is single-use + short-lived anyway, so the worst case is a
+ * dangling row that expires on its own.
+ */
+export function revokeConsoleSession(id: string, token: string): void {
+  void fetch(`/api/servers/${id}/console/revoke`, {
+    method: "POST",
+    credentials: "include",
+    keepalive: true,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token }),
+  }).catch(() => {
+    /* page is leaving; nothing to do */
+  });
+}
+
+// --- File manager --------------------------------------------------------------
+
+/**
+ * GET /api/servers/:id/files?path= — list a directory.
+ *
+ * Entries are server-relative POSIX paths. Directories sort first, then
+ * alphabetically (the agent's ordering).
+ */
 export async function listServerFiles(
   serverId: string,
   path = "/",
@@ -1302,6 +1349,8 @@ export interface NodeDetailsUpdate {
   apiUrl?: string;
   /** Omit to keep the stored token. */
   apiToken?: string;
+  /** Public browser WS URL; omit to keep current. */
+  consoleUrl?: string;
   /** Share of CPU (0-95) the scheduler must leave free. Omit to keep current. */
   cpuReservePct?: number;
   /** Share of memory (0-95) the scheduler must leave free. Omit to keep current. */
@@ -1336,9 +1385,12 @@ export async function adminUpdateNodeDetails(
 /**
  * DELETE /api/admin/nodes/:id — remove a node.
  *
- * Blocked (409) while any server still references it: the `servers.node_id` FK
- * is ON DELETE RESTRICT, so running containers are never orphaned. An empty
- * node deletes cleanly.
+ * Two gates, each returning a 409 with an actionable message:
+ * 1. The node must be drained (`isActive = false`) first.
+ * 2. It must host no servers — the `servers.node_id` FK is ON DELETE RESTRICT,
+ *    so running containers are never orphaned.
+ *
+ * An empty, drained node deletes cleanly.
  */
 export async function adminDeleteNode(nodeId: string): Promise<void> {
   await request(`/api/admin/nodes/${nodeId}`, { method: "DELETE" });
@@ -1414,6 +1466,7 @@ export async function adminListNodes(): Promise<
       name: node.name,
       hostname: node.hostname,
       apiUrl: node.apiUrl,
+      consoleUrl: node.consoleUrl,
       cpuTotal: node.cpuTotal,
       memoryTotalMb: node.memoryTotalMb,
       diskTotalMb: node.diskTotalMb,
@@ -1568,6 +1621,8 @@ export interface BlueprintEnvField {
   description?: string;
   options?: string[];
   secret?: boolean;
+  /** When true, the server owner may override this value after creation. */
+  editable?: boolean;
 }
 
 export interface BlueprintInstallSpec {

@@ -6,6 +6,10 @@
  * no users, sessions or permissions on those routes because authorization already
  * happened panel-side.
  *
+ * The one exception is the direct-console WebSocket (`/v1/sessions/:token/console`),
+ * which a *browser* opens after the panel mints it a short-lived, single-use
+ * capability token. The agent validates that token (and the per-command audit it
+ * implies) by calling back to the panel — see `consoleAudit.ts`. The token, not
  * the long-lived bearer, is what authorizes that one path.
  *
  * Routes are keyed by **server id**, never container id or host path — see
@@ -14,10 +18,12 @@
 
 import { requireAuth } from "./auth";
 import { config } from "./config";
+import { validateConsoleSession, recordConsoleCommand } from "./consoleAudit";
 import { probeDataRoot, reportDataRootAtBoot } from "./dataRoot";
 import { readDaemonInfo } from "./docker/client";
 import { probePorts, type PortProtocol } from "./docker/ports";
 import {
+  getNodeDbInfo,
   provisionServerDatabase,
   dropServerDatabase,
 } from "./docker/database";
@@ -112,6 +118,15 @@ function sanitizeDownloadName(suggested: string | null, fallback: string): strin
  * freshly opened console shows recent history before live output. Mirrors the
  * tail depth the SSE console used (`MAX_LINES` in `console-panel.tsx`).
  */
+const MAX_HISTORY_LINES = 100;
+
+/**
+ * Per-input character cap, matching the HTTP `/command` route's 4096 limit — a
+ * single WS frame longer than this is almost certainly a client bug, not a
+ * command, and is dropped rather than written to stdin.
+ */
+const MAX_INPUT_CHARS = 4_096;
+
 // --- Body validation ----------------------------------------------------------
 
 /**
@@ -185,6 +200,8 @@ function parseCreateRequest(body: Record<string, unknown>): CreateContainerReque
     throw badRequest('"user" must be a "uid" or "uid:gid" of digits only.');
   }
 
+  // Extra networks (e.g. node_db_net) are optional. Only strings survive — the
+  // agent validates each is a plausible Docker network name.
   const extraNetworks = Array.isArray(body.extraNetworks)
     ? body.extraNetworks.map((entry) => {
         if (typeof entry !== "string" || entry.length === 0) {
@@ -291,7 +308,10 @@ const server = Bun.serve<ConsoleSocket, never>({
   port: config.port,
 
   // Optional TLS. When both cert + key paths are set the agent serves HTTPS/WSS,
+  // which the browser-direct console requires whenever the panel is itself HTTPS
+  // (a `ws://` URL from an `https://` page is blocked as mixed content). Left off
   // for plain-HTTP homelab deploys. `Bun.file` is lazy, so this is cheap to build.
+  ...(config.tlsCert && config.tlsKey
     ? { tls: { cert: Bun.file(config.tlsCert), key: Bun.file(config.tlsKey) } }
     : {}),
 
@@ -909,29 +929,40 @@ const server = Bun.serve<ConsoleSocket, never>({
    *
    * The WebSocket handshake cannot use the `routes` table because it needs the
    * raw `server.upgrade` call, so it is matched here. The browser opens
+   * `/v1/sessions/:token/console` with a capability token the panel minted.
+   *
+   * The upgrade happens synchronously (Bun's `server.upgrade` must run before
+   * the fetch Response is committed), carrying the token in `ws.data`. The token
+   * is then validated against the panel in the `open` handler — before any
+   * container attach — and the socket is closed if the panel rejects it. This
    * keeps the upgrade on the documented synchronous path while still enforcing
    * validation before any access. The long-lived bearer is NOT used here: the
+   * capability token is the sole credential, which is what lets a browser (which
+   * cannot set handshake headers) open directly.
    */
   fetch(request, srv) {
     const url = new URL(request.url);
-    const match = /^\/v1\/servers\/([^/]+)\/console$/.exec(url.pathname);
+    const match = /^\/v1\/sessions\/([^/]+)\/console$/.exec(url.pathname);
 
     if (match) {
-      // Browsers cannot set headers on a WebSocket handshake, but the panel is
-      // a server-side client and can — so the token is still a header, never a
-      // query parameter where it would leak into logs.
-      if (!isAuthorized(request)) {
-        return json({ error: "A valid bearer token is required." }, 401);
+      // Without a panel to call back to, the agent cannot validate the token.
+      // 503 (not 401): nothing is wrong with the request, the node just isn't
+      // configured for direct consoles.
+      if (!config.panelUrl) {
+        return json(
+          { error: "Direct console requires PANEL_URL to be configured." },
+          503,
+        );
       }
 
-      let serverId: string;
-      try {
-        serverId = requireServerId(match[1]);
-      } catch (error) {
-        return toErrorResponse(error);
-      }
-
-      if (srv.upgrade(request, { data: { serverId, attachment: null } })) {
+      const token = match[1]!;
+      // `serverId`/`userId` are unknown until `open` validates the token; they
+      // are placeholders here and overwritten before use.
+      if (
+        srv.upgrade(request, {
+          data: { serverId: "", userId: "", token, attachment: null },
+        })
+      ) {
         return undefined;
       }
       return json({ error: "WebSocket upgrade failed." }, 400);
@@ -949,7 +980,33 @@ const server = Bun.serve<ConsoleSocket, never>({
      */
     async open(ws) {
       try {
-        ws.data.attachment = await attachToServer(ws.data.serverId, {
+        // Validate the capability token against the panel before anything else.
+        // This atomically marks it consumed (so a replayed token cannot open a
+        // second console) and resolves the serverId/userId the socket needs.
+        // A rejection closes the socket; the browser re-mints on reconnect.
+        const { serverId, userId } = await validateConsoleSession(ws.data.token);
+        ws.data.serverId = serverId;
+        ws.data.userId = userId;
+
+        // Replay recent history so a freshly opened console isn't blank. The
+        // browser clears its buffer on connect, so these lines populate a clean
+        // view before live output begins. Best-effort: a container that has no
+        // logs yet (or none retrievable) just yields an empty history.
+        try {
+          const history = await getServerLogs(serverId, MAX_HISTORY_LINES);
+          for (const line of history.split("\n")) {
+            if (line.length === 0) continue;
+            // Trailing \n keeps history frames line-aligned with live output
+            // chunks, so the frontend can split on newlines uniformly across
+            // both (an ANSI sequence never straddles a history/live boundary).
+            ws.send(JSON.stringify({ type: "output", data: line + "\n" }));
+          }
+        } catch {
+          // Non-fatal: the attach below will surface a real failure if the
+          // container is genuinely unreachable.
+        }
+
+        ws.data.attachment = await attachToServer(serverId, {
           // Framing is already stripped by the attach layer, so this is the
           // raw payload the container wrote.
           onData: (chunk) => {
@@ -963,7 +1020,7 @@ const server = Bun.serve<ConsoleSocket, never>({
           },
           onError: (error) => {
             console.error(
-              `[agent] console stream error for ${ws.data.serverId}:`,
+              `[agent] console stream error for ${serverId}:`,
               error,
             );
             ws.close();
@@ -985,8 +1042,10 @@ const server = Bun.serve<ConsoleSocket, never>({
     /**
      * Forward a command to the container's stdin.
      *
-     * The panel has already checked the caller's `console` permission and
-     * audited the command; the agent only transports it.
+     * The capability token was validated at `open`, so the caller is authorized
+     * for this server; the per-command audit is recorded via the panel callback
+     * (`recordConsoleCommand`) — fire-and-forget, so input latency never depends
+     * on the audit trail.
      */
     message(ws, message) {
       const attachment = ws.data.attachment;
@@ -1000,10 +1059,17 @@ const server = Bun.serve<ConsoleSocket, never>({
       }
 
       if (parsed.type !== "input" || typeof parsed.data !== "string") return;
+      if (parsed.data.length > MAX_INPUT_CHARS) return; // mirrors the /command cap
 
       // Game server consoles are line-oriented; ensure the newline that commits
       // the command is present exactly once.
       const line = parsed.data.endsWith("\n") ? parsed.data : `${parsed.data}\n`;
+
+      // Attribute the command to the token's user via the panel's audit table.
+      // `void`: a console command must never block on (or fail because of) the
+      // audit trail — the callback swallows its own errors (see consoleAudit.ts).
+      void recordConsoleCommand(ws.data.token, ws.data.serverId, line);
+
       attachment.write(line);
     },
 
@@ -1021,10 +1087,14 @@ const server = Bun.serve<ConsoleSocket, never>({
   },
 });
 
-console.log(`[agent] CitadelPanel node agent listening on http://0.0.0.0:${server.port}`);
+const scheme = config.tlsCert && config.tlsKey ? "https" : "http";
+console.log(`[agent] CitadelPanel node agent listening on ${scheme}://0.0.0.0:${server.port}`);
 console.log(`[agent] docker socket: ${config.dockerSocket}`);
 
 // Prints the data root and, when it is not writable, the command that fixes it.
 // Runs after `Bun.serve` so a slow or broken filesystem cannot delay the agent
 // accepting requests (see `dataRoot.ts` on why this does not exit).
 await reportDataRootAtBoot();
+
+  if (!config.panelUrl) {
+    console.warn(

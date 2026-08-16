@@ -15,6 +15,7 @@ import { sql } from "../db/client";
 import {
   decryptOptionalSecret,
   encryptOptionalSecret,
+  safeEqual,
 } from "../lib/crypto";
 
 /** A node row as stored, with secrets still encrypted. */
@@ -23,6 +24,8 @@ interface NodeRow {
   name: string;
   hostname: string;
   api_url: string;
+  /** Optional public/browser URL for the direct console WS; null ⇒ derive from api_url. */
+  console_url: string | null;
   api_token_encrypted: string | null;
   cpu_total: string | number;
   memory_total_mb: number;
@@ -47,6 +50,11 @@ export interface NodeWithSecrets {
   hostname: string;
   /** Base URL of the node's agent, e.g. "https://node1.internal:8081". */
   apiUrl: string;
+  /**
+   * Public/browser URL for the direct console WebSocket (wss://), or null to
+   * derive it from `apiUrl` (homelab zero-config case).
+   */
+  consoleUrl: string | null;
   /** Bearer token the panel presents to that agent. */
   apiToken: string | null;
   cpuTotal: number;
@@ -72,6 +80,8 @@ export interface PublicNode {
   name: string;
   hostname: string;
   apiUrl: string;
+  /** Public browser URL for the direct console WS, or null to derive from apiUrl. */
+  consoleUrl: string | null;
   cpuTotal: number;
   memoryTotalMb: number;
   diskTotalMb: number;
@@ -91,6 +101,7 @@ function toNodeWithSecrets(row: NodeRow): NodeWithSecrets {
     name: row.name,
     hostname: row.hostname,
     apiUrl: row.api_url,
+    consoleUrl: row.console_url,
     apiToken: decryptOptionalSecret(row.api_token_encrypted),
     cpuTotal: Number(row.cpu_total),
     memoryTotalMb: row.memory_total_mb,
@@ -117,6 +128,7 @@ export function toPublicNode(row: NodeRow): PublicNode {
     name: row.name,
     hostname: row.hostname,
     apiUrl: row.api_url,
+    consoleUrl: row.console_url,
     cpuTotal: Number(row.cpu_total),
     memoryTotalMb: row.memory_total_mb,
     diskTotalMb: row.disk_total_mb,
@@ -136,6 +148,8 @@ export interface CreateNodeInput {
   hostname: string;
   apiUrl: string;
   apiToken: string;
+  /** Optional public browser WS URL; null/omitted ⇒ derived from apiUrl. */
+  consoleUrl?: string | null;
   cpuTotal: number;
   memoryTotalMb: number;
   diskTotalMb: number;
@@ -156,13 +170,14 @@ export interface CreateNodeInput {
 export async function createNode(input: CreateNodeInput): Promise<PublicNode> {
   const rows = (await sql`
     INSERT INTO nodes (
-      name, hostname, api_url, api_token_encrypted,
+      name, hostname, api_url, api_token_encrypted, console_url,
       cpu_total, memory_total_mb, disk_total_mb,
       cpu_reserve_pct, memory_reserve_pct, disk_reserve_pct, allow_overcommit,
       db_admin_host, db_admin_port, db_admin_user, db_admin_password_encrypted
     ) VALUES (
       ${input.name}, ${input.hostname}, ${input.apiUrl},
       ${encryptOptionalSecret(input.apiToken)},
+      ${input.consoleUrl ?? null},
       ${input.cpuTotal}, ${input.memoryTotalMb}, ${input.diskTotalMb},
       ${input.cpuReservePct ?? 0}, ${input.memoryReservePct ?? 0},
       ${input.diskReservePct ?? 0}, ${input.allowOvercommit ?? false},
@@ -208,6 +223,29 @@ export async function listActiveNodesWithSecrets(): Promise<NodeWithSecrets[]> {
 }
 
 /**
+ * Identify which node owns a given agent bearer token, by decrypting each active
+ * node's token and comparing in constant time.
+ *
+ * Used by the direct-console callback endpoints to authenticate the *agent*
+ * calling back (the agent presents its long-lived token; the panel reverses it
+ * to a node to attribute the session and enforce that a token minted for node X
+ * is not validated/audited by node Y). Fleet sizes are small, so an O(nodes)
+ * scan after decrypt is cheap and avoids a stored hash column. Returns null when
+ * no active node matches — callers treat that as a 401.
+ */
+export async function findNodeByAgentToken(
+  token: string,
+): Promise<NodeWithSecrets | null> {
+  const nodes = await listActiveNodesWithSecrets();
+  for (const node of nodes) {
+    if (node.apiToken && safeEqual(token, node.apiToken)) {
+      return node;
+    }
+  }
+  return null;
+}
+
+/**
  * Activate or drain a node.
  *
  * Draining (`isActive = false`) only stops NEW servers being scheduled onto it;
@@ -235,6 +273,12 @@ export interface UpdateNodeInput {
   hostname?: string;
   apiUrl?: string;
   apiToken?: string;
+  /**
+   * Public browser WS URL. Omit to keep current; set to a string to change it.
+   * (Clearing back to null is not supported via this input — a node that needs
+   * that can be re-registered.)
+   */
+  consoleUrl?: string;
   /** Share of CPU (0-95) the scheduler must leave free. Omit to keep current. */
   cpuReservePct?: number;
   /** Share of memory (0-95) the scheduler must leave free. Omit to keep current. */
@@ -266,6 +310,7 @@ export async function updateNode(
       name                 = COALESCE(${input.name ?? null}, name),
       hostname             = COALESCE(${input.hostname ?? null}, hostname),
       api_url              = COALESCE(${input.apiUrl ?? null}, api_url),
+      console_url          = COALESCE(${input.consoleUrl ?? null}, console_url),
       api_token_encrypted  = COALESCE(${encryptOptionalSecret(input.apiToken)}, api_token_encrypted),
       cpu_reserve_pct      = COALESCE(${input.cpuReservePct ?? null}, cpu_reserve_pct),
       memory_reserve_pct   = COALESCE(${input.memoryReservePct ?? null}, memory_reserve_pct),
@@ -285,8 +330,11 @@ export async function recordHeartbeat(nodeId: string): Promise<void> {
  * Delete a node.
  *
  * `servers.node_id` is ON DELETE RESTRICT, so Postgres refuses while any server
- * still references it. That is intentional: silently orphaning running
- * containers would be worse than a failed request.
+ * still references it — throwing SQLSTATE 23001 (`restrict_violation`), not
+ * 23503. Callers should pre-check the server count (and the drain flag) for a
+ * readable error; this low-level function relies on the constraint as the
+ * race-condition backstop. Orphaning running containers would be worse than a
+ * failed request.
  */
 export async function deleteNode(nodeId: string): Promise<boolean> {
   const rows = (await sql`
