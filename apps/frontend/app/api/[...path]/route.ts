@@ -9,6 +9,7 @@ import {
   handleAdminCreateServer,
   handleBanUser,
   handleGetSuspicious,
+  handleGetUser,
   handleListAdminServers,
   handleListAuditLogs,
   handleListSuspicious,
@@ -223,6 +224,9 @@ const patterns: Array<{
   { pattern: /^admin\/users\/([^/]+)\/role$/, methods: { PATCH: handleUpdateUserRole } },
   { pattern: /^admin\/users\/([^/]+)\/ban$/, methods: { POST: handleBanUser } },
   { pattern: /^admin\/users\/([^/]+)\/unban$/, methods: { POST: handleUnbanUser } },
+  // Must come after the /role, /ban, /unban patterns so those more specific
+  // paths match first rather than being captured by the bare :id GET.
+  { pattern: /^admin\/users\/([^/]+)$/, methods: { GET: handleGetUser } },
 ];
 
 async function handleConsoleCommand(request: Request, serverId: string): Promise<Response> {

@@ -1278,6 +1278,52 @@ export async function adminUnbanUser(userId: string): Promise<void> {
  * Mirrors {@link ApiUser} but carries the raw Better Auth row fields plus the
  * server list (returned in snake_case by the handler, normalized here).
  */
+export interface AdminUserDetail {
+  id: string;
+  email: string;
+  name: string | null;
+  role: "admin" | "user";
+  createdAt: string | null;
+  banned: boolean;
+  banReason: string | null;
+  banExpires: string | null;
+  servers: ApiServerSummary[];
+}
+
+/** GET /api/admin/users/:id — a single account's profile plus owned servers. */
+export async function adminGetUser(userId: string): Promise<AdminUserDetail> {
+  const data = await request<{
+    user: {
+      id: string;
+      email: string;
+      name: string | null;
+      role: string | null;
+      created_at: string | null;
+      banned: boolean | null;
+      ban_reason: string | null;
+      ban_expires: string | null;
+      servers: ApiServerSummary[];
+    };
+  }>(`/api/admin/users/${userId}`);
+
+  const { user } = data;
+  const banExpires = user.ban_expires ?? null;
+  const expired =
+    banExpires !== null && new Date(banExpires).getTime() < Date.now();
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role === "admin" ? "admin" : "user",
+    createdAt: user.created_at ?? null,
+    banned: Boolean(user.banned) && !expired,
+    banReason: expired ? null : user.ban_reason ?? null,
+    banExpires: expired ? null : banExpires,
+    servers: user.servers ?? [],
+  };
+}
+
 /** The signed-in account, as returned by GET /api/me. */
 export interface ApiMe {
   id: string;

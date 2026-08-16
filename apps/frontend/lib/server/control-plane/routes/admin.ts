@@ -345,6 +345,39 @@ export async function handleListUsers(request: Request): Promise<Response> {
  * is intentionally excluded from this view to keep the page focused on what the
  * account *owns*.
  */
+export async function handleGetUser(
+  request: Request,
+  userId: string,
+): Promise<Response> {
+  await requireAdmin(request);
+
+  const rows = (await sql`
+    SELECT
+      u.id, u.email, u.name, u.role, u."createdAt" AS created_at,
+      u.banned, u."banReason" AS ban_reason, u."banExpires" AS ban_expires
+    FROM "user" u
+    WHERE u.id = ${userId}
+  `) as {
+    id: string;
+    email: string;
+    name: string | null;
+    role: string | null;
+    created_at: string | null;
+    banned: boolean | null;
+    ban_reason: string | null;
+    ban_expires: string | null;
+  }[];
+
+  const user = rows[0];
+  if (!user) throw notFound("User not found");
+
+  // Owned servers, newest first. Reuses listServersForOwner so the shape matches
+  // the rest of the panel's server summaries.
+  const servers = await listServersForOwner(user.id);
+
+  return json({ user: { ...user, servers } });
+}
+
 /**
  * PATCH /api/admin/users/:id/role — promote or demote a user.
  *

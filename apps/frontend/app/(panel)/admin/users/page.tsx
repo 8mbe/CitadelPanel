@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Ban, Search, Shield, ShieldCheck, User as UserIcon } from "lucide-react";
+import Link from "next/link";
 
 import { useSession } from "@/components/session-provider";
 import { Badge } from "@/components/ui/badge";
@@ -184,7 +185,12 @@ export default function AdminUsersPage() {
                   <TableRow key={user.id}>
                     <TableCell>
                       <div className="flex flex-col">
-                        <span className="font-medium">{user.name}</span>
+                        <Link
+                          href={`/admin/users/${user.id}`}
+                          className="font-medium text-foreground underline-offset-4 hover:underline"
+                        >
+                          {user.name}
+                        </Link>
                         <span className="text-xs text-muted-foreground">
                           {user.email}
                         </span>
