@@ -41,6 +41,13 @@ export const env = {
   frontendUrl,
   firstUserBecomesAdmin: bool("FIRST_USER_BECOMES_ADMIN", true),
   nodeApiTimeoutMs: integer("NODE_API_TIMEOUT_MS", 15_000),
+  /**
+   * Cap on a single file uploaded through the file manager, in bytes. Enforced
+   * BFF-side (so an oversized upload is rejected before it reaches the node)
+   * and again agent-side. The agent's own `AGENT_MAX_UPLOAD_BYTES` must be >=
+   * this for the two to agree; the default for both is 128 MB.
+   */
+  uploadMaxBytes: integer("UPLOAD_MAX_BYTES", 128 * 1024 * 1024),
   security: {
     watcherIntervalSeconds: integer("WATCHER_INTERVAL_SECONDS", 60),
     flagThreshold: integer("SUSPICION_FLAG_THRESHOLD", 60),

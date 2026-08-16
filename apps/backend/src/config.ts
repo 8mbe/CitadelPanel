@@ -67,8 +67,22 @@ export const config = {
   /** Cap on how large a file the file manager will read or write, in bytes. */
   maxFileBytes: optionalInt("AGENT_MAX_FILE_BYTES", 8 * 1024 * 1024),
 
+  /**
+   * Cap on a single uploaded file's size, in bytes. Distinct from
+   * `maxFileBytes` because uploads carry arbitrary binary payloads (world
+   * archives, plugin jars) that are legitimately far larger than the text
+   * files the inline editor handles.
+   */
+  maxUploadBytes: optionalInt("AGENT_MAX_UPLOAD_BYTES", 128 * 1024 * 1024),
+
   /** Cap on directory listing size, so a huge world folder cannot stall the panel. */
   maxDirEntries: optionalInt("AGENT_MAX_DIR_ENTRIES", 2000),
+
+  /**
+   * Base URL of the panel, for the direct-console WebSocket's validate + audit
+   * callbacks. Empty string disables the browser-direct console (the WS path
+   * returns 503); the panel→agent lifecycle routes are unaffected either way.
+   */
 } as const;
 
 export type AgentConfig = typeof config;

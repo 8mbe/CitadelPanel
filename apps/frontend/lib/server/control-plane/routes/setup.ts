@@ -494,5 +494,8 @@ export async function handlePublicSettings(): Promise<Response> {
   return json({
     timezone: await getTimezone(),
     captcha: await getPublicCaptchaSettings(),
+    // Surfaced so the file manager can pre-validate uploads client-side and
+    // show the limit in the UI before a request is ever made.
+    uploadMaxBytes: env.uploadMaxBytes,
   });
 }

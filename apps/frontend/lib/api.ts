@@ -8,6 +8,7 @@
 
 import { initials } from "./format";
 import type {
+  DirectoryListing,
   NodeAbuseSummary,
   NodeAllocation,
   NodeDetail,
@@ -195,6 +196,16 @@ export function completeSetup(): Promise<{
   return request("/api/setup/complete", { method: "POST" });
 }
 
+export async function getPublicSettings(): Promise<{
+  captcha: PublicCaptchaSettings;
+  uploadMaxBytes: number;
+}> {
+  return request<{
+    captcha: PublicCaptchaSettings;
+    uploadMaxBytes: number;
+  }>("/api/settings/public");
+}
+
 /** POST /api/admin/nodes — register a node. Returns a generated token once. */
 export function adminCreateNode(payload: {
   name: string;
@@ -369,6 +380,212 @@ export async function getServerLogs(id: string, tail = 200): Promise<string> {
     `/api/servers/${id}/logs?tail=${tail}`,
   );
   return data.logs;
+}
+
+export async function listServerFiles(
+  serverId: string,
+  path = "/",
+): Promise<DirectoryListing> {
+  return request<DirectoryListing>(
+    `/api/servers/${serverId}/files?path=${encodeURIComponent(path)}`,
+  );
+}
+
+/** GET /api/servers/:id/files/content?path= — read a text file's contents. */
+export async function readServerFile(
+  serverId: string,
+  path: string,
+): Promise<string> {
+  const data = await request<{ path: string; contents: string }>(
+    `/api/servers/${serverId}/files/content?path=${encodeURIComponent(path)}`,
+  );
+  return data.contents;
+}
+
+/**
+ * PUT /api/servers/:id/files/content — write a text file.
+ *
+ * Creates parent directories as needed. Binary files are not supported through
+ * this endpoint (contents must be a UTF-8 string); large files are capped
+ * agent-side at `AGENT_MAX_FILE_BYTES`.
+ */
+export async function writeServerFile(
+  serverId: string,
+  path: string,
+  contents: string,
+): Promise<void> {
+  await request(`/api/servers/${serverId}/files/content`, {
+    method: "PUT",
+    body: JSON.stringify({ path, contents }),
+  });
+}
+
+/**
+ * POST /api/servers/:id/files/delete — delete files/directory trees.
+ *
+ * One request for a whole selection. The node validates every path through
+ * containment before removing anything, so a bad entry fails the batch rather
+ * than half-deleting it.
+ */
+export async function deleteServerFiles(
+  serverId: string,
+  paths: string[],
+): Promise<void> {
+  await request(`/api/servers/${serverId}/files/delete`, {
+    method: "POST",
+    body: JSON.stringify({ paths }),
+  });
+}
+
+/** POST /api/servers/:id/files/directory — create a directory. */
+export async function createServerDirectory(
+  serverId: string,
+  path: string,
+): Promise<void> {
+  await request(`/api/servers/${serverId}/files/directory`, {
+    method: "POST",
+    body: JSON.stringify({ path }),
+  });
+}
+
+/**
+ * POST /api/servers/:id/files/rename — rename or move a file/directory.
+ *
+ * `to` is the full destination path (not a folder to move into). The agent
+ * rejects a name collision with a 409 and refuses to move a path into its own
+ * descendant.
+ */
+export async function renameServerFile(
+  serverId: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  await request(`/api/servers/${serverId}/files/rename`, {
+    method: "POST",
+    body: JSON.stringify({ from, to }),
+  });
+}
+
+/**
+ * POST /api/servers/:id/files/copy — copy a file or directory tree.
+ *
+ * Directories are copied recursively. `to` is the full destination path; a name
+ * collision is rejected with a 409.
+ */
+export async function copyServerFile(
+  serverId: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  await request(`/api/servers/${serverId}/files/copy`, {
+    method: "POST",
+    body: JSON.stringify({ from, to }),
+  });
+}
+
+/**
+ * GET /api/servers/:id/files/download — download one or more files/folders.
+ *
+ * A single file downloads raw; multiple `paths` (or a directory) download as a
+ * zip archive built on the fly. Returns a blob the caller can turn into a
+export async function downloadServerFiles(
+  serverId: string,
+  paths: string[],
+  downloadName?: string,
+): Promise<Blob> {
+  const params = new URLSearchParams();
+  if (paths.length === 1) {
+    params.set("path", paths[0]!);
+  } else {
+    params.set("paths", paths.join("\n"));
+  }
+  if (downloadName) params.set("download", downloadName);
+
+  const response = await fetch(
+    `/api/servers/${serverId}/files/download?${params.toString()}`,
+    { credentials: "include" },
+  );
+  if (!response.ok) {
+    const data = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new ApiError(
+      response.status,
+      data?.error ?? `Download failed with status ${response.status}`,
+    );
+  }
+  return response.blob();
+}
+
+/**
+ * POST /api/servers/:id/files/upload?path= — upload a single file.
+ *
+ * Uses XMLHttpRequest rather than `fetch` so the browser can report upload
+ * progress via `progress` events, which `fetch` cannot do. The file body is
+ * sent as raw `application/octet-stream` (one file per request); the caller
+ * sequences multiple files and updates per-file progress from `onProgress`.
+ *
+ * The upload limit is enforced server-side, but the caller should pre-validate
+ * with {@link getPublicSettings} so an oversized file is rejected before any
+ * bytes are sent.
+ *
+ * Returns the agent's `{ path, sizeBytes }` result.
+ */
+export function uploadServerFile(
+  serverId: string,
+  path: string,
+  file: File,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<{ path: string; sizeBytes: number }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(
+      "POST",
+      `/api/servers/${serverId}/files/upload?path=${encodeURIComponent(path)}`,
+    );
+    xhr.withCredentials = true;
+    xhr.responseType = "json";
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) {
+        onProgress(event.loaded, event.total);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(xhr.response as { path: string; sizeBytes: number });
+      } else {
+        const message =
+          (xhr.response as { error?: string } | null)?.error ??
+          `Upload failed with status ${xhr.status}`;
+        reject(new ApiError(xhr.status, message));
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new ApiError(0, "The upload could not be completed. Please try again."));
+    };
+
+    xhr.send(file);
+  });
+}
+
+/**
+ * POST /api/servers/:id/files/pull — fetch a URL into the server's data dir.
+ *
+ * The panel validates the URL (http(s) only, SSRF guardrail) and the agent
+ * performs the fetch. Returns the agent's `{ path, sizeBytes }` result. Unlike
+ * an upload there is no progress event: the remote fetch is opaque to the
+ * browser until it completes.
+ */
+export async function pullServerFileFromUrl(
+  serverId: string,
+  path: string,
+  url: string,
+): Promise<{ path: string; sizeBytes: number }> {
+  return request<{ path: string; sizeBytes: number }>(
+    `/api/servers/${serverId}/files/pull`,
+    { method: "POST", body: JSON.stringify({ path, url }) },
+  );
 }
 
 /** Power actions. Each returns the updated summary. */

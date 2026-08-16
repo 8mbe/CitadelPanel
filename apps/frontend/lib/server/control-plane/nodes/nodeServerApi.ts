@@ -7,7 +7,7 @@
  * or send container ids or host paths (see `apps/backend/src/servers.ts`).
  */
 
-import { nodeRequest } from "./nodeApi";
+import { nodeRequest, nodeRequestRaw } from "./nodeApi";
 
 /** A port the game needs published on the host. */
 export interface PortBinding {
@@ -253,8 +253,8 @@ export async function sampleNodeServers(
   return result.samples;
 }
 
-// --- File manager -------------------------------------------------------------
 
+// --- File manager -------------------------------------------------------------
 export interface FileEntry {
   name: string;
   path: string;
@@ -307,6 +307,23 @@ export async function deleteServerFile(
   });
 }
 
+/**
+ * Delete multiple files/directories in one request.
+ *
+ * The agent resolves every path through containment before removing anything,
+ * so one bad entry fails the whole batch rather than half-deleting a selection.
+ */
+export async function deleteServerFiles(
+  nodeId: string,
+  serverId: string,
+  paths: string[],
+): Promise<void> {
+  await nodeRequest(nodeId, `/v1/servers/${serverId}/files/delete`, {
+    method: "POST",
+    body: { paths },
+  });
+}
+
 export async function createServerDirectory(
   nodeId: string,
   serverId: string,
@@ -316,4 +333,130 @@ export async function createServerDirectory(
     method: "POST",
     body: { path },
   });
+}
+
+/**
+ * Rename/move a file or directory within a server's data directory.
+ *
+ * The agent enforces containment and rejects moves into a path's own
+ * descendant. `to` is the full destination path (not a directory to move into).
+ */
+export async function renameServerFile(
+  nodeId: string,
+  serverId: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  await nodeRequest(nodeId, `/v1/servers/${serverId}/files/rename`, {
+    method: "POST",
+    body: { from, to },
+  });
+}
+
+/**
+ * Copy a file or directory tree within a server's data directory.
+ *
+ * Directories are copied recursively. `to` is the full destination path.
+ */
+export async function copyServerFile(
+  nodeId: string,
+  serverId: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  await nodeRequest(nodeId, `/v1/servers/${serverId}/files/copy`, {
+    method: "POST",
+    body: { from, to },
+  });
+}
+
+/**
+ * Download one or more files/directories as a streamed response.
+ *
+ * A single file streams raw bytes; multiple paths (or a directory) stream a zip
+ * archive built on the fly. Returns the live agent `Response` so the BFF can
+ * pipe the body straight to the browser without buffering.
+ *
+ * @param paths  POSIX paths relative to the server's data root.
+ * @param download Suggested filename for the Content-Disposition header.
+ */
+export async function downloadServerFile(
+  nodeId: string,
+  serverId: string,
+  paths: string[],
+  download?: string,
+): Promise<Response> {
+  const query: Record<string, string | number | boolean | undefined> = {};
+  if (paths.length === 1) {
+    query.path = paths[0];
+  } else {
+    query.paths = paths.join("\n");
+  }
+  if (download) query.download = download;
+  return nodeRequestRaw(nodeId, `/v1/servers/${serverId}/files/download`, {
+    query,
+    // Large files can take a while; let the caller override if needed.
+    timeoutMs: 10 * 60_000,
+  });
+}
+
+/**
+ * Upload a single file's raw bytes to the server's data directory.
+ *
+ * The body is streamed straight through to the agent (`rawBody`), so a large
+ * upload is never buffered in the panel's memory. Returns the agent's `{ path,
+ * sizeBytes }` result. The caller is responsible for enforcing the panel-side
+ * size cap *before* calling this — once the stream is forwarded, the cap is the
+ * agent's job.
+ *
+ * @param path POSIX destination path relative to the server's data root.
+ * @param body The raw upload body (the incoming `Request.body`).
+ * @param contentLength The Content-Length to forward, for the agent's up-front cap.
+ */
+export async function uploadServerFile(
+  nodeId: string,
+  serverId: string,
+  path: string,
+  body: ReadableStream<Uint8Array> | BodyInit,
+  contentLength?: number,
+): Promise<{ path: string; sizeBytes: number }> {
+  const response = await nodeRequestRaw(
+    nodeId,
+    `/v1/servers/${serverId}/files/upload`,
+    {
+      method: "POST",
+      query: { path },
+      rawBody: body,
+      headers: contentLength ? { "content-length": String(contentLength) } : undefined,
+      // A large upload can take minutes; match the download window.
+      timeoutMs: 10 * 60_000,
+    },
+  );
+  return (await response.json()) as { path: string; sizeBytes: number };
+}
+
+/**
+ * Pull a remote URL into the server's data directory.
+ *
+ * The agent performs the fetch (so the bytes travel once, to disk); the panel
+ * has already validated the URL against its SSRF guardrail. Returns the agent's
+ * `{ path, sizeBytes }` result.
+ */
+export async function pullServerFileFromUrl(
+  nodeId: string,
+  serverId: string,
+  path: string,
+  url: string,
+): Promise<{ path: string; sizeBytes: number }> {
+  const response = await nodeRequestRaw(
+    nodeId,
+    `/v1/servers/${serverId}/files/pull`,
+    {
+      method: "POST",
+      body: { path, url },
+      // The remote fetch can take a while; match the download window.
+      timeoutMs: 10 * 60_000,
+    },
+  );
+  return (await response.json()) as { path: string; sizeBytes: number };
 }

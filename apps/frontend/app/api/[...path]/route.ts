@@ -31,11 +31,16 @@ import {
 } from "@/lib/server/control-plane/routes/blueprints";
 import {
   handleCreateDirectory,
-  handleDeleteFile,
+  handleDeleteFiles,
+  handleDownloadFile,
   handleListFiles,
+  handlePullFromUrl,
   handleReadFile,
+  handleRenameFile,
+  handleUploadFile,
   handleWriteFile,
 } from "@/lib/server/control-plane/routes/files";
+import {
 import {
   handleAllNodesHealth,
   handleCreateNode,
@@ -127,9 +132,17 @@ const patterns: Array<{
   { pattern: /^servers\/([^/]+)\/stats$/, methods: { GET: handleGetServerStats } },
   { pattern: /^servers\/([^/]+)\/env$/, methods: { GET: handleGetServerEnv, PATCH: handleUpdateServerEnv } },
   { pattern: /^servers\/([^/]+)\/command$/, methods: { POST: handleConsoleCommand } },
-  { pattern: /^servers\/([^/]+)\/files$/, methods: { GET: handleListFiles, DELETE: handleDeleteFile } },
+  { pattern: /^servers\/([^/]+)\/console\/session$/, methods: { POST: handleConsoleSession } },
+  { pattern: /^servers\/([^/]+)\/console\/revoke$/, methods: { POST: handleConsoleRevoke } },
+  { pattern: /^servers\/([^/]+)\/files$/, methods: { GET: handleListFiles } },
+  { pattern: /^servers\/([^/]+)\/files\/delete$/, methods: { POST: handleDeleteFiles } },
   { pattern: /^servers\/([^/]+)\/files\/content$/, methods: { GET: handleReadFile, PUT: handleWriteFile } },
   { pattern: /^servers\/([^/]+)\/files\/directory$/, methods: { POST: handleCreateDirectory } },
+  { pattern: /^servers\/([^/]+)\/files\/rename$/, methods: { POST: handleRenameFile } },
+  { pattern: /^servers\/([^/]+)\/files\/copy$/, methods: { POST: handleCopyFile } },
+  { pattern: /^servers\/([^/]+)\/files\/download$/, methods: { GET: handleDownloadFile } },
+  { pattern: /^servers\/([^/]+)\/files\/upload$/, methods: { POST: handleUploadFile } },
+  { pattern: /^servers\/([^/]+)\/files\/pull$/, methods: { POST: handlePullFromUrl } },
   { pattern: /^servers\/([^/]+)\/subusers$/, methods: { GET: handleListSubusers, POST: handleInviteSubuser } },
   { pattern: /^servers\/([^/]+)\/subusers\/([^/]+)$/, methods: { PATCH: handleUpdateSubuser, DELETE: handleRemoveSubuser } },
   { pattern: /^admin\/nodes\/([^/]+)$/, methods: { GET: handleGetNode, PATCH: handleUpdateNode, DELETE: handleDeleteNode } },

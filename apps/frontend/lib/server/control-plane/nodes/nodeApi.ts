@@ -84,6 +84,15 @@ export interface NodeRequestOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
   /** JSON-serialisable request body. */
   body?: unknown;
+  /**
+   * A raw body to send unmodified, for streaming endpoints (file uploads)
+   * where the body must not be JSON-stringified or buffered. When set, this
+   * takes precedence over `body` and the `content-type` header should be set
+   * by the caller (defaults to `application/octet-stream`).
+   */
+  rawBody?: ReadableStream<Uint8Array> | BodyInit;
+  /** Extra headers beyond the auth + content-type defaults. */
+  headers?: Record<string, string>;
   query?: Record<string, string | number | boolean | undefined>;
   /** Override the default timeout, for calls that are legitimately slow. */
   timeoutMs?: number;
@@ -167,6 +176,79 @@ export async function nodeRequest<T>(
   const node = await getNodeWithSecrets(nodeId);
   if (!node) throw new HttpError(404, `Unknown node: ${nodeId}`);
   return nodeRequestFor<T>(node, path, options);
+}
+
+/**
+ * Call a node's agent and return the raw `Response` — for streaming endpoints
+ * (file downloads) where the body must not be buffered into memory.
+ *
+ * Same auth and failure-mode mapping as {@link nodeRequestFor}, but does not
+ * parse the body. A non-2xx response throws an `HttpError` with the agent's
+ * message; a 2xx returns the live `Response` for the caller to pipe through.
+ */
+export async function nodeRequestRaw(
+  nodeId: string,
+  path: string,
+  options: NodeRequestOptions = {},
+): Promise<Response> {
+  const node = await getNodeWithSecrets(nodeId);
+  if (!node) throw new HttpError(404, `Unknown node: ${nodeId}`);
+
+  const connection = toConnection(node);
+  const url = buildUrl(connection.baseUrl, path, options.query);
+
+  const headers: Record<string, string> = {};
+  if (connection.token) headers.authorization = `Bearer ${connection.token}`;
+  // A raw body (file upload) is sent unmodified; otherwise a JSON body is
+  // stringified. The two are mutually exclusive.
+  if (options.rawBody !== undefined) {
+    headers["content-type"] = "application/octet-stream";
+  } else if (options.body !== undefined) {
+    headers["content-type"] = "application/json";
+  }
+  Object.assign(headers, options.headers);
+
+  let response: Response;
+  try {
+    // Build the fetch init. When forwarding a streaming body (a file upload),
+    // Node's fetch requires `duplex: "half"` — it refuses to send a
+    // ReadableStream body without it. The option is a Node extension to
+    // RequestInit (not in the DOM spec), so it is only set for the streaming
+    // path and cast through to satisfy the TS lib type.
+    const init: RequestInit & { duplex?: "half" } = {
+      method: options.method ?? "GET",
+      headers,
+      body:
+        options.rawBody !== undefined
+          ? options.rawBody
+          : options.body === undefined
+            ? undefined
+            : JSON.stringify(options.body),
+      // Downloads and uploads can legitimately take a long time for large
+      // files; the caller overrides this when it knows the size class.
+      signal: AbortSignal.timeout(options.timeoutMs ?? env.nodeApiTimeoutMs),
+    };
+    if (options.rawBody !== undefined) {
+      init.duplex = "half";
+    }
+    response = await fetch(url, init);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new HttpError(502, `Node "${node.name}" is unreachable: ${reason}`);
+  }
+
+  if (!response.ok) {
+    let message = `Node "${node.name}" returned ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) message = `${message}: ${payload.error}`;
+    } catch {
+      // Non-JSON error body.
+    }
+    throw new HttpError(response.status, message);
+  }
+
+  return response;
 }
 
 export interface NodeHealth {

@@ -2,23 +2,32 @@
  * Agent HTTP + WebSocket entrypoint.
  *
  * Runs on every node, next to the Docker socket it drives. The panel is the only
- * caller and authenticates with a bearer token; there are no users, sessions or
- * permissions here because authorization already happened panel-side.
+ * caller of the lifecycle routes and authenticates with a bearer token; there are
+ * no users, sessions or permissions on those routes because authorization already
+ * happened panel-side.
+ *
+ * the long-lived bearer, is what authorizes that one path.
  *
  * Routes are keyed by **server id**, never container id or host path — see
  * `servers.ts` for why that indirection is load-bearing.
  */
 
-import { requireAuth, isAuthorized } from "./auth";
+import { requireAuth } from "./auth";
 import { config } from "./config";
 import { probeDataRoot, reportDataRootAtBoot } from "./dataRoot";
 import { readDaemonInfo } from "./docker/client";
 import { probePorts, type PortProtocol } from "./docker/ports";
 import {
+  copyPath,
   createDirectory,
   deletePath,
+  deletePaths,
   listDirectory,
+  pullFromUrl,
   readFile,
+  renamePath,
+  resolveForDownload,
+  uploadFile,
   writeFile,
 } from "./files";
 import {
@@ -76,6 +85,27 @@ const serverIdOf = (request: Request): string =>
 
 const queryOf = (request: Request) => new URL(request.url).searchParams;
 
+ * Pick a safe filename for a Content-Disposition header.
+ *
+ * The panel may suggest a name, but the agent owns the final value to prevent
+ * header injection (a `\r\n` in the name could split headers). Falls back to the
+ * entry's real name, then to a generic `download`. Strips path separators and
+ * control chars and caps the length.
+ */
+function sanitizeDownloadName(suggested: string | null, fallback: string): string {
+  const raw = suggested && suggested.trim().length > 0 ? suggested : fallback;
+  // Remove anything that isn't a printable ASCII char, dot, dash, underscore, or
+  // space — and strip path separators so the name can't escape the attachment.
+  const cleaned = raw.replace(/[^\w .-]/g, "").replace(/\s+/g, " ").trim();
+  const name = cleaned.length > 0 ? cleaned : "download";
+  return name.slice(0, 200);
+}
+
+/**
+ * How many trailing log lines to replay over the console WebSocket on open, so a
+ * freshly opened console shows recent history before live output. Mirrors the
+ * tail depth the SSE console used (`MAX_LINES` in `console-panel.tsx`).
+ */
 // --- Body validation ----------------------------------------------------------
 
 /**
@@ -237,6 +267,10 @@ interface ConsoleSocket {
 
 const server = Bun.serve<ConsoleSocket, never>({
   port: config.port,
+
+  // for plain-HTTP homelab deploys. `Bun.file` is lazy, so this is cheap to build.
+    ? { tls: { cert: Bun.file(config.tlsCert), key: Bun.file(config.tlsKey) } }
+    : {}),
 
   // A console SSE stream is quiet for as long as the game server is idle, and
   // Bun closes idle connections after ~10s by default — which killed the live
@@ -474,6 +508,20 @@ const server = Bun.serve<ConsoleSocket, never>({
       }),
     },
 
+    // path is validated through containment before anything is removed, so a
+    // bad entry fails the batch rather than half-deleting it.
+    "/v1/servers/:id/files/delete": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+        if (!Array.isArray(body.paths)) {
+          throw badRequest('"paths" must be an array of paths.');
+        }
+        await deletePaths(serverId, body.paths);
+        return noContent();
+      }),
+    },
+
     "/v1/servers/:id/files/content": {
       GET: route(async (request) => {
         const serverId = serverIdOf(request);
@@ -505,13 +553,193 @@ const server = Bun.serve<ConsoleSocket, never>({
         return noContent();
       }),
     },
+
+    // --- File manager: rename / copy -----------------------------------------
+    //
+    // Both take { from, to } as POSIX-style paths relative to the server's data
+    // directory. Containment, self-into-self, and collision checks happen in
+    // files.ts so they are shared with any future caller.
+    "/v1/servers/:id/files/rename": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+        if (typeof body.from !== "string") throw badRequest('"from" is required.');
+        if (typeof body.to !== "string") throw badRequest('"to" is required.');
+        await renamePath(serverId, body.from, body.to);
+        return noContent();
+      }),
+    },
+
+    "/v1/servers/:id/files/copy": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+        if (typeof body.from !== "string") throw badRequest('"from" is required.');
+        if (typeof body.to !== "string") throw badRequest('"to" is required.');
+        await copyPath(serverId, body.from, body.to);
+        return noContent();
+      }),
+    },
+
+    // --- File manager: upload -------------------------------------------------
+    //
+    // POST ?path=<target> with an `application/octet-stream` body streams the
+    // raw bytes into the server's data directory. One file per request: the
+    // panel sequences multiple uploads client-side, which keeps each request's
+    // failure isolated and lets the browser show per-file progress.
+    //
+    // The body is never buffered whole — `uploadFile` pumps it chunk by chunk
+    // into a sibling temp file, then `rename`s it into place, so a partial
+    // upload never surfaces as a truncated file to the game server. The size
+    // cap is enforced both up front (via content-length) and during the stream
+    // (via a running total), so a client that lies about the length is still
+    // cut off.
+    "/v1/servers/:id/files/upload": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const path = queryOf(request).get("path");
+        if (!path) throw badRequest('"path" query parameter is required.');
+
+        if (!request.body) throw badRequest("Request body is required.");
+        const contentLength = Number(request.headers.get("content-length") ?? "");
+        const result = await uploadFile(
+          serverId,
+          path,
+          request.body,
+          Number.isFinite(contentLength) ? contentLength : null,
+        );
+        return json(result, 201);
+      }),
+    },
+
+    // --- File manager: pull from URL -----------------------------------------
+    //
+    // POST { path, url } fetches `url` agent-side and writes it to `path`. The
+    // agent does the fetch so the bytes travel once, directly to disk; the
+    // panel has already applied its own SSRF guardrail and size cap before
+    // forwarding. Same staged-write posture as upload.
+    "/v1/servers/:id/files/pull": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+        if (typeof body.path !== "string") throw badRequest('"path" is required.');
+        if (typeof body.url !== "string") throw badRequest('"url" is required.');
+
+        let url: URL;
+        try {
+          url = new URL(body.url);
+        } catch {
+          throw badRequest('"url" must be a valid URL.');
+        }
+        if (url.protocol !== "http:" && url.protocol !== "https:") {
+          throw badRequest('"url" must be an http(s) URL.');
+        }
+
+        const result = await pullFromUrl(serverId, body.path, body.url);
+        return json(result, 201);
+      }),
+    },
+
+    // --- File manager: download ----------------------------------------------
+    //
+    // GET ?path= streams a single file's raw bytes, or — for a directory or
+    // multiple paths—a zip archive. The `paths` query parameter is a
+    // newline-delimited list for the multi-select case; a single `path` is the
+    // common case. The panel proxies the response body straight through, so
+    // large downloads never buffer in the panel's memory.
+    //
+    // `download=...` sets the Content-Disposition filename; the panel passes the
+    // browser-suggested name but the agent owns the final value to prevent
+    // header injection.
+    "/v1/servers/:id/files/download": {
+      GET: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const query = queryOf(request);
+        // `paths` is newline-delimited; fall back to `path` for the single case.
+        const pathsParam = query.get("paths");
+        const paths = pathsParam
+          ? pathsParam.split("\n").filter((p) => p.length > 0)
+          : query.get("path")
+            ? [query.get("path")!]
+            : [];
+        if (paths.length === 0) throw badRequest('"path" or "paths" is required.');
+
+        // Resolve every requested path through containment before touching the
+        // filesystem, so a single bad entry fails before any bytes stream.
+        const resolved = await Promise.all(
+          paths.map(async (p) => {
+            const r = await resolveForDownload(serverId, p);
+            return { ...r, userPath: p };
+          }),
+        );
+
+        // --- Single file: stream raw bytes ---
+        if (resolved.length === 1 && !resolved[0]!.info.isDirectory) {
+          const { absPath, info, userPath } = resolved[0]!;
+          const name = sanitizeDownloadName(query.get("download"), info.name);
+          return new Response(Bun.file(absPath).stream(), {
+            headers: {
+              "content-type": "application/octet-stream",
+              "content-disposition": `attachment; filename="${name}"`,
+              "content-length": String(info.size),
+            },
+          });
+        }
+
+        // --- Directory or multiple paths: stream a zip ---
+        const archiveName = sanitizeDownloadName(
+          query.get("download"),
+          resolved.length === 1 ? resolved[0]!.info.name : "download",
+        );
+
+        const { ZipArchive } = await import("archiver");
+        const archive = new ZipArchive({ zlib: { level: 5 } });
+        for (const entry of resolved) {
+          // `archive.directory` only works on directories — it calls scandir
+          // internally, which throws ENOTDIR on a file. Use `archive.file` for
+          // files and `archive.directory` for folders, naming each entry with
+          // its basename so the zip's top level isn't a single nested dir.
+          if (entry.info.isDirectory) {
+            archive.directory(entry.absPath, entry.info.name);
+          } else {
+            archive.file(entry.absPath, { name: entry.info.name });
+          }
+        }
+        archive.finalize();
+
+        // archiver is a Node Readable; bridge it to a web ReadableStream so the
+        // Response body can stream without buffering the whole archive.
+        const webStream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            archive.on("data", (chunk: Buffer) => {
+              controller.enqueue(new Uint8Array(chunk));
+            });
+            archive.on("end", () => controller.close());
+            archive.on("error", (err: unknown) => controller.error(err));
+          },
+          cancel() {
+            archive.abort();
+          },
+        });
+
+        return new Response(webStream, {
+          headers: {
+            "content-type": "application/zip",
+            "content-disposition": `attachment; filename="${archiveName}.zip"`,
+            "cache-control": "no-store",
+          },
+        });
+      }),
+    },
   },
 
   /**
    * Console upgrade and 404s.
    *
    * The WebSocket handshake cannot use the `routes` table because it needs the
-   * raw `server.upgrade` call, so it is matched here.
+   * raw `server.upgrade` call, so it is matched here. The browser opens
+   * keeps the upgrade on the documented synchronous path while still enforcing
+   * validation before any access. The long-lived bearer is NOT used here: the
    */
   fetch(request, srv) {
     const url = new URL(request.url);

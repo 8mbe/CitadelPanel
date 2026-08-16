@@ -13,6 +13,8 @@ database, or browser-facing API. The Next.js control plane is its only caller.
 Every `/v1/*` request requires a bearer token. Treat that token as a root
 credential because this process controls the Docker socket.
 
+| `AGENT_MAX_UPLOAD_BYTES` | `134217728` | Cap on a single uploaded file or URL pull (128 MB). |
+| `AGENT_MAX_DIR_ENTRIES` | `2000` | Cap on directory listing size. |
 ## Development
 
 ```bash
