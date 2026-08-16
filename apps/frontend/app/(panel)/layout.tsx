@@ -42,9 +42,13 @@ function PanelShell({ children }: { children: React.ReactNode }) {
   // in-memory state that assumed a signed-in user.
   const signOut = async () => {
     try {
+      // Better Auth's /sign-out parses the body as JSON, so an empty body is a
+      // 400 before the cookie-clearing handler ever runs — send an empty object.
       await fetch("/api/auth/sign-out", {
         method: "POST",
         credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: "{}",
       });
     } catch {
       // Network failure is not fatal — head to login regardless.
