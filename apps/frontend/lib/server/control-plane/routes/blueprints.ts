@@ -17,6 +17,7 @@ import {
   requireString,
   requireUuidParam,
 } from "../lib/http";
+import { isBlockedHost } from "../lib/ssrf";
 import { recordAuditFromRequest } from "../services/auditLog";
 import {
   createBlueprint,
@@ -301,18 +302,6 @@ const FETCH_TIMEOUT_MS = 8_000;
  * accidents, not a hardened SSRF boundary — it does not defend against DNS
  * rebinding.
  */
-function isBlockedHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  if (host === "localhost" || host.endsWith(".localhost")) return true;
-  if (host === "0.0.0.0" || host === "::1" || host === "[::1]") return true;
-  if (/^127\./.test(host)) return true;
-  if (/^10\./.test(host)) return true;
-  if (/^192\.168\./.test(host)) return true;
-  if (/^169\.254\./.test(host)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
-  return false;
-}
-
 /**
  * POST /api/admin/blueprints/import-url
  *
