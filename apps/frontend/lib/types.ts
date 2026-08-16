@@ -179,6 +179,13 @@ export interface ServerView {
   diskLimitMb: number;
   uptimeSeconds: number;
   createdAt: string;
+  /** Why the server was suspended, shown to the owner. Null when not suspended. */
+  suspensionReason: string | null;
+  /** When the server was last suspended (ISO string). Null when not suspended. */
+  suspendedAt: string | null;
+  /**
+   * The caller's access to this server. Only set by the detail endpoint
+   * (`getServer`); list views omit it. Undefined must be read as "no access
    * information" — see `lib/permissions.ts` for how the UI treats that.
    */
   viewer?: ServerViewerAccess;

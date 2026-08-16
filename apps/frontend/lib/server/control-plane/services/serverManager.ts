@@ -86,6 +86,10 @@ interface ServerRow {
   updated_at: Date;
   /** Joined from `nodes.hostname` — the address players connect to. */
   node_hostname?: string;
+  /** Why the server was suspended, shown to the owner. Null when not suspended. */
+  suspension_reason?: string | null;
+  /** When the server was last suspended. Null when not suspended. */
+  suspended_at?: Date | null;
 }
 
 export interface ServerSummary {
@@ -109,6 +113,11 @@ export interface ServerSummary {
     label: string | null;
   }[];
   createdAt: Date;
+  /** Why the server was suspended, shown to the owner. Null when not suspended. */
+  suspensionReason: string | null;
+  /** When the server was last suspended. Null when not suspended. */
+  suspendedAt: Date | null;
+  /**
    * Plugin/mod support resolved against the server's env, when the blueprint
    * declares it: what the tab is called and which provider serves it. Only
    * set on the detail read (`getServer`), never on list reads — list callers
@@ -163,9 +172,17 @@ async function toSummary(row: ServerRow): Promise<ServerSummary> {
     diskLimitMb: row.disk_limit_mb,
     ports: await loadPorts(row.id),
     createdAt: row.created_at,
+    suspensionReason: row.suspension_reason ?? null,
+    suspendedAt: row.suspended_at ?? null,
   };
 }
 
+/**
+ * Count servers hosted on a node, for the node-deletion gate.
+ *
+ * Cheaper than {@link listServersForNode} (no ports, no owner lookups) — it
+ * exists only to answer "is this node safe to delete?".
+ */
 export async function countServersOnNode(nodeId: string): Promise<number> {
   const rows = (await sql`
     SELECT COUNT(*)::int AS count FROM servers WHERE node_id = ${nodeId}
@@ -705,7 +722,12 @@ export async function suspendServer(
     }
   }
 
-  await setStatus(serverId, "suspended");
+  await sql`
+    UPDATE servers
+    SET status = 'suspended', suspension_reason = ${reason},
+        suspended_at = now(), updated_at = now()
+    WHERE id = ${serverId}
+  `;
   await recordAudit({
     userId: actorId,
     action: "server.suspend",
@@ -724,7 +746,12 @@ export async function unsuspendServer(
     throw conflict("Server is not suspended");
   }
 
-  await setStatus(serverId, "stopped");
+  await sql`
+    UPDATE servers
+    SET status = 'stopped', suspension_reason = NULL,
+        suspended_at = NULL, updated_at = now()
+    WHERE id = ${serverId}
+  `;
   await recordAudit({
     userId: actorId,
     action: "server.unsuspend",
@@ -747,6 +774,9 @@ export async function deleteServer(
   const server = await loadServerRow(serverId);
   await setStatus(serverId, "deleting");
 
+  // Detach any server links while both containers still exist, so the peer is
+  // dropped from the pair network too. Best-effort, like the cleanup below.
+  try {
     await detachAllServerLinks(serverId);
   } catch (error) {
     console.error(

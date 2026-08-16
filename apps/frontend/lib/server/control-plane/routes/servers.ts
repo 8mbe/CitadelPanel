@@ -496,8 +496,15 @@ export async function handleAddServerPort(
 
   const label = optionalString(body, "label", { max: 64 });
 
+  // A suspended server cannot have its container recreated (it must stay
   // un-startable), so refuse before allocating a port that would just sit idle.
   const server = await getServer(id);
+  if (server.status === "suspended") {
+    throw conflict(
+      "This server is suspended pending administrator review and cannot be modified.",
+    );
+  }
+
   const updated = await addServerPort({
     serverId: id,
     actorId: user.id,
@@ -539,6 +546,12 @@ export async function handleRemoveServerPort(
   }
 
   const server = await getServer(id);
+  if (server.status === "suspended") {
+    throw conflict(
+      "This server is suspended pending administrator review and cannot be modified.",
+    );
+  }
+
   const updated = await removeServerPort(id, port, protocol, user.id);
 
   return json({ server: updated });
@@ -659,6 +672,12 @@ export async function handleAddServerDatabase(
   const { user } = await requireServerPermission(request, id, "database");
 
   const server = await getServer(id);
+  if (server.status === "suspended") {
+    throw conflict(
+      "This server is suspended pending administrator review and cannot be modified.",
+    );
+  }
+
   const database = await addServerDatabase({
     serverId: id,
     actorId: user.id,

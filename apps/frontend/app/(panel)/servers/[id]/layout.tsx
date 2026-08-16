@@ -2,8 +2,8 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { Server } from "lucide-react";
+import { useParams, usePathname } from "next/navigation";
+import { Lock, OctagonPause, Server } from "lucide-react";
 
 import { ServerHeader } from "@/components/server/server-header";
 import { ServerDataProvider } from "@/components/server/server-data-context";
@@ -99,13 +99,82 @@ export default function ServerLayout({
     );
   }
 
+  // A suspended server is locked down for its owner: they see *why* it was
+  // suspended and cannot reach the console, files, ports, or any other section.
+  // admin lifts the suspension. An admin bypasses the lock to inspect the
+  // reason as a banner so the suspended state is unmistakable.
+  if (server.status === "suspended" && !isAdmin) {
+    return <SuspendedNotice server={server} />;
+  }
+
   return (
     <ServerDataProvider initial={server}>
       <div className="flex flex-col gap-6">
+        {server.status === "suspended" && <SuspendedBanner server={server} />}
         <ServerHeader server={server} />
         <ServerTabs serverId={server.id} />
         {children}
       </div>
     </ServerDataProvider>
+  );
+}
+ * Full-page suspension notice. Replaces the entire server shell — no header,
+  const when = server.suspendedAt ? formatRelative(server.suspendedAt) : null;
+  return (
+    <div className="mx-auto flex w-full max-w-md flex-col gap-6 py-16">
+      <Alert>
+        <OctagonPause />
+        <AlertTitle>This server is suspended</AlertTitle>
+        <AlertDescription>
+            &ldquo;{server.name}&rdquo; has been suspended by an administrator and
+            cannot be used until it is reinstated.
+          </span>
+        </AlertDescription>
+      </Alert>
+
+      {server.suspensionReason && (
+        <div className="rounded-lg border bg-muted/40 p-4">
+          <p className="text-xs font-medium text-muted-foreground">Reason</p>
+          <p className="mt-1 whitespace-pre-line text-sm">
+            {server.suspensionReason}
+          </p>
+        </div>
+      )}
+
+      {when && (
+        <p className="text-xs text-muted-foreground">
+          Suspended {when}. If you believe this is a mistake, contact your
+          panel administrator.
+        </p>
+      )}
+
+      <Button render={<Link href="/" />} nativeButton={false} className="w-fit">
+        Back to dashboard
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Compact suspension banner shown to admins who bypass the owner lockout. It
+ * surfaces the reason inline so the admin has context while inspecting a
+ * suspended server, without blocking the shell.
+ */
+function SuspendedBanner({ server }: { server: ServerView }) {
+  const when = server.suspendedAt ? formatRelative(server.suspendedAt) : null;
+  return (
+    <Alert>
+      <OctagonPause />
+      <AlertTitle>This server is suspended</AlertTitle>
+      <AlertDescription>
+          server until it is unsuspended.
+        </span>
+        {server.suspensionReason && (
+            Reason: {server.suspensionReason}
+            {when ? ` · Suspended ${when}` : ""}
+          </span>
+        )}
+      </AlertDescription>
+    </Alert>
   );
 }
