@@ -166,6 +166,13 @@ async function toSummary(row: ServerRow): Promise<ServerSummary> {
   };
 }
 
+export async function countServersOnNode(nodeId: string): Promise<number> {
+  const rows = (await sql`
+    SELECT COUNT(*)::int AS count FROM servers WHERE node_id = ${nodeId}
+  `) as { count: number }[];
+  return rows[0]?.count ?? 0;
+}
+
 /** Servers the user owns. Admins use {@link listAllServers} instead. */
 export async function listServersForOwner(ownerId: string): Promise<ServerSummary[]> {
   const rows = (await sql`

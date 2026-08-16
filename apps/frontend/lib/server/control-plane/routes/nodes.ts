@@ -49,7 +49,7 @@ import {
 import { loadNodeCapacity, loadNodeCapacities } from "../nodes/scheduler";
 import { getNodeAbuseSummary } from "../security/suspiciousList";
 import { recordAuditFromRequest } from "../services/auditLog";
-import { listServersForNode } from "../services/serverManager";
+import { countServersOnNode, listServersForNode } from "../services/serverManager";
 
 /**
  * Validate an agent base URL.
@@ -602,6 +602,16 @@ export async function handleUpdateNode(
  *
  * Two safety gates, checked before the row is touched:
  *
+ * 1. The node must be **drained** (`isActive = false`). Deleting an active node
+ *    would pull it out of the scheduler mid-provision and surprise owners whose
+ *    next server-create lands on a node that no longer exists.
+ * 2. It must host **no servers**. `servers.node_id` is ON DELETE RESTRICT, so
+ *    Postgres would refuse the delete anyway — but a pre-check lets the message
+ *    name the count, instead of surfacing a raw constraint error. The FK is kept
+ *    as the race-condition backstop.
+ *
+ * Orphaning running containers would be worse than refusing the request, so a
+ * node that fails either gate gets a 409, not a silent cleanup.
  */
 export async function handleDeleteNode(
   request: Request,
@@ -613,14 +623,35 @@ export async function handleDeleteNode(
   const existing = await getNode(id);
   if (!existing) throw notFound("Node not found");
 
+  // Gate 1: drain first. Draining is reversible and stops new servers landing
+  // here; an admin removing a node must opt out of scheduling before removal.
+  if (existing.isActive) {
+    throw conflict(
+      "Drain this node before deleting it. Set it to inactive so no new servers are scheduled onto it, then remove its servers.",
+    );
+  }
+
+  // Gate 2: no servers may remain. A direct COUNT names the number in the
+  // error; the FK below is the backstop for a concurrent create.
+  const serverCount = await countServersOnNode(id);
+  if (serverCount > 0) {
+    throw conflict(
+      `${serverCount} server${serverCount === 1 ? "" : "s"} still hosted on this node. Delete or migrate them before removing the node.`,
+    );
+  }
+
   let deleted: boolean;
   try {
     deleted = await deleteNode(id);
   } catch (error) {
-    // Foreign key violation: servers still live on this node.
-    if ((error as { code?: string }).code === "23503") {
+    // ON DELETE RESTRICT throws SQLSTATE 23001 (restrict_violation), not 23503
+    // (foreign_key_violation) — a concurrent server create between the pre-check
+    // and the delete would land here. Catch both so it surfaces as a 409, not a
+    // 500.
+    const code = (error as { code?: string }).code;
+    if (code === "23001" || code === "23503") {
       throw conflict(
-        "This node still hosts servers. Migrate or delete them before removing the node.",
+        "This node still hosts servers. Remove them before deleting the node.",
       );
     }
     throw error;

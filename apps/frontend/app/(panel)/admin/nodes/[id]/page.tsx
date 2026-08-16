@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   ArrowUpRight,
+  Check,
   Database,
   Globe,
   HardDrive,
@@ -21,6 +22,7 @@ import {
   ShieldAlert,
   Trash2,
   TriangleAlert,
+  X,
 } from "lucide-react";
 
 import {
@@ -594,9 +596,48 @@ function NodeHeader({
           {deleteError && (
             <p className="text-sm text-destructive">{deleteError}</p>
           )}
-            A node that still hosts servers cannot be deleted — migrate or
-            remove those servers first.
-          </p>
+          {/*
+            Two gates must clear before the node can go, surfaced here so the
+            admin sees exactly what to do instead of a 409 after the fact. The
+            backend re-checks both (plus a race-condition FK backstop), so this
+            is guidance, not enforcement.
+          */}
+          <ul className="flex flex-col gap-1.5 text-sm">
+            <li className="flex items-center gap-2">
+              {node.isActive ? (
+                <X className="size-4 shrink-0 text-amber-500" />
+              ) : (
+                <Check className="size-4 shrink-0 text-emerald-500" />
+              )}
+              <span className="text-muted-foreground">
+                {node.isActive ? (
+                  <>
+                    Drain the node first (use the{" "}
+                    <span className="text-foreground">Drain</span> button above).
+                  </>
+                ) : (
+                  "Node is drained."
+                )}
+              </span>
+            </li>
+            <li className="flex items-center gap-2">
+              {servers.length > 0 ? (
+                <X className="size-4 shrink-0 text-amber-500" />
+              ) : (
+                <Check className="size-4 shrink-0 text-emerald-500" />
+              )}
+              <span className="text-muted-foreground">
+                {servers.length > 0 ? (
+                  <>
+                    Remove all {servers.length} server
+                    {servers.length === 1 ? "" : "s"} hosted on this node first.
+                  </>
+                ) : (
+                  "No servers hosted on this node."
+                )}
+              </span>
+            </li>
+          </ul>
           <DialogFooter>
             <Button
               variant="outline"
@@ -608,7 +649,7 @@ function NodeHeader({
             <Button
               variant="destructive"
               onClick={confirmDelete}
-              disabled={deleting}
+              disabled={deleting || node.isActive || servers.length > 0}
             >
               {deleting && <Spinner />}
               Delete node
