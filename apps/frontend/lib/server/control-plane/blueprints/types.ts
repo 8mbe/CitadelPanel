@@ -16,7 +16,16 @@
  * in the registry — no changes to core orchestration code.
  */
 
+import type { BlueprintPluginSupport } from "./plugins";
+
 export interface BlueprintPort {
+  /**
+   * The port this blueprint prefers for its game traffic (e.g. 25565 for
+   * Minecraft Java). Allocation from the node's pool is best-effort — it is
+   * honored when the port is in the pool and free, otherwise another pool port
+   * is drawn. Whatever port lands, it is published as an identity mapping:
+   * host port and container port are the same number.
+   */
   container: number;
   protocol: "tcp" | "udp";
   /** The port players connect to. Exactly one port per blueprint is primary. */
@@ -31,6 +40,13 @@ export interface BlueprintEnvField {
   options?: string[];
   /** Secret values are encrypted at rest and masked in API responses. */
   secret?: boolean;
+  /**
+   * When true, the server owner (and subusers with `settings`) may override this
+   * value after creation. When unset/false the value is locked to whatever the
+   * blueprint resolved at create time — admins can still change it by editing the
+   * blueprint or the `server_env` row directly.
+   */
+  editable?: boolean;
 }
 
 /**
@@ -69,6 +85,15 @@ export interface Blueprint {
   defaultPorts: BlueprintPort[];
   envSchema: Record<string, BlueprintEnvField>;
   /**
+   * Env var that receives the primary port's number (e.g. SERVER_PORT for the
+   * itzg Minecraft images), so the game binds inside the container exactly
+   * where Docker published it — published ports are identity mappings, so the
+   * game must listen on the host port it was allocated. The panel sets this
+   * value at create time and re-syncs it on every container recreate; it is
+   * deliberately absent from `envSchema` so owners cannot desync it.
+   */
+  primaryPortEnv?: string;
+  /**
    * Command that launches the server, run every start. `{{VAR}}` placeholders
    * are interpolated with the server's resolved env at create time. When unset
    * the image's own entrypoint/command is used unchanged.
@@ -88,6 +113,13 @@ export interface Blueprint {
   user?: string;
   /** Optional first-launch provisioning. */
   install?: BlueprintInstall;
+  /**
+   * Optional plugin/mod support: declares the provider that knows how to
+   * search and download them, the tab label, the install directory and the
+   * provider's search facets. Servers whose resolved env yields no profile
+   * (e.g. vanilla Minecraft) simply don't get the tab. See `plugins.ts`.
+   */
+  plugins?: BlueprintPluginSupport;
   expectedResourceProfile: ResourceProfile;
   /** Where the server stores its world/config inside the container. */
   dataPath: string;
@@ -99,6 +131,23 @@ export interface Blueprint {
   };
   /** True only if the image is verified to run with a read-only rootfs. */
   supportsReadOnlyRoot?: boolean;
+  /**
+   * Allocate a pseudo-TTY for the container's primary process.
+   *
+   * Some server software gates colored console output on detecting a real
+   * terminal: the itzg/minecraft-server image uses JLine3's
+   * TerminalConsoleAppender, which emits ANSI color (log levels AND Minecraft's
+   * own § chat-formatting codes) only when stdout is a TTY — without one it
+   * strips all color. The panel's ANSI renderer then has nothing to render.
+   *
+   * TTY mode changes the attach stream from Docker's 8-byte multiplexed framing
+   * to a raw byte stream (stdout and stderr are merged), which the attach layer
+   * detects per-container. It also makes the server's own log4j `§`→ANSI
+   * conversion work, giving full terminal color rather than just log-level
+   * highlighting. Off by default because most game servers don't need it and
+   * non-TTY keeps stdout/stderr cleanly separated.
+   */
+  tty?: boolean;
 }
 
 /** The primary (player-facing) port of a blueprint. */

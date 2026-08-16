@@ -22,6 +22,7 @@ import type {
   BlueprintPort,
   ResourceProfile,
 } from "./types";
+import type { BlueprintPluginSupport } from "./plugins";
 
 /** Every blueprint the panel ships. Add new built-in games here. */
 export const BUILT_IN_BLUEPRINTS: readonly Blueprint[] = [
@@ -38,6 +39,7 @@ interface BlueprintRow {
   docker_image: string;
   default_ports: BlueprintPort[];
   env_schema: Record<string, BlueprintEnvField>;
+  primary_port_env: string | null;
   startup_command: string | null;
   stop_command: string | null;
   install_image: string | null;
@@ -50,6 +52,8 @@ interface BlueprintRow {
   supports_readonly_root: boolean;
   expected_resource_profile: ResourceProfile;
   run_as: string | null;
+  tty: boolean;
+  plugins: BlueprintPluginSupport | null;
 }
 
 /** Reconstruct a full {@link Blueprint} from a database row. */
@@ -72,6 +76,7 @@ function rowToBlueprint(row: BlueprintRow): Blueprint {
     dockerImage: row.docker_image,
     defaultPorts: row.default_ports,
     envSchema: row.env_schema,
+    ...(row.primary_port_env ? { primaryPortEnv: row.primary_port_env } : {}),
     ...(row.startup_command ? { startupCommand: row.startup_command } : {}),
     ...(row.stop_command ? { stopCommand: row.stop_command } : {}),
     ...(install ? { install } : {}),
@@ -84,14 +89,17 @@ function rowToBlueprint(row: BlueprintRow): Blueprint {
     },
     supportsReadOnlyRoot: row.supports_readonly_root,
     ...(row.run_as ? { user: row.run_as } : {}),
+    ...(row.tty ? { tty: true } : {}),
+    ...(row.plugins ? { plugins: row.plugins } : {}),
   };
 }
 
 const BLUEPRINT_COLUMNS = sql`
   id, key, name, description, docker_image, default_ports, env_schema,
+  primary_port_env,
   startup_command, stop_command, install_image, install_script,
   install_entrypoint, data_path, min_cpu, min_memory_mb, min_disk_mb,
-  supports_readonly_root, expected_resource_profile, run_as
+  supports_readonly_root, expected_resource_profile, run_as, tty, plugins
 `;
 
 /**
@@ -108,9 +116,11 @@ export async function syncBlueprintsToDatabase(): Promise<void> {
     await sql`
       INSERT INTO blueprints (
         key, name, description, docker_image, default_ports, env_schema,
+        primary_port_env,
         startup_command, stop_command, install_image, install_script,
         install_entrypoint, data_path, min_cpu, min_memory_mb, min_disk_mb,
-        supports_readonly_root, expected_resource_profile, run_as, is_builtin, updated_at
+        supports_readonly_root, expected_resource_profile, run_as, tty,
+        plugins, is_builtin, updated_at
       ) VALUES (
         ${bp.key},
         ${bp.name},
@@ -118,6 +128,7 @@ export async function syncBlueprintsToDatabase(): Promise<void> {
         ${bp.dockerImage},
         ${sql.json(bp.defaultPorts as never)},
         ${sql.json(bp.envSchema as never)},
+        ${bp.primaryPortEnv ?? null},
         ${bp.startupCommand ?? null},
         ${bp.stopCommand ?? null},
         ${bp.install?.image ?? null},
@@ -130,6 +141,8 @@ export async function syncBlueprintsToDatabase(): Promise<void> {
         ${bp.supportsReadOnlyRoot === true},
         ${bp.expectedResourceProfile},
         ${bp.user ?? null},
+        ${bp.tty === true},
+        ${bp.plugins ? sql.json(bp.plugins as never) : null},
         TRUE,
         now()
       )
@@ -139,6 +152,7 @@ export async function syncBlueprintsToDatabase(): Promise<void> {
         docker_image           = EXCLUDED.docker_image,
         default_ports          = EXCLUDED.default_ports,
         env_schema             = EXCLUDED.env_schema,
+        primary_port_env       = EXCLUDED.primary_port_env,
         startup_command        = EXCLUDED.startup_command,
         stop_command           = EXCLUDED.stop_command,
         install_image          = EXCLUDED.install_image,
@@ -151,6 +165,8 @@ export async function syncBlueprintsToDatabase(): Promise<void> {
         supports_readonly_root = EXCLUDED.supports_readonly_root,
         expected_resource_profile = EXCLUDED.expected_resource_profile,
         run_as                 = EXCLUDED.run_as,
+        tty                    = EXCLUDED.tty,
+        plugins                = EXCLUDED.plugins,
         is_builtin             = TRUE,
         updated_at             = now()
     `;

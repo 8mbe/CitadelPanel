@@ -18,6 +18,7 @@ import type {
   BlueprintPort,
   ResourceProfile,
 } from "../blueprints/types";
+import type { BlueprintPluginSupport } from "../blueprints/plugins";
 
 /** The writable shape of a blueprint, as accepted from the admin form. */
 export interface BlueprintInput {
@@ -30,6 +31,8 @@ export interface BlueprintInput {
   startupCommand: string | null;
   stopCommand: string | null;
   install: { image: string; script: string; entrypoint: string[] | null } | null;
+  /** Validated plugin/mod support, or null for none. */
+  plugins: BlueprintPluginSupport | null;
   dataPath: string;
   minimums: { cpuLimit: number; memoryLimitMb: number; diskLimitMb: number };
   supportsReadOnlyRoot: boolean;
@@ -78,6 +81,7 @@ interface DetailRow {
   expected_resource_profile: ResourceProfile;
   is_builtin: boolean;
   server_count: number;
+  plugins: BlueprintPluginSupport | null;
 }
 
 function rowToDetail(row: DetailRow): AdminBlueprintDetail {
@@ -99,6 +103,7 @@ function rowToDetail(row: DetailRow): AdminBlueprintDetail {
             entrypoint: row.install_entrypoint,
           }
         : null,
+    plugins: row.plugins ?? null,
     dataPath: row.data_path,
     minimums: {
       cpuLimit: Number(row.min_cpu),
@@ -181,7 +186,7 @@ export async function createBlueprint(
     INSERT INTO blueprints (
       key, name, description, docker_image, default_ports, env_schema,
       startup_command, stop_command, install_image, install_script,
-      install_entrypoint, data_path, min_cpu, min_memory_mb, min_disk_mb,
+      install_entrypoint, plugins, data_path, min_cpu, min_memory_mb, min_disk_mb,
       supports_readonly_root, expected_resource_profile, is_builtin, updated_at
     ) VALUES (
       ${input.key},
@@ -195,6 +200,7 @@ export async function createBlueprint(
       ${input.install?.image ?? null},
       ${input.install?.script ?? null},
       ${input.install?.entrypoint ? sql.json(input.install.entrypoint as never) : null},
+      ${input.plugins ? sql.json(input.plugins as never) : null},
       ${input.dataPath},
       ${input.minimums.cpuLimit},
       ${input.minimums.memoryLimitMb},
@@ -240,6 +246,7 @@ export async function updateBlueprint(
       install_image          = ${input.install?.image ?? null},
       install_script         = ${input.install?.script ?? null},
       install_entrypoint     = ${input.install?.entrypoint ? sql.json(input.install.entrypoint as never) : null},
+      plugins                = ${input.plugins ? sql.json(input.plugins as never) : null},
       data_path              = ${input.dataPath},
       min_cpu                = ${input.minimums.cpuLimit},
       min_memory_mb          = ${input.minimums.memoryLimitMb},

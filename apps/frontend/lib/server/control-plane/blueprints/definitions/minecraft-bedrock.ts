@@ -18,6 +18,11 @@ export const minecraftBedrock: Blueprint = {
     { container: 19132, protocol: "udp", primary: true },
   ],
 
+  // Identity port mapping: the image is told to bind the allocated port inside
+  // the container (it rewrites server.properties' server-port from this env,
+  // overriding manual edits — by design of the image).
+  primaryPortEnv: "SERVER_PORT",
+
   envSchema: {
     EULA: {
       required: true,
@@ -28,37 +33,44 @@ export const minecraftBedrock: Blueprint = {
       required: false,
       default: "LATEST",
       description: "Bedrock server version, or LATEST",
+      editable: true,
     },
     SERVER_NAME: {
       required: false,
       default: "CitadelPanel Server",
       description: "Name shown in the server list",
+      editable: true,
     },
     GAMEMODE: {
       required: false,
       default: "survival",
       options: ["survival", "creative", "adventure"],
+      editable: true,
     },
     DIFFICULTY: {
       required: false,
       default: "normal",
       options: ["peaceful", "easy", "normal", "hard"],
+      editable: true,
     },
     MAX_PLAYERS: {
       required: false,
       default: "10",
       description: "Maximum concurrent players",
+      editable: true,
     },
     ONLINE_MODE: {
       required: false,
       default: "true",
       options: ["true", "false"],
       description: "Require Xbox Live authentication",
+      editable: true,
     },
     ALLOW_CHEATS: {
       required: false,
       default: "false",
       options: ["true", "false"],
+      editable: true,
     },
     // Same privilege-drop model as the Java image: /start runs as root, `gosu`s
     // to `minecraft`, and `chown`s /data. The container is pinned to uid 1000

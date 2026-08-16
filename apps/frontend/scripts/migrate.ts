@@ -58,13 +58,16 @@ for (const bp of [minecraftJava, minecraftBedrock]) {
   await sql`
     INSERT INTO blueprints (
       key, name, description, docker_image, default_ports, env_schema,
+      primary_port_env,
       startup_command, stop_command, install_image, install_script,
       install_entrypoint, data_path, min_cpu, min_memory_mb, min_disk_mb,
-      supports_readonly_root, expected_resource_profile, is_builtin, updated_at
+      supports_readonly_root, expected_resource_profile, run_as, tty, plugins,
+      is_builtin, updated_at
     ) VALUES (
       ${bp.key}, ${bp.name}, ${bp.description ?? null}, ${bp.dockerImage},
       ${sql.json(bp.defaultPorts as never)},
       ${sql.json(bp.envSchema as never)},
+      ${bp.primaryPortEnv ?? null},
       ${bp.startupCommand ?? null},
       ${bp.stopCommand ?? null},
       ${bp.install?.image ?? null},
@@ -73,7 +76,11 @@ for (const bp of [minecraftJava, minecraftBedrock]) {
       ${bp.dataPath},
       ${bp.minimums.cpuLimit}, ${bp.minimums.memoryLimitMb}, ${bp.minimums.diskLimitMb},
       ${bp.supportsReadOnlyRoot === true},
-      ${bp.expectedResourceProfile}, TRUE, now()
+      ${bp.expectedResourceProfile},
+      ${bp.user ?? null},
+      ${bp.tty === true},
+      ${bp.plugins ? sql.json(bp.plugins as never) : null},
+      TRUE, now()
     )
     ON CONFLICT (key) DO UPDATE SET
       name = EXCLUDED.name,
@@ -81,6 +88,7 @@ for (const bp of [minecraftJava, minecraftBedrock]) {
       docker_image = EXCLUDED.docker_image,
       default_ports = EXCLUDED.default_ports,
       env_schema = EXCLUDED.env_schema,
+      primary_port_env = EXCLUDED.primary_port_env,
       startup_command = EXCLUDED.startup_command,
       stop_command = EXCLUDED.stop_command,
       install_image = EXCLUDED.install_image,
@@ -92,6 +100,9 @@ for (const bp of [minecraftJava, minecraftBedrock]) {
       min_disk_mb = EXCLUDED.min_disk_mb,
       supports_readonly_root = EXCLUDED.supports_readonly_root,
       expected_resource_profile = EXCLUDED.expected_resource_profile,
+      run_as = EXCLUDED.run_as,
+      tty = EXCLUDED.tty,
+      plugins = EXCLUDED.plugins,
       is_builtin = TRUE,
       updated_at = now()
   `;
