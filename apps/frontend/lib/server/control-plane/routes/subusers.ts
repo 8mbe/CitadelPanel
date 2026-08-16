@@ -110,8 +110,12 @@ export async function handleInviteSubuser(
     action: "subuser.invite",
     targetType: "server",
     targetId: id,
+    // The email is denormalized into the record on purpose: audit history
+    // should name who was invited even after the grant is revoked or the
+    // account is deleted, when a read-time join could no longer resolve it.
     metadata: {
       subuserId: invitee.id,
+      subuserEmail: invitee.email,
       permissions,
       actorKind: access.kind,
     },
@@ -157,7 +161,11 @@ export async function handleUpdateSubuser(
     action: "subuser.update",
     targetType: "server",
     targetId: id,
-    metadata: { subuserId, permissions },
+    metadata: {
+      subuserId,
+      subuserEmail: await lookupEmail(subuserId),
+      permissions,
+    },
   });
 
   return json({ subuser: { userId: subuserId, permissions } });
@@ -171,6 +179,10 @@ export async function handleRemoveSubuser(
 ): Promise<Response> {
   const id = requireUuidParam(serverId, "serverId");
   const { user } = await requireServerOwner(request, id);
+
+  // Resolve the email before the row disappears — it names the subuser in the
+  // audit record, which must outlive the grant itself.
+  const email = await lookupEmail(subuserId);
 
   const rows = (await sql`
     DELETE FROM server_subusers
@@ -187,8 +199,16 @@ export async function handleRemoveSubuser(
     action: "subuser.remove",
     targetType: "server",
     targetId: id,
-    metadata: { subuserId },
+    metadata: { subuserId, subuserEmail: email },
   });
 
   return noContent();
+}
+
+/** The email behind a subuser id, for audit records. Null if the user is gone. */
+async function lookupEmail(userId: string): Promise<string | null> {
+  const rows = (await sql`
+    SELECT email FROM "user" WHERE id = ${userId}
+  `) as { email: string }[];
+  return rows[0]?.email ?? null;
 }

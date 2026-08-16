@@ -12,6 +12,11 @@
  *                        containers, so both must be the actor's)
  *   - databases       -> "database"
  *   - delete          -> owner or admin only (never delegable)
+ *
+ * Read endpoints gate on the same permission as their mutations — a subuser
+ * granted only `console` sees the console (and the activity feed) and nothing
+ * else. The detail view returns the caller's access (`viewer`) so the UI can
+ * hide sections the caller cannot use; the API remains the enforcement point.
  */
 
 import {
@@ -19,21 +24,29 @@ import {
   requireServerOwner,
   requireServerPermission,
 } from "../auth/middleware";
-import { isAdmin } from "../auth/rbac";
 import {
   badRequest,
+  conflict,
+  forbidden,
+  isUuid,
   json,
   noContent,
+  notFound,
+  optionalString,
   parseJsonBody,
+  requireNumber,
   requireUuidParam,
 } from "../lib/http";
+import {
+  accessAllowsOwnerOnly,
+  resolveServerAccess,
+} from "../auth/rbac";
 import { listBlueprints, getBlueprintByKey } from "../blueprints/registry";
 import { recordAuditFromRequest } from "../services/auditLog";
 import {
   deleteServer,
   getServer,
   listAccessibleServers,
-  listAllServers,
   loadEnvForDisplay,
   reconcileServerStatus,
   restartServer,
@@ -76,13 +89,15 @@ export async function handleListBlueprints(request: Request): Promise<Response> 
 }
 
 /** GET /api/servers — servers visible to the caller. */
+ * The dashboard is a personal view, so admins see their own servers here too;
+ * the fleet-wide listing lives on the admin endpoints (GET /api/admin/servers).
+ * Admins still reach any individual server via the admin panel —
+ * `resolveServerAccess` grants them access regardless of ownership.
+ */
 export async function handleListServers(request: Request): Promise<Response> {
   const user = await requireAuth(request);
 
-  // Admins see everything; everyone else sees owned + subuser servers.
-  const servers = isAdmin(user)
-    ? await listAllServers()
-    : await listAccessibleServers(user.id);
+  const servers = await listAccessibleServers(user.id);
 
   return json({ servers });
 }
@@ -94,7 +109,7 @@ export async function handleGetServer(
 ): Promise<Response> {
   const id = requireUuidParam(serverId, "serverId");
   // Console permission is the baseline "can look at this server" grant.
-  await requireServerPermission(request, id, "console");
+  const { access } = await requireServerPermission(request, id, "console");
 
   // Best-effort: a node being unreachable should not break the detail view.
   try {
@@ -104,7 +119,13 @@ export async function handleGetServer(
   }
 
   const server = await getServer(id);
-  return json({ server });
+  // Tell the caller what they can do here so the UI can hide sections they
+  // hold no permission for. Owners/admins have an empty permission set — the
+  // `kind` says they implicitly hold all of them.
+  return json({
+    server,
+    viewer: { kind: access.kind, permissions: access.permissions },
+  });
 }
 
 /** POST /api/servers/:id/start */
@@ -181,7 +202,7 @@ export async function handleDeleteServer(
   return noContent();
 }
 
-/** GET /api/servers/:id/env — masked environment variables. */
+/** GET /api/servers/:id/env — masked environment variables the owner may edit. */
 export async function handleGetServerEnv(
   request: Request,
   serverId: string,
@@ -503,6 +524,12 @@ export async function handleCreateServerLink(
   const targetId = body.targetId;
   if (typeof targetId !== "string" || !isUuid(targetId)) {
     throw badRequest('"targetId" must be a server id.');
+  }
+
+  const targetAccess = await resolveServerAccess(user, targetId);
+  if (!targetAccess) throw notFound("Server not found");
+  if (!accessAllowsOwnerOnly(targetAccess)) {
+    throw forbidden("Only the owner of both servers can connect them.");
   }
 
   const link = await createServerLink({

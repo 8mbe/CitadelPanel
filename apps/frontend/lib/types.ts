@@ -142,6 +142,11 @@ export type ServerPermission =
 /**
  * What the current caller can do on a server, as reported by the server
  * detail endpoint. Owners and admins implicitly hold every permission (their
+ * `permissions` set is empty); a subuser holds only the granted flags.
+ */
+export interface ServerViewerAccess {
+  kind: "admin" | "owner" | "subuser";
+  permissions: Partial<Record<ServerPermission, boolean>>;
 }
 
 /** A game server as the UI displays it. */
@@ -167,6 +172,10 @@ export interface ServerView {
   diskLimitMb: number;
   uptimeSeconds: number;
   createdAt: string;
+   * information" — see `lib/permissions.ts` for how the UI treats that.
+   */
+  viewer?: ServerViewerAccess;
+  /**
    * Plugin/mod support resolved from the blueprint for this server, when it
    * declares any: what the tab is called and which provider serves it. Null
    * or undefined means no plugins tab. Only set by the detail endpoint.
