@@ -509,6 +509,84 @@ export async function setVerificationPolicy(
   );
 }
 
+// --- Server limits ------------------------------------------------------------
+
+/**
+ * Owner-facing limits on what a server owner may self-provision.
+ *
+ * `maxAdditionalPortsPerServer` caps how many *additional* (non-blueprint, non
+ * -primary) port mappings an owner may add to a single server. Blueprint ports
+ * assigned at creation are never counted against this — only ports the owner
+ * adds afterwards through the settings page.
+ *
+ * A panel-wide knob (rather than per-owner or per-blueprint) on purpose: it is a
+ * guard against pool fragmentation and port exhaustion, tuned to the fleet's
+ * port pools, not a per-user entitlement.
+ */
+export interface ServerLimits {
+  maxAdditionalPortsPerServer: number;
+  /** Max databases a server owner may self-provision. 0 forbids them entirely. */
+  maxDatabasesPerServer: number;
+}
+
+const DEFAULT_SERVER_LIMITS: ServerLimits = {
+  maxAdditionalPortsPerServer: 5,
+  maxDatabasesPerServer: 2,
+};
+
+export async function getServerLimits(): Promise<ServerLimits> {
+  const stored = await readSetting<Partial<ServerLimits>>(
+    "serverLimits",
+    DEFAULT_SERVER_LIMITS,
+  );
+  const maxAdditionalPortsPerServer =
+    typeof stored.maxAdditionalPortsPerServer === "number" &&
+    Number.isFinite(stored.maxAdditionalPortsPerServer) &&
+    stored.maxAdditionalPortsPerServer >= 0
+      ? Math.floor(stored.maxAdditionalPortsPerServer)
+      : DEFAULT_SERVER_LIMITS.maxAdditionalPortsPerServer;
+  const maxDatabasesPerServer =
+    typeof stored.maxDatabasesPerServer === "number" &&
+    Number.isFinite(stored.maxDatabasesPerServer) &&
+    stored.maxDatabasesPerServer >= 0
+      ? Math.floor(stored.maxDatabasesPerServer)
+      : DEFAULT_SERVER_LIMITS.maxDatabasesPerServer;
+  return { maxAdditionalPortsPerServer, maxDatabasesPerServer };
+}
+
+/**
+ * Validate and persist an update to the server limits.
+ *
+ * Only the supplied fields change. `maxAdditionalPortsPerServer` is floored at
+ * 0 (an admin may forbid additional ports entirely) and capped at a sane upper
+ * bound so a typo cannot disable the guard by accident.
+ */
+export async function setServerLimits(
+  update: Partial<ServerLimits>,
+  updatedBy: string | null,
+): Promise<ServerLimits> {
+  const current = await getServerLimits();
+  let maxAdditionalPortsPerServer = current.maxAdditionalPortsPerServer;
+  let maxDatabasesPerServer = current.maxDatabasesPerServer;
+  if (update.maxAdditionalPortsPerServer !== undefined) {
+    const value = Number(update.maxAdditionalPortsPerServer);
+    if (!Number.isFinite(value) || value < 0 || value > 100) {
+      throw new Error("maxAdditionalPortsPerServer must be a whole number between 0 and 100.");
+    }
+    maxAdditionalPortsPerServer = Math.floor(value);
+  }
+  if (update.maxDatabasesPerServer !== undefined) {
+    const value = Number(update.maxDatabasesPerServer);
+    if (!Number.isFinite(value) || value < 0 || value > 100) {
+      throw new Error("maxDatabasesPerServer must be a whole number between 0 and 100.");
+    }
+    maxDatabasesPerServer = Math.floor(value);
+  }
+  const next: ServerLimits = { maxAdditionalPortsPerServer, maxDatabasesPerServer };
+  await writeSetting("serverLimits", next satisfies ServerLimits, updatedBy);
+  return next;
+}
+
 // --- Setup state --------------------------------------------------------------
 
 export function getSetupState(): Promise<SetupState> {

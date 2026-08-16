@@ -101,6 +101,7 @@ export function AdminGeneralSettings() {
       <CaptchaCard settings={settings} patch={patch} />
       <MailCard settings={settings} patch={patch} />
       <VerificationCard settings={settings} patch={patch} />
+      <ServerLimitsCard settings={settings} patch={patch} />
     </div>
   );
 }
@@ -600,6 +601,119 @@ function VerificationCard({
           />
         </Field>
         {error && <p className="text-sm text-destructive">{error}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+// --- Server limits ------------------------------------------------------------
+
+function ServerLimitsCard({
+  settings,
+  patch,
+}: {
+  settings: AdminSettings;
+  patch: (update: AdminSettingsUpdate) => Promise<AdminSettings>;
+}) {
+  const [maxPorts, setMaxPorts] = React.useState(
+    String(settings.serverLimits.maxAdditionalPortsPerServer),
+  );
+  const [maxDbs, setMaxDbs] = React.useState(
+    String(settings.serverLimits.maxDatabasesPerServer),
+  );
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [saved, setSaved] = React.useState(false);
+
+  const save = async () => {
+    const ports = Number(maxPorts);
+    const dbs = Number(maxDbs);
+    if (!Number.isInteger(ports) || ports < 0 || ports > 100) {
+      setError("Max additional ports must be a whole number between 0 and 100.");
+      return;
+    }
+    if (!Number.isInteger(dbs) || dbs < 0 || dbs > 100) {
+      setError("Max databases must be a whole number between 0 and 100.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await patch({
+        serverLimits: {
+          maxAdditionalPortsPerServer: ports,
+          maxDatabasesPerServer: dbs,
+        },
+      });
+      setSaved(true);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Could not save server limits.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const unchanged =
+    Number(maxPorts) === settings.serverLimits.maxAdditionalPortsPerServer &&
+    Number(maxDbs) === settings.serverLimits.maxDatabasesPerServer;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Server limits</CardTitle>
+        <CardDescription>
+          Owner-facing caps on what server owners may self-provision. Set to 0 to
+          forbid a behaviour entirely.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <Field>
+          <FieldLabel htmlFor="max-additional-ports">
+            Max additional ports per server
+          </FieldLabel>
+          <Input
+            id="max-additional-ports"
+            type="number"
+            min={0}
+            max={100}
+            value={maxPorts}
+            onChange={(e) => setMaxPorts(e.target.value)}
+          />
+          <FieldDescription>
+            How many extra ports an owner may publish beyond the game&apos;s
+            built-in ports. Affects every server on the panel.
+          </FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="max-databases">
+            Max databases per server
+          </FieldLabel>
+          <Input
+            id="max-databases"
+            type="number"
+            min={0}
+            max={100}
+            value={maxDbs}
+            onChange={(e) => setMaxDbs(e.target.value)}
+          />
+          <FieldDescription>
+            How many MySQL databases an owner may provision on the node&apos;s
+            shared database server. Set to 0 to disable self-provisioning.
+          </FieldDescription>
+        </Field>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {saved && !error && (
+          <p className="text-sm text-emerald-600 dark:text-emerald-400">Saved.</p>
+        )}
+        <div>
+          <Button onClick={save} disabled={loading || unchanged}>
+            {loading && <Spinner />}
+            Save server limits
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

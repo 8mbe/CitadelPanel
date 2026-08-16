@@ -20,6 +20,7 @@
 
 import { requireAdmin } from "../auth/middleware";
 import { auth } from "../auth/betterAuth";
+import { env } from "../config/env";
 import { sql } from "../db/client";
 import {
   badRequest,
@@ -52,6 +53,8 @@ import {
   setMailSettings,
   setVerificationPolicy,
   setTimezone,
+  getServerLimits,
+  setServerLimits,
   CAPTCHA_PROVIDERS,
 } from "../services/settings";
 
@@ -361,9 +364,43 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
     }
   }
 
+  if (body.serverLimits !== undefined) {
+    if (
+      typeof body.serverLimits !== "object" ||
+      body.serverLimits === null ||
+      Array.isArray(body.serverLimits)
+    ) {
+      throw badRequest('"serverLimits" must be an object');
+    }
+    const serverLimits = body.serverLimits as Record<string, unknown>;
+    const update: Partial<{ maxAdditionalPortsPerServer: number; maxDatabasesPerServer: number }> = {};
+    if (serverLimits.maxAdditionalPortsPerServer !== undefined) {
+      update.maxAdditionalPortsPerServer = requireNumber(
+        serverLimits,
+        "maxAdditionalPortsPerServer",
+        { min: 0, max: 100 },
+      );
+    }
+    if (serverLimits.maxDatabasesPerServer !== undefined) {
+      update.maxDatabasesPerServer = requireNumber(
+        serverLimits,
+        "maxDatabasesPerServer",
+        { min: 0, max: 100 },
+      );
+    }
+    try {
+      await setServerLimits(update, admin.id);
+    } catch (error) {
+      throw badRequest(
+        error instanceof Error ? error.message : "Invalid server limits",
+      );
+    }
+    changed.push("serverLimits");
+  }
+
   if (changed.length === 0) {
     throw badRequest(
-      "Provide at least one of: timezone, captcha, mail, verification",
+      "Provide at least one of: timezone, captcha, mail, verification, serverLimits",
     );
   }
 
@@ -380,6 +417,7 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
     captcha: await getAdminCaptchaView(),
     mail: await getPublicMailSettings(),
     verification: await getVerificationPolicy(),
+    serverLimits: await getServerLimits(),
   });
 }
 
@@ -398,6 +436,7 @@ export async function handleGetSettings(request: Request): Promise<Response> {
     captcha: await getAdminCaptchaView(),
     mail: await getPublicMailSettings(),
     verification: await getVerificationPolicy(),
+    serverLimits: await getServerLimits(),
     setup: await getSetupState(),
   });
 }
