@@ -112,8 +112,7 @@ export interface NodeDetail {
  * Derived client-side from `servers[].ports` so no second endpoint is needed.
  */
 export interface NodePortAllocation {
-  hostPort: number;
-  containerPort: number;
+  port: number;
   protocol: string;
   isPrimary: boolean;
   serverId: string;
@@ -122,10 +121,22 @@ export interface NodePortAllocation {
 
 /** A published port on a server, as the UI displays it. */
 export interface ServerPortView {
-  hostPort: number;
-  containerPort: number;
+  /** The published port — identity mapping: host and container side are this number. */
+  port: number;
   protocol: string;
   isPrimary: boolean;
+  /** True for owner-added ports (removable); false for blueprint ports. */
+  isAdditional: boolean;
+  /** Optional owner note, e.g. "Metrics". Null when none was set. */
+  label: string | null;
+}
+
+/**
+ * The per-server permission flags a subuser can be granted. Mirrors
+ * `SUBUSER_PERMISSIONS` on the backend; only the UI-facing copy lives here so
+ * client code never imports server modules.
+ */
+export type ServerPermission =
   | "database";
 
 /**
@@ -144,7 +155,7 @@ export interface ServerView {
   nodeHostname: string | null;
   ownerId: string;
   primaryPort: number;
-  // Every published port; `primaryPort` is the host port of the primary one.
+  // Every published port; `primaryPort` is the primary one's number.
   ports: ServerPortView[];
   // Live resource samples while running. Zero until the stats feed fills them.
   cpuPercent: number;
@@ -154,12 +165,7 @@ export interface ServerView {
   cpuLimit: number;
   memoryLimitMb: number;
   diskLimitMb: number;
-  playerCount: number;
-  playerMax: number;
   uptimeSeconds: number;
-  // Live network throughput samples while running (bits per second).
-  networkRxBps: number;
-  networkTxBps: number;
   createdAt: string;
    * Plugin/mod support resolved from the blueprint for this server, when it
    * declares any: what the tab is called and which provider serves it. Null

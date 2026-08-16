@@ -8,11 +8,9 @@ import {
   FolderOpen,
   HardDrive,
   MemoryStick,
-  Network,
   Play,
   Timer,
   TriangleAlert,
-  Users,
 } from "lucide-react";
 
 import { StatusBadge } from "@/components/status-badge";
@@ -37,7 +35,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, getServerStats, listServers } from "@/lib/api";
-import { formatMbPair, formatNet, formatUptime } from "@/lib/format";
+import { formatMbPair, formatUptime } from "@/lib/format";
 import type { ServerView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -83,8 +81,8 @@ function Meter({
 /**
  * One server tile on the selection screen. The server name is a stretched link
  * over the whole card; the footer holds quick-action links. Live stats (CPU,
- * memory, players, network) come from the stats feed on the server page, so
- * on this summary they read zero until opened.
+ * memory, disk) come from the stats feed on the server page, so on this
+ * summary they read zero until opened.
  */
 function ServerTile({ server }: { server: ServerView }) {
   const running = server.status === "running";
@@ -121,26 +119,15 @@ function ServerTile({ server }: { server: ServerView }) {
 
       <CardContent className="flex flex-1 flex-col gap-3">
         <div className="flex items-center justify-between gap-3 border-y py-2 text-xs">
-          <span className="inline-flex items-center gap-1.5 tabular-nums">
-            <Users className="size-3.5 shrink-0 text-muted-foreground" />
-            {running ? (
-              <>
-                <span className="font-medium">{server.playerCount}</span>
-                <span className="text-muted-foreground">
-                  / {server.playerMax}
-                </span>
-              </>
-            ) : (
-              <span className="text-muted-foreground">No players</span>
-            )}
-          </span>
           <span className="inline-flex items-center gap-1.5 text-muted-foreground tabular-nums">
             <Timer className="size-3.5 shrink-0" />
             {running ? formatUptime(server.uptimeSeconds) : "Offline"}
           </span>
+          <span className="text-muted-foreground tabular-nums">
+            {running ? "Online" : "—"}
+          </span>
         </div>
 
-        {/* Network has no ceiling to fill a bar against, so it sits below. */}
         <div className="grid grid-cols-3 gap-x-4">
           <Meter
             icon={Cpu}
@@ -168,16 +155,10 @@ function ServerTile({ server }: { server: ServerView }) {
         </div>
 
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Network className="size-3.5 shrink-0" />
-          {running ? (
-            <span className="tabular-nums">
-              &darr; {formatNet(server.networkRxBps)}
-              <span className="px-1.5 text-muted-foreground/40">·</span>
-              &uarr; {formatNet(server.networkTxBps)}
-            </span>
-          ) : (
-            <span>No traffic</span>
-          )}
+          <Cpu className="size-3.5 shrink-0" />
+          <span className="tabular-nums">
+            {server.cpuLimit} vCPU{server.cpuLimit === 1 ? "" : "s"} allocated
+          </span>
         </div>
       </CardContent>
 
@@ -275,8 +256,8 @@ export function YourServers() {
   }, []);
 
   // Poll live resource samples for running servers so the tiles' CPU, memory,
-  // disk and network meters reflect current usage rather than the zeros the
-  // list endpoint seeds. One request per running server every 5s — the stats
+  // and disk meters reflect current usage rather than the zeros the list
+  // endpoint seeds. One request per running server every 5s — the stats
   // endpoint is per-server (no user-facing batch endpoint), and a typical user
   // has a handful of servers. Stops re-arming once no servers are running.
   //
@@ -320,8 +301,6 @@ export function YourServers() {
             cpuPercent: Math.round(stats.cpuPercent),
             memoryUsedMb: Math.round(stats.memoryUsageMb),
             diskUsedMb: Math.round(stats.diskUsageMb),
-            networkRxBps: stats.networkRxBytes * 8,
-            networkTxBps: stats.networkTxBytes * 8,
           };
         }),
       );

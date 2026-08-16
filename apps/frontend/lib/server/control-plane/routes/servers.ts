@@ -189,7 +189,7 @@ export async function handleGetServerEnv(
   const id = requireUuidParam(serverId, "serverId");
   await requireServerPermission(request, id, "settings");
 
-  return json({ env: await loadEnvForDisplay(id) });
+  return json({ env: await loadOwnerEnv(id) });
 }
 
 /** GET /api/servers/:id/logs — recent console output. */
@@ -240,11 +240,79 @@ export async function handleGetServerStats(
 }
 
 /**
+ * Resolve the blueprint backing a server. Throws if the server or its blueprint
+ * is missing — both are bugs in practice, since deletion cascades.
+ */
+async function getServerBlueprint(id: string) {
+  const rows = (await sql`
+    SELECT bp.key AS blueprint_key
+    FROM servers s
+    JOIN blueprints bp ON bp.id = s.blueprint_id
+    WHERE s.id = ${id}
+  `) as { blueprint_key: string }[];
+
+  const blueprintKey = rows[0]?.blueprint_key;
+  if (!blueprintKey) throw badRequest("Server has no valid blueprint");
+
+  const blueprint = await getBlueprintByKey(blueprintKey);
+  if (!blueprint) throw badRequest("Server blueprint is not available");
+  return blueprint;
+}
+
+/**
+ * Load env vars for the owner's view: the keys the blueprint marks `editable`,
+ * with secret values masked. Non-editable vars are internal configuration the
+ * owner cannot see or change. Schema metadata (description, options) is joined
+ * in so the client can render the right input affordance per field.
+ *
+ * Keys with no stored row yet (an editable field without a default that the
+ * owner never filled, e.g. JVM_OPTS) are included with their schema default or
+ * an empty string — otherwise the owner would have no input to type into and
+ * no way to set the variable at all.
+ */
+async function loadOwnerEnv(
+  id: string,
+): Promise<
+  {
+    key: string;
+    value: string;
+    isSecret: boolean;
+    description: string | null;
+    options: string[] | null;
+  }[]
+> {
+  const blueprint = await getServerBlueprint(id);
+  const editableSchema = Object.entries(blueprint.envSchema).filter(
+    ([, field]) => field.editable === true,
+  );
+
+  const rows = await loadEnvForDisplay(id);
+  const stored = new Map(
+    rows
+      .filter((row) => editableSchema.some(([key]) => key === row.key))
+      .map((row) => [row.key, row]),
+  );
+
+  return editableSchema.map(([key, field]) => {
+    const row = stored.get(key);
+    return {
+      key,
+      value: row?.value ?? field.default ?? "",
+      isSecret: row?.isSecret ?? field.secret === true,
+      description: field.description ?? null,
+      options:
+        field.options && field.options.length > 0 ? field.options : null,
+    };
+  });
+}
+
+/**
  * PATCH /api/servers/:id/env — update environment variables.
  *
- * Only keys already present in the blueprint's schema are accepted; the update
- * is routed through the same validation as creation so a user cannot inject
- * arbitrary env vars into their container.
+ * Only keys the blueprint marks `editable` are accepted; everything else is
+ * rejected loudly so the owner knows the change did not take effect. Validation
+ * mirrors creation so a user cannot inject arbitrary env vars or bypass
+ * `options` constraints.
  */
 export async function handleUpdateServerEnv(
   request: Request,
@@ -260,26 +328,16 @@ export async function handleUpdateServerEnv(
     throw badRequest('"env" must be an object of key/value pairs');
   }
 
-  const rows = (await sql`
-    SELECT bp.key AS blueprint_key
-    FROM servers s
-    JOIN blueprints bp ON bp.id = s.blueprint_id
-    WHERE s.id = ${id}
-  `) as { blueprint_key: string }[];
-
-  const blueprintKey = rows[0]?.blueprint_key;
-  if (!blueprintKey) throw badRequest("Server has no valid blueprint");
-
-  const blueprint = await getBlueprintByKey(blueprintKey);
-  if (!blueprint) throw badRequest("Server blueprint is not available");
+  const blueprint = await getServerBlueprint(id);
 
   const applied: string[] = [];
   for (const [key, value] of Object.entries(updates as Record<string, unknown>)) {
     const field = blueprint.envSchema[key];
-    // Unknown keys are rejected loudly here (rather than silently dropped) so
-    // the user knows their change did not take effect.
     if (!field) {
       throw badRequest(`"${key}" is not a configurable variable for this game`);
+    }
+    if (field.editable !== true) {
+      throw badRequest(`"${key}" cannot be changed on a running server`);
     }
     if (typeof value !== "string") {
       throw badRequest(`"${key}" must be a string`);
@@ -306,15 +364,115 @@ export async function handleUpdateServerEnv(
   });
 
   return json({
-    env: await loadEnvForDisplay(id),
+    env: await loadOwnerEnv(id),
     note: "Changes take effect the next time the server is restarted.",
   });
 }
+
+/**
+// --- Additional port assignment -----------------------------------------------
+
+/** GET /api/servers/:id/ports — the server's published ports. */
+export async function handleListServerPorts(
+  request: Request,
+  serverId: string,
+): Promise<Response> {
+  const id = requireUuidParam(serverId, "serverId");
+  // Same permission as adding/removing a port: the port table is management
+  // information, not something a console-only subuser needs.
+  await requireServerPermission(request, id, "settings");
+
+  const server = await getServer(id);
+  return json({ ports: server.ports });
+}
+
+/**
+ * POST /api/servers/:id/ports — publish an additional port.
+ *
+ * Body: { port, protocol, label? }
+ *
+ * The port is an identity mapping (host N → container N) and must be available:
+ * in the node's port pool, unallocated, and free on the host. The container is
+ * recreated so the new binding takes effect. Requires the "settings"
+ * permission, matching the env-update action.
+ */
+export async function handleAddServerPort(
+  request: Request,
+  serverId: string,
+): Promise<Response> {
+  const id = requireUuidParam(serverId, "serverId");
+  const { user } = await requireServerPermission(request, id, "settings");
+
+  const body = await parseJsonBody(request);
+  const port = requireNumber(body, "port", {
+    min: 1,
+    max: 65535,
+  });
+
+  const protocol = body.protocol;
+  if (protocol !== "tcp" && protocol !== "udp") {
+    throw badRequest('"protocol" must be "tcp" or "udp"');
+  }
+
+  const label = optionalString(body, "label", { max: 64 });
+
+  // un-startable), so refuse before allocating a port that would just sit idle.
+  const server = await getServer(id);
+  const updated = await addServerPort({
+    serverId: id,
+    actorId: user.id,
+    port,
+    protocol,
+    label,
+  });
+
+  return json({ server: updated });
+}
+
+/**
+ * DELETE /api/servers/:id/ports — remove an additional port.
+ *
+ * Query: ?port=&protocol= identifies the port to remove. Only owner-added
+ * (additional) ports are removable; blueprint ports are rejected. The container
+ * is recreated to release the binding. Requires "settings".
+ */
+export async function handleRemoveServerPort(
+  request: Request,
+  serverId: string,
+): Promise<Response> {
+  const id = requireUuidParam(serverId, "serverId");
+  const { user } = await requireServerPermission(request, id, "settings");
+
+  const url = new URL(request.url);
+  const portRaw = url.searchParams.get("port");
+  const protocol = url.searchParams.get("protocol");
+
+  if (portRaw === null) {
+    throw badRequest('"port" query parameter is required');
+  }
+  const port = Number(portRaw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw badRequest('"port" must be an integer between 1 and 65535');
+  }
+  if (protocol !== "tcp" && protocol !== "udp") {
+    throw badRequest('"protocol" must be "tcp" or "udp"');
+  }
+
+  const server = await getServer(id);
+  const updated = await removeServerPort(id, port, protocol, user.id);
+
+  return json({ server: updated });
+}
+
 // --- Server links ---------------------------------------------------------------
 
 /**
  * GET /api/servers/:id/links — this server's connections to other servers.
  *
+ * Same "settings" gate as the ports list: the addresses are management
+ * information (they reveal host ports), not something a console-only subuser
+ * needs.
+ */
 export async function handleListServerLinks(
   request: Request,
   serverId: string,

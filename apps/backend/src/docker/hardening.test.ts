@@ -153,6 +153,16 @@ describe("networking", () => {
     ).toThrow(/1024/);
   });
 
+  test("rejects non-identity host→container mappings", () => {
+    expect(() =>
+      buildHardenedContainerConfig(
+        baseSpec({
+          ports: [{ hostPort: 25570, containerPort: 25565, protocol: "tcp" }],
+        }),
+      ),
+    ).toThrow(/identical/);
+  });
+
   test("keeps outbound internet access working for plugin and mod downloads", () => {
     // Regression guard for plan.md section 8: full egress blocking is NOT the
     // design. `Internal: true` would break plugin update checks.
@@ -168,6 +178,7 @@ describe("networking", () => {
     const network = buildIsolatedNetworkConfig("citadel_srv_abc");
     expect(network.Options["com.docker.network.bridge.enable_icc"]).toBe("false");
   });
+
   test("keeps outbound NAT on link networks too", () => {
     // A linked server still needs plugin/mod egress; the link only grants
     // reachability to its one peer, not a walled garden.

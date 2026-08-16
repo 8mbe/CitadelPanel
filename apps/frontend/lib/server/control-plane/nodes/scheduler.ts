@@ -400,6 +400,48 @@ export async function allocateHostPort(
   );
 }
 
+/**
+ * Allocate one specific host port, or fail with the reason it is unavailable.
+ *
+ * Owner-added additional ports are identity mappings the owner chose by number
+ * (a plugin config references that exact port), so silently substituting a
+ * fallback — what {@link allocateHostPort} does — would be wrong. Every failure
+ * mode gets its own readable 409: not in the node's pool, already allocated to
+ * another server, or held on the host by another process.
+ */
+export async function allocateSpecificHostPort(
+  nodeId: string,
+  protocol: PortProtocol,
+  port: number,
+): Promise<number> {
+  const pool = await expandNodePortPool(nodeId, protocol);
+  if (!pool.includes(port)) {
+    throw conflict(
+      `Port ${port}/${protocol} is not in this node's reserved port pool. ` +
+        "An admin must add it to the pool before it can be published.",
+    );
+  }
+
+  const rows = (await sql`
+    SELECT 1 FROM server_ports
+    WHERE node_id = ${nodeId} AND host_port = ${port} AND protocol = ${protocol}
+  `) as { 1: number }[];
+  if (rows.length > 0) {
+    throw conflict(
+      `Port ${port}/${protocol} is already allocated to a server on this node.`,
+    );
+  }
+
+  const [probe] = await checkPortsFree(nodeId, [{ hostPort: port, protocol }]);
+  if (!probe?.free) {
+    throw conflict(
+      `Port ${port}/${protocol} is in use on the node's host by another process.`,
+    );
+  }
+
+  return port;
+}
+
 /** Resolve the chosen node into a full node record with credentials. */
 export async function resolveScheduledNode(
   nodeId: string,

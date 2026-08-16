@@ -120,6 +120,16 @@ function assertSpecIsSane(spec: HardenedContainerSpec): void {
         `Invalid host port ${port.hostPort}: must be in the unprivileged range 1024-65535`,
       );
     }
+    // Published ports are identity mappings: the game binds the same number
+    // inside the container that Docker binds on the host (the panel tells it
+    // which number via the blueprint's primary-port env). A split mapping
+    // means a confused panel, and the game would listen where nothing is
+    // forwarded — refuse it rather than run a server nobody can reach.
+    if (port.containerPort !== port.hostPort) {
+      throw new Error(
+        `Invalid port mapping ${port.hostPort}→${port.containerPort}: host and container port must be identical`,
+      );
+    }
   }
 }
 
@@ -158,15 +168,19 @@ export function buildHardenedContainerConfig(
     // running game server ("op someone", "save-all", "stop"). Without this the
     // console is read-only, and `attach` has nothing to write to.
     //
-    // No TTY: a pty would make the server emit escape sequences and echo input
-    // back, which is wrong for a log stream. Non-TTY also keeps stdout and
-    // stderr separately framed, which is what `stripDockerLogHeaders` expects.
+    // TTY is opt-in per blueprint (see HardenedContainerSpec.tty): some server
+    // software — notably itzg/minecraft-server via JLine3 — only emits ANSI
+    // color when stdout is a real terminal, so a blueprint that wants colored
+    // console output allocates a pty. Non-TTY (the default) keeps stdout and
+    // stderr separately 8-byte-framed, which is what the attach/demux layers
+    // expect; a TTY container's attach stream is raw and unframed, which the
+    // attach layer detects and handles per-container.
     OpenStdin: true,
     StdinOnce: false,
     AttachStdin: true,
     AttachStdout: true,
     AttachStderr: true,
-    Tty: false,
+    Tty: spec.tty === true,
 
     // Labels let the watcher and cleanup routines identify panel-managed
     // containers without keeping a separate index.
@@ -229,9 +243,6 @@ export function buildHardenedContainerConfig(
   };
 }
 
-/**
- * Options for the per-server bridge network.
- *
 /** Options shared by every managed bridge network. */
 function bridgeNetworkConfig(networkName: string, icc: boolean) {
   return {

@@ -288,21 +288,20 @@ function NodeDetailBody({
   const { servers, abuse } = detail;
   const hasHealth = health !== null;
 
-  // Ports flattened across servers for the allocation view, sorted by host port.
+  // Ports flattened across servers for the allocation view, sorted by port.
   const ports: NodePortAllocation[] = React.useMemo(
     () =>
       servers
         .flatMap((server) =>
           server.ports.map((port) => ({
-            hostPort: port.hostPort,
-            containerPort: port.containerPort,
+            port: port.port,
             protocol: port.protocol,
             isPrimary: port.isPrimary,
             serverId: server.id,
             serverName: server.name,
           })),
         )
-        .sort((a, b) => a.hostPort - b.hostPort),
+        .sort((a, b) => a.port - b.port),
     [servers],
   );
 
@@ -362,7 +361,7 @@ function NodeDetailBody({
       <PortPoolCard
         nodeId={detail.node.id}
         entries={detail.portPool}
-        allocatedHostPorts={new Set(ports.map((p) => p.hostPort))}
+        allocatedHostPorts={new Set(ports.map((p) => p.port))}
         onChanged={onChanged}
       />
 
@@ -396,7 +395,7 @@ function NodeHeader({
   onTested: (result: NodeHealthResult) => void;
   onDelete: () => void;
 }) {
-  const { node } = detail;
+  const { node, servers } = detail;
   const [testing, setTesting] = React.useState(false);
   const [toggling, setToggling] = React.useState(false);
   const [deleteOpen, setDeleteOpen] = React.useState(false);
@@ -595,7 +594,6 @@ function NodeHeader({
           {deleteError && (
             <p className="text-sm text-destructive">{deleteError}</p>
           )}
-          <p className="text-sm text-muted-foreground">
             A node that still hosts servers cannot be deleted — migrate or
             remove those servers first.
           </p>
@@ -1159,7 +1157,7 @@ function ServersCard({
                         : "—"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {primary ? primary.hostPort : "—"}
+                      {primary ? primary.port : "—"}
                     </TableCell>
                     <TableCell>
                       <Button
@@ -1425,15 +1423,14 @@ function PortsCard({ ports }: { ports: NodePortAllocation[] }) {
           <span className="text-muted-foreground">({ports.length})</span>
         </CardTitle>
         <CardDescription>
-          Host ports published on this node across all servers.
+          Ports published on this node across all servers.
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="text-right">Host port</TableHead>
-              <TableHead className="text-right">Container port</TableHead>
+              <TableHead className="text-right">Port</TableHead>
               <TableHead>Protocol</TableHead>
               <TableHead>Server</TableHead>
               <TableHead className="w-10" />
@@ -1443,7 +1440,7 @@ function PortsCard({ ports }: { ports: NodePortAllocation[] }) {
             {ports.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={5}
+                  colSpan={4}
                   className="h-24 text-center text-sm text-muted-foreground"
                 >
                   No ports allocated on this node.
@@ -1451,12 +1448,9 @@ function PortsCard({ ports }: { ports: NodePortAllocation[] }) {
               </TableRow>
             ) : (
               ports.map((port) => (
-                <TableRow key={`${port.serverId}:${port.hostPort}:${port.protocol}`} className="group">
+                <TableRow key={`${port.serverId}:${port.port}:${port.protocol}`} className="group">
                   <TableCell className="text-right tabular-nums font-mono">
-                    {port.hostPort}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums font-mono text-muted-foreground">
-                    {port.containerPort}
+                    {port.port}
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline" className="font-mono text-xs uppercase">

@@ -30,6 +30,7 @@ import {
 } from "../blueprints/types";
 import {
   allocateHostPort,
+  allocateSpecificHostPort,
   scheduleServer,
   scheduleServerOnNode,
   type ResourceRequest,
@@ -47,7 +48,10 @@ import {
   dropServerDatabase,
   type PortBinding,
 } from "../nodes/nodeServerApi";
+import { checkPortsFree, type PortProtocol } from "../nodes/nodePortsApi";
+import { expandNodePortPool } from "../nodes/portPool";
 import { assertNodeReadyToProvision } from "../nodes/nodeApi";
+import { getNodeWithSecrets } from "../nodes/nodeRegistry";
 import { recordAudit } from "./auditLog";
 import { getServerLimits } from "./settings";
 import { listServerLinkNetworks, detachAllServerLinks } from "./serverLinks";
@@ -96,7 +100,14 @@ export interface ServerSummary {
   cpuLimit: number;
   memoryLimitMb: number;
   diskLimitMb: number;
-  ports: { hostPort: number; containerPort: number; protocol: string; isPrimary: boolean }[];
+  ports: {
+    /** The published port — identity mapping: host and container side are this number. */
+    port: number;
+    protocol: string;
+    isPrimary: boolean;
+    isAdditional: boolean;
+    label: string | null;
+  }[];
   createdAt: Date;
    * Plugin/mod support resolved against the server's env, when the blueprint
    * declares it: what the tab is called and which provider serves it. Only
@@ -114,22 +125,27 @@ export interface ServerSummary {
 
 async function loadPorts(serverId: string) {
   const rows = (await sql`
-    SELECT host_port, container_port, protocol, is_primary
+    SELECT host_port, protocol, is_primary, is_additional, label
     FROM server_ports
     WHERE server_id = ${serverId}
-    ORDER BY is_primary DESC, container_port ASC
+    ORDER BY is_primary DESC, is_additional ASC, host_port ASC
   `) as {
     host_port: number;
-    container_port: number;
     protocol: string;
     is_primary: boolean;
+    is_additional: boolean;
+    label: string | null;
   }[];
 
+  // host_port IS the port: bindings are identity mappings (host N → container
+  // N), so container_port — still stored for the table's primary key — is not
+  // part of the API surface.
   return rows.map((row) => ({
-    hostPort: row.host_port,
-    containerPort: row.container_port,
+    port: row.host_port,
     protocol: row.protocol,
     isPrimary: row.is_primary,
+    isAdditional: row.is_additional,
+    label: row.label,
   }));
 }
 
@@ -404,26 +420,46 @@ export async function createServer(
       const hostPort = await allocateHostPort(
         node.nodeId,
         port.protocol,
-        isPrimary ? input.preferredPort : undefined,
+        isPrimary ? input.preferredPort ?? port.container : port.container,
       );
 
+      // Identity mapping: the same number is published on the host and bound
+      // inside the container (host N → container N), so a port is one number,
+      // not a pair.
       await sql`
         INSERT INTO server_ports (
           server_id, node_id, host_port, container_port, protocol, is_primary
         ) VALUES (
-          ${server.id}, ${node.nodeId}, ${hostPort}, ${port.container},
+          ${server.id}, ${node.nodeId}, ${hostPort}, ${hostPort},
           ${port.protocol}, ${isPrimary}
         )
       `;
 
+      if (isPrimary) primaryHostPort = hostPort;
+
       bindings.push({
         hostPort,
-        containerPort: port.container,
+        containerPort: hostPort,
         protocol: port.protocol,
       });
     }
 
+    // The game must listen on the number that was actually published, so the
+    // primary port's number is injected into the env (SERVER_PORT for the itzg
+    // images) before anything is persisted or interpolated.
+    if (blueprint.primaryPortEnv && primaryHostPort !== undefined) {
+      resolved.values[blueprint.primaryPortEnv] = String(primaryHostPort);
+    }
+
     await storeEnv(server.id, resolved.values, resolved.secretKeys);
+
+    // A blueprint's startup command is interpolated with the resolved env once,
+    // here, so the agent receives a concrete argv rather than a template. This
+    // runs after the primary-port env is set, so {{SERVER_PORT}}-style
+    // placeholders see the allocated port.
+    const command = blueprint.startupCommand
+      ? ["/bin/sh", "-c", interpolateCommand(blueprint.startupCommand, resolved.values)]
+      : undefined;
 
     // First-launch provisioning, when the blueprint defines it: run the install
     // script against the (agent-owned) data directory before the runtime
@@ -800,6 +836,123 @@ export async function reconcileServerStatus(serverId: string): Promise<ServerSta
  * Load a server's resolved env vars for re-creating its container.
  *
  * `server_env` stores secret values encrypted; the container needs the plaintext.
+ * Used by {@link recreateServerContainer}, which must hand the agent the same env
+ * the server originally booted with — minus the masking the display path applies.
+ */
+async function loadEnvForContainer(serverId: string): Promise<Record<string, string>> {
+  const rows = (await sql`
+    SELECT key, value, is_secret FROM server_env
+    WHERE server_id = ${serverId}
+  `) as { key: string; value: string; is_secret: boolean }[];
+
+  const env: Record<string, string> = {};
+  for (const row of rows) {
+    env[row.key] = row.is_secret ? decryptSecret(row.value) : row.value;
+  }
+  return env;
+}
+
+/**
+ * Rebuild a server's container against its current `server_ports` set.
+ *
+ * Docker's port bindings (`HostConfig.PortBindings`) are fixed at container
+ * creation, so adding or removing a published port is not an in-place update —
+ * the container must be recreated. The data volume is a bind mount owned by the
+ * agent, so recreating is non-destructive: world data, config and logs survive.
+ *
+ * The recreated container keeps the server's image, env, resource limits and
+ * startup command exactly as they were at provisioning. It is left in `stopped`
+ * state, matching the post-create contract: the owner starts it when ready.
+ *
+ * A server that is currently `running` is stopped first (graceful, then the
+ * container is removed). One that never had a container (still `creating`/error
+ * during provisioning) is treated as a plain create rather than a recreate.
+ */
+async function recreateServerContainer(serverId: string): Promise<void> {
+  const server = await loadServerRow(serverId);
+  const blueprintKey = await getBlueprintKeyById(server.blueprint_id);
+  if (!blueprintKey) throw badRequest("Server blueprint is not available");
+  const blueprint = await getBlueprintByKey(blueprintKey);
+  if (!blueprint) throw badRequest("Server blueprint is not available");
+
+  // The full port set the recreated container must publish: blueprint defaults
+  // plus any owner-added additional ports, all read from `server_ports`.
+  const portRows = (await sql`
+    SELECT host_port, protocol, is_primary
+    FROM server_ports
+    WHERE server_id = ${serverId}
+    ORDER BY is_primary DESC, host_port ASC
+  `) as { host_port: number; protocol: string; is_primary: boolean }[];
+
+  if (portRows.length === 0) {
+    throw badRequest("Server has no ports to publish");
+  }
+
+  // Identity mapping by construction: the published number is the number the
+  // game binds inside the container.
+  const ports: PortBinding[] = portRows.map((row) => ({
+    hostPort: row.host_port,
+    containerPort: row.host_port,
+    protocol: row.protocol as PortProtocol,
+  }));
+
+  const env = await loadEnvForContainer(serverId);
+
+  // Keep the primary-port env (SERVER_PORT) pinned to the allocated port: the
+  // game re-reads it on every boot, so a stale value would leave it listening
+  // where nothing is forwarded. Persisting keeps `server_env` truthful for the
+  // display path as well.
+  if (blueprint.primaryPortEnv) {
+    const primary = portRows.find((row) => row.is_primary) ?? portRows[0]!;
+    const portValue = String(primary.host_port);
+    if (env[blueprint.primaryPortEnv] !== portValue) {
+      env[blueprint.primaryPortEnv] = portValue;
+      await storeEnv(serverId, { [blueprint.primaryPortEnv]: portValue }, []);
+    }
+  }
+
+  // Stop + remove the old container so the new one can take its port bindings.
+  // Idempotent: a missing container (first create, or already removed) is fine.
+  if (server.container_id) {
+    try {
+      await stopServerContainer(server.node_id, serverId, 30);
+    } catch (error) {
+      console.error(
+        `[serverManager] stop before recreate failed for ${serverId} (continuing):`,
+        error,
+      );
+    }
+    try {
+      await deleteServerContainer(server.node_id, serverId, false);
+    } catch (error) {
+      console.error(
+        `[serverManager] remove before recreate failed for ${serverId} (continuing):`,
+        error,
+      );
+    }
+  }
+
+  // Rebuild the same startup command the create path produced, so a recreated
+  // container launches identically. The command was interpolated at create time
+  // and is not stored, so it is re-derived from the blueprint + resolved env.
+  const command = blueprint.startupCommand
+    ? ["/bin/sh", "-c", interpolateCommand(blueprint.startupCommand, env)]
+    : undefined;
+
+  const wasRunning = server.status === "running";
+
+  await setStatus(serverId, "creating");
+  try {
+    const { containerId } = await createServerContainer(server.node_id, serverId, {
+      image: blueprint.dockerImage,
+      containerDataPath: blueprint.dataPath,
+      env,
+      ports,
+      cpuLimit: Number(server.cpu_limit),
+      memoryLimitMb: server.memory_limit_mb,
+      readOnlyRootFilesystem: blueprint.supportsReadOnlyRoot === true,
+      command,
+      user: blueprint.user,
       tty: blueprint.tty === true,
       // Re-attach the DB network if the server has databases — the old
       // container's network attachments are lost when it is removed.
@@ -835,6 +988,180 @@ export async function reconcileServerStatus(serverId: string): Promise<ServerSta
 }
 
 /** Count a server's owner-added (additional) ports, for limit checks. */
+export async function countAdditionalPorts(serverId: string): Promise<number> {
+  const rows = (await sql`
+    SELECT COUNT(*)::int AS count FROM server_ports
+    WHERE server_id = ${serverId} AND is_additional = TRUE
+  `) as { count: number }[];
+  return rows[0]?.count ?? 0;
+}
+
+export interface AddServerPortInput {
+  serverId: string;
+  actorId: string;
+  /** The port to publish (1-65535) — identity-mapped, host and container. */
+  port: number;
+  protocol: PortProtocol;
+  /** Optional owner note shown in the ports card, e.g. "Metrics". */
+  label?: string;
+}
+
+/**
+ * Add an owner-configured additional port to a server.
+ *
+ * The port is an identity mapping — the same number is published on the host
+ * and bound in the container — and must be available: a member of the node's
+ * port pool for this protocol, unallocated in the panel, and free on the host
+ * (verified through the agent). A port that fails any check is a readable 409;
+ * no fallback is substituted because the owner chose that exact number.
+ *
+ * The container is then recreated so the new binding takes effect — Docker
+ * cannot apply a new port binding to a running container.
+ *
+ * Enforces the panel-wide `maxAdditionalPortsPerServer` limit before
+ * allocating, so a refused add never consumes a pool port. Blueprint ports and
+ * the primary port are never affected and never count against the limit.
+ */
+export async function addServerPort(
+  input: AddServerPortInput,
+): Promise<ServerSummary> {
+  const server = await loadServerRow(input.serverId);
+
+  if (
+    !Number.isInteger(input.port) ||
+    input.port < 1 ||
+    input.port > 65535
+  ) {
+    throw badRequest("port must be an integer between 1 and 65535");
+  }
+
+  const label =
+    input.label !== undefined && input.label !== null
+      ? input.label.trim().slice(0, 64)
+      : null;
+
+  // Enforce the per-server additional-port limit before touching the pool.
+  const limits = await getServerLimits();
+  const current = await countAdditionalPorts(input.serverId);
+  if (current >= limits.maxAdditionalPortsPerServer) {
+    throw conflict(
+      `This server already has the maximum of ${limits.maxAdditionalPortsPerServer} additional port(s). ` +
+        "Remove one before adding another, or ask an administrator to raise the limit.",
+    );
+  }
+
+  // A (port, protocol) pair must be unique per server — the table's PRIMARY KEY
+  // enforces it, but a pre-check gives a readable 409 instead of a raw
+  // constraint violation.
+  const existing = (await sql`
+    SELECT 1 FROM server_ports
+    WHERE server_id = ${input.serverId}
+      AND host_port = ${input.port}
+      AND protocol = ${input.protocol}
+  `) as { 1: number }[];
+  if (existing.length > 0) {
+    throw conflict(
+      `Port ${input.port}/${input.protocol} is already published on this server.`,
+    );
+  }
+
+  // The port must be reservable exactly as asked — see the function doc for why
+  // there is no fallback here, unlike at create.
+  await allocateSpecificHostPort(server.node_id, input.protocol, input.port);
+
+  await sql`
+    INSERT INTO server_ports (
+      server_id, node_id, host_port, container_port, protocol,
+      is_primary, is_additional, label
+    ) VALUES (
+      ${input.serverId}, ${server.node_id}, ${input.port}, ${input.port},
+      ${input.protocol}, FALSE, TRUE, ${label}
+    )
+  `;
+
+  await recreateServerContainer(input.serverId);
+
+  await recordAudit({
+    userId: input.actorId,
+    action: "server.port.add",
+    targetType: "server",
+    targetId: input.serverId,
+    metadata: {
+      port: input.port,
+      protocol: input.protocol,
+      label,
+    },
+  });
+
+  return getServer(input.serverId);
+}
+
+/**
+ * Remove an owner-added additional port from a server.
+ *
+ * Blueprint ports (`is_additional = FALSE`) cannot be removed here — they are
+ * part of the game's definition, not an owner assignment. The container is
+ * recreated afterwards so the freed host binding is actually released.
+ *
+ * The port is freed from `server_ports` by the row delete; it returns to the
+ * node's pool for future allocation. There is no lingering Docker binding once
+ * the old container is removed.
+ */
+export async function removeServerPort(
+  serverId: string,
+  port: number,
+  protocol: PortProtocol,
+  actorId: string,
+): Promise<ServerSummary> {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw badRequest("port must be an integer between 1 and 65535");
+  }
+
+  const rows = (await sql`
+    DELETE FROM server_ports
+    WHERE server_id = ${serverId}
+      AND host_port = ${port}
+      AND protocol = ${protocol}
+      AND is_additional = TRUE
+    RETURNING host_port, is_primary
+  `) as { host_port: number; is_primary: boolean }[];
+
+  if (rows.length === 0) {
+    // Either the port doesn't exist on this server, or it is a blueprint port
+    // (not additional). Both are reported the same way to avoid leaking which.
+    throw notFound(
+      "That additional port was not found on this server. Blueprint ports cannot be removed.",
+    );
+  }
+
+  const removed = rows[0]!;
+  if (removed.is_primary) {
+    // Unreachable by construction: the create path sets is_primary only on
+    // blueprint ports (is_additional = FALSE), and addServerPort always sets
+    // is_primary = FALSE. The DELETE above filtered on is_additional = TRUE, so
+    // a primary row can never have been returned here. Guard anyway so a future
+    // schema drift cannot silently delete the player-facing port.
+    throw conflict(
+      "The primary port cannot be removed. Blueprint ports are managed by the server's game.",
+    );
+  }
+
+  await recreateServerContainer(serverId);
+
+  await recordAudit({
+    userId: actorId,
+    action: "server.port.remove",
+    targetType: "server",
+    targetId: serverId,
+    metadata: {
+      port,
+      protocol,
+    },
+  });
+
+  return getServer(serverId);
+}
+
 // --- Database provisioning ----------------------------------------------------
 
 /**

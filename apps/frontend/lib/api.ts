@@ -272,12 +272,17 @@ export interface ApiServerSummary {
   memoryLimitMb: number;
   diskLimitMb: number;
   ports: {
-    hostPort: number;
-    containerPort: number;
+    port: number;
     protocol: string;
     isPrimary: boolean;
+    isAdditional: boolean;
+    label: string | null;
   }[];
   createdAt: string;
+  /** Why the server was suspended, shown to the owner. Null when not suspended. */
+  suspensionReason: string | null;
+  /** When the server was last suspended (ISO string). Null when not suspended. */
+  suspendedAt: string | null;
   /** Present on detail responses only: resolved plugin/mod support, if any. */
   pluginSupport?: {
     label: string;
@@ -325,7 +330,7 @@ export function toServerView(summary: ApiServerSummary): ServerView {
     nodeId: summary.nodeId,
     nodeHostname: summary.nodeHostname ?? null,
     ownerId: summary.ownerId,
-    primaryPort: primary?.hostPort ?? 0,
+    primaryPort: primary?.port ?? 0,
     ports: summary.ports,
     cpuPercent: 0,
     memoryUsedMb: 0,
@@ -333,11 +338,7 @@ export function toServerView(summary: ApiServerSummary): ServerView {
     cpuLimit: summary.cpuLimit,
     memoryLimitMb: summary.memoryLimitMb,
     diskLimitMb: summary.diskLimitMb,
-    playerCount: 0,
-    playerMax: 0,
     uptimeSeconds: 0,
-    networkRxBps: 0,
-    networkTxBps: 0,
     createdAt: summary.createdAt,
     suspensionReason: summary.suspensionReason ?? null,
     suspendedAt: summary.suspendedAt ?? null,
@@ -421,6 +422,105 @@ export async function getServerLogs(id: string, tail = 200): Promise<string> {
  * An environment variable the server owner may view and edit. Only keys the
  * blueprint marks `editable` are returned; secret values arrive masked.
  */
+export interface ServerEnvVar {
+  key: string;
+  value: string;
+  isSecret: boolean;
+  description: string | null;
+  /** Allowed values, when the field is constrained to a fixed set. */
+  options: string[] | null;
+}
+
+/** GET /api/servers/:id/env — the editable env vars for a server. */
+export async function getServerEnv(id: string): Promise<ServerEnvVar[]> {
+  const data = await request<{ env: ServerEnvVar[] }>(
+    `/api/servers/${id}/env`,
+  );
+  return data.env;
+}
+
+/**
+ * PATCH /api/servers/:id/env — update one or more editable env vars.
+ *
+ * Send only the keys that changed. Returns the full refreshed set and a note
+ * that changes take effect on the next restart.
+ */
+export async function updateServerEnv(
+  id: string,
+  updates: Record<string, string>,
+): Promise<{ env: ServerEnvVar[]; note: string }> {
+  return request<{ env: ServerEnvVar[]; note: string }>(
+    `/api/servers/${id}/env`,
+    { method: "PATCH", body: JSON.stringify({ env: updates }) },
+  );
+}
+
+// --- Additional port assignment ------------------------------------------------
+
+/** A published port on a server, as the ports card renders it. */
+export interface ServerPort {
+  /** The published port — identity mapping: host and container side are this number. */
+  port: number;
+  protocol: "tcp" | "udp";
+  isPrimary: boolean;
+  /** True for owner-added ports (removable); false for blueprint ports. */
+  isAdditional: boolean;
+  /** Optional owner note, e.g. "Metrics". Null when none was set. */
+  label: string | null;
+}
+
+/** GET /api/servers/:id/ports — the server's published ports. */
+export async function getServerPorts(id: string): Promise<ServerPort[]> {
+  const data = await request<{ ports: ServerPort[] }>(
+    `/api/servers/${id}/ports`,
+  );
+  return data.ports;
+}
+
+/**
+ * POST /api/servers/:id/ports — publish an additional port.
+ *
+ * The port is an identity mapping (host N → container N) and must be available:
+ * in the node's port pool, unallocated, and free on the host. The container is
+ * recreated to apply the new binding, so a running server is briefly restarted.
+ * Returns the updated server summary.
+ *
+ * @param label Optional note shown in the ports card, e.g. "Metrics".
+ */
+export async function addServerPort(
+  id: string,
+  payload: {
+    port: number;
+    protocol: "tcp" | "udp";
+    label?: string;
+  },
+): Promise<ApiServerSummary> {
+  const data = await request<{ server: ApiServerSummary }>(
+    `/api/servers/${id}/ports`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+  return data.server;
+}
+
+/**
+ * DELETE /api/servers/:id/ports?port=&protocol= — remove an additional port.
+ *
+ * Only owner-added (additional) ports are removable; blueprint ports are
+ * rejected. The container is recreated to release the binding. Returns the
+ * updated server summary.
+ */
+export async function removeServerPort(
+  id: string,
+  port: number,
+  protocol: "tcp" | "udp",
+): Promise<ApiServerSummary> {
+  const data = await request<{ server: ApiServerSummary }>(
+    `/api/servers/${id}/ports?port=${port}&protocol=${protocol}`,
+    { method: "DELETE" },
+  );
+  return data.server;
+}
+
 // --- Server links ----------------------------------------------------------------
 
 /**
@@ -440,6 +540,11 @@ export interface ServerLink {
   mode: "internal" | "external";
   /** The hostname this server reaches the peer at. */
   host: string;
+  /** The peer's primary published port; null before one is allocated. */
+  port: number | null;
+  createdAt: string;
+}
+
 /** GET /api/servers/:id/links — this server's connections to other servers. */
 export async function getServerLinks(serverId: string): Promise<ServerLink[]> {
   const data = await request<{ links: ServerLink[] }>(
@@ -483,6 +588,15 @@ export interface ServerDatabase {
   user: string;
   /** The host address the game server connects to (the DB container's IP). */
   host: string;
+  port: number;
+  /**
+   * Plaintext password — only present at creation or password reset. Null when
+   * listing; the stored value is encrypted and never decrypted for display.
+   */
+  password: string | null;
+  createdAt: string;
+}
+
 /** GET /api/servers/:id/databases — the server's provisioned databases. */
 export async function getServerDatabases(
   serverId: string,
@@ -860,6 +974,12 @@ export function killServer(id: string): Promise<ApiServerSummary> {
 // --- SFTP credentials --------------------------------------------------------
 
 /** A credential whose plaintext password was just revealed (creation/regenerate). */
+  port: number;
+  username: string | null;
+  hasCredential: boolean;
+}
+
+/** GET /api/servers/:id/sftp/connection — host/port/username for an SFTP client. */
 // --- Blueprints ---------------------------------------------------------------
 
 /** GET /api/blueprints — the blueprints a server can be provisioned with. */
@@ -1741,6 +1861,7 @@ export interface AdminSettings {
   captcha: AdminCaptchaSettings;
   mail: AdminMailSettings;
   verification: { requireVerifiedSignIn: boolean };
+  serverLimits: { maxAdditionalPortsPerServer: number; maxDatabasesPerServer: number };
 }
 
 /** GET /api/admin/settings — current general settings (admin only). */
@@ -1767,6 +1888,7 @@ export interface AdminSettingsUpdate {
     resendApiKey?: string | null;
   };
   verification?: { requireVerifiedSignIn: boolean };
+  serverLimits?: { maxAdditionalPortsPerServer?: number; maxDatabasesPerServer?: number };
 }
 
 /**
