@@ -27,6 +27,8 @@ import {
   provisionServerDatabase,
   dropServerDatabase,
 } from "./docker/database";
+import { createSftpServer } from "./sftp";
+import {
   copyPath,
   createDirectory,
   deletePath,
@@ -1096,5 +1098,31 @@ console.log(`[agent] docker socket: ${config.dockerSocket}`);
 // accepting requests (see `dataRoot.ts` on why this does not exit).
 await reportDataRootAtBoot();
 
+// --- SFTP server ------------------------------------------------------------
+//
+// Starts on its own TCP port (default 8022), in this same process. Auth is
+// delegated to the panel via `sftpAuth.ts` — the same callback posture the
+// direct console uses — so `PANEL_URL` is required. Without it the SFTP server
+// still starts but every auth attempt is rejected (the panel cannot be reached
+// to validate the credential), and we log that clearly so an operator knows
+// why connections fail.
+if (config.sftpPort > 0) {
   if (!config.panelUrl) {
     console.warn(
+      `[agent] SFTP server will start on port ${config.sftpPort} but PANEL_URL is not set — ` +
+        "all SFTP logins will be rejected. Set PANEL_URL to enable SFTP auth.",
+    );
+  }
+  try {
+    const sftpServer = await createSftpServer();
+    sftpServer.listen(config.sftpPort, "0.0.0.0");
+    console.log(`[agent] SFTP server listening on 0.0.0.0:${config.sftpPort}`);
+  } catch (error) {
+    // A failure to start the SFTP server (host-key generation, port in use)
+    // must not take down the HTTP/WS agent — lifecycle routes still work.
+    console.error(
+      "[agent] SFTP server failed to start:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+}

@@ -40,12 +40,22 @@ services:
       # below and set both paths (e.g. /certs/agent.pem, /certs/agent-key.pem).
       AGENT_TLS_CERT: ${AGENT_TLS_CERT:-}
       AGENT_TLS_KEY: ${AGENT_TLS_KEY:-}
+      # SFTP server (custom ssh2, on its own port). Set to 0 to disable.
+      SFTP_PORT: ${SFTP_PORT:-8022}
     ports:
       # Bind to a private interface in production, e.g. "10.0.0.5:8081:8081".
+      # For browser-direct console on a public node, put a TLS proxy in front
+      # and expose that instead.
       - "8081:8081"
+      # SFTP — expose only where clients can reach it. Keep behind a firewall or
+      # TLS tunnel in production; SFTP auth is delegated to the panel but the
+      # traffic itself is unencrypted without a host key + TLS proxy in front.
+      - "8022:8022"
     volumes:
       # The daemon this agent manages. This is why the token matters so much.
       - /var/run/docker.sock:/var/run/docker.sock
       # Server data. A host bind (not a named volume) so the path the agent
       # reports is the same path the daemon bind-mounts into game containers.
       - /var/lib/citadel/servers:/var/lib/citadel/servers
+      # TLS material for the agent's wss:// server, if enabled above.
+      - ./certs:/certs:ro

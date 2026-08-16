@@ -48,6 +48,13 @@ import {
   handleWriteFile,
 } from "@/lib/server/control-plane/routes/files";
 import {
+  handleCreateSftpCredential,
+  handleDeleteSftpCredential,
+  handleGetSftpConnection,
+  handleListSftpCredentials,
+  handleRegenerateSftpCredential,
+  handleSftpAuthenticate,
+} from "@/lib/server/control-plane/routes/sftp";
 import {
   handleAllNodesHealth,
   handleCreateNode,
@@ -183,6 +190,13 @@ const patterns: Array<{
   { pattern: /^servers\/([^/]+)\/plugins\/([^/]+)$/, methods: { DELETE: handleRemovePlugin } },
   { pattern: /^servers\/([^/]+)\/subusers$/, methods: { GET: handleListSubusers, POST: handleInviteSubuser } },
   { pattern: /^servers\/([^/]+)\/subusers\/([^/]+)$/, methods: { PATCH: handleUpdateSubuser, DELETE: handleRemoveSubuser } },
+  { pattern: /^servers\/([^/]+)\/sftp\/connection$/, methods: { GET: handleGetSftpConnection } },
+  { pattern: /^servers\/([^/]+)\/sftp\/credentials$/, methods: { GET: handleListSftpCredentials, POST: handleCreateSftpCredential } },
+  // `regenerate` must be matched before the `:credentialId` pattern, otherwise
+  // POST /sftp/credentials/regenerate matches the DELETE-only credential route
+  // and returns 405 instead of reaching the regenerate handler.
+  { pattern: /^servers\/([^/]+)\/sftp\/credentials\/regenerate$/, methods: { POST: handleRegenerateSftpCredential } },
+  { pattern: /^servers\/([^/]+)\/sftp\/credentials\/([^/]+)$/, methods: { DELETE: handleDeleteSftpCredential } },
   { pattern: /^admin\/nodes\/([^/]+)$/, methods: { GET: handleGetNode, PATCH: handleUpdateNode, DELETE: handleDeleteNode } },
   { pattern: /^admin\/nodes\/([^/]+)\/health$/, methods: { GET: handleNodeHealth } },
   { pattern: /^admin\/nodes\/([^/]+)\/ports$/, methods: { GET: handleListNodePortPool, POST: handleAddNodePortPoolEntry } },

@@ -95,6 +95,28 @@ export const config = {
   tlsKey: optional("AGENT_TLS_KEY", ""),
 
   /**
+   * Port for the custom SFTP server (ssh2). Runs in the same process as the HTTP
+   * agent, on its own TCP listener. 8022 keeps it clear of the agent's 8081 and
+   * of the game servers' own port range. Set to empty to disable SFTP entirely.
+   */
+  sftpPort: optionalInt("SFTP_PORT", 8022),
+
+  /**
+   * Path to the SFTP host key (RSA, PEM). Generated on first boot if missing and
+   * persisted so clients see a stable fingerprint across restarts. Defaults to a
+   * sibling of the data root so it survives alongside server data.
+   */
+  sftpHostKeyPath: optional(
+    "SFTP_HOST_KEY_PATH",
+    resolve(optional("SERVER_DATA_ROOT", "/var/lib/citadel/servers"), "../sftp_host_key"),
+  ),
+
+  /**
+   * The shared per-node database network. Created by `scripts/setup-node-db.ts`,
+   * which also starts the MariaDB container. The agent attaches a server's
+   * container to this network when its owner provisions a database, so the game
+   * server can reach MariaDB (and nothing else on that network — ICC is off).
+   */
   nodeDbNetwork: optional("NODE_DB_NETWORK", "node_db_net"),
 
   /**

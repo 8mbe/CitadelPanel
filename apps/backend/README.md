@@ -16,11 +16,22 @@ database, or browser-facing API. The Next.js control plane is its only caller.
 Every `/v1/*` request requires a bearer token. Treat that token as a root
 credential because this process controls the Docker socket.
 
+## Environment
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AGENT_TOKEN` (or legacy `NODE_TOKEN`) | — required | Bearer the panel presents on every lifecycle call. ≥32 chars; root-equivalent. |
+| `AGENT_PORT` | `8081` | Port the HTTP/WS server listens on. |
+| `SERVER_DATA_ROOT` | `/var/lib/citadel/servers` | Root for per-server data; paths are derived from it. |
+| `DOCKER_SOCKET` | `/var/run/docker.sock` | The local Docker daemon socket. |
+| `AGENT_MAX_FILE_BYTES` | `8388608` | Cap on file-manager read/write size. |
 | `AGENT_MAX_UPLOAD_BYTES` | `134217728` | Cap on a single uploaded file or URL pull (128 MB). |
 | `AGENT_MAX_DIR_ENTRIES` | `2000` | Cap on directory listing size. |
 | `PANEL_URL` | `""` | Panel base URL for direct-console validate/audit callbacks. Empty disables the browser-direct console (the WS path returns 503). |
 | `AGENT_TLS_CERT` | `""` | Path to PEM cert. When set with `AGENT_TLS_KEY`, the agent serves HTTPS/WSS. |
 | `AGENT_TLS_KEY` | `""` | Path to PEM key. |
+| `SFTP_PORT` | `8022` | Port for the custom SFTP server. `0` disables SFTP entirely. Auth is delegated to the panel (requires `PANEL_URL`). |
+| `SFTP_HOST_KEY_PATH` | `<data root>/../sftp_host_key` | Path to the RSA host key (PEM). Generated on first boot if missing; persisted so the fingerprint is stable across restarts. |
 | `NODE_DB_NETWORK` | `node_db_net` | Docker network the shared node database lives on. The setup script creates it; the agent attaches server containers to it when their owner provisions a database. |
 | `NODE_DB_CONTAINER` | `citadel-node-db` | Name of the MariaDB container on `NODE_DB_NETWORK`. Used by the agent to exec SQL and resolve the database's IP. |
 

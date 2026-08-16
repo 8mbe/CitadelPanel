@@ -1021,12 +1021,77 @@ export function killServer(id: string): Promise<ApiServerSummary> {
 // --- SFTP credentials --------------------------------------------------------
 
 /** A credential whose plaintext password was just revealed (creation/regenerate). */
+export interface SftpCredential {
+  id: string;
+  serverId: string;
+  userId: string;
+  username: string;
+  /** Plaintext password — returned only on create/regenerate, never on list. */
+  password: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A credential in a list — no password, ever. */
+export interface SftpCredentialSummary {
+  id: string;
+  serverId: string;
+  userId: string;
+  username: string;
+  userEmail: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Connection details for configuring an SFTP client. */
+export interface SftpConnection {
+  hostname: string;
   port: number;
   username: string | null;
   hasCredential: boolean;
 }
 
 /** GET /api/servers/:id/sftp/connection — host/port/username for an SFTP client. */
+export function getSftpConnection(serverId: string): Promise<SftpConnection> {
+  return request<SftpConnection>(`/api/servers/${serverId}/sftp/connection`);
+}
+
+/** GET /api/servers/:id/sftp/credentials — list credentials (no passwords). */
+export async function listSftpCredentials(
+  serverId: string,
+): Promise<SftpCredentialSummary[]> {
+  const data = await request<{ credentials: SftpCredentialSummary[] }>(
+    `/api/servers/${serverId}/sftp/credentials`,
+  );
+  return data.credentials;
+}
+
+/** POST /api/servers/:id/sftp/credentials — mint (or rotate) the caller's credential. */
+export function createSftpCredential(serverId: string): Promise<SftpCredential> {
+  return request<SftpCredential>(`/api/servers/${serverId}/sftp/credentials`, {
+    method: "POST",
+  });
+}
+
+/** POST /api/servers/:id/sftp/credentials/regenerate — rotate the password. */
+export function regenerateSftpCredential(serverId: string): Promise<SftpCredential> {
+  return request<SftpCredential>(
+    `/api/servers/${serverId}/sftp/credentials/regenerate`,
+    { method: "POST" },
+  );
+}
+
+/** DELETE /api/servers/:id/sftp/credentials/:credentialId — revoke a credential. */
+export function deleteSftpCredential(
+  serverId: string,
+  credentialId: string,
+): Promise<void> {
+  return request<void>(
+    `/api/servers/${serverId}/sftp/credentials/${credentialId}`,
+    { method: "DELETE" },
+  );
+}
+
 // --- Blueprints ---------------------------------------------------------------
 
 /** GET /api/blueprints — the blueprints a server can be provisioned with. */
@@ -1208,6 +1273,8 @@ export async function adminUnbanUser(userId: string): Promise<void> {
   await request(`/api/admin/users/${userId}/unban`, { method: "POST" });
 }
 
+/**
+ * A single account with its owned servers, for the admin user-detail page.
  * Mirrors {@link ApiUser} but carries the raw Better Auth row fields plus the
  * server list (returned in snake_case by the handler, normalized here).
  */
