@@ -6,6 +6,11 @@
  *   - viewing         -> any access (owner, subuser, admin)
  *   - start/stop      -> "start_stop"
  *   - settings/env    -> "settings"
+ *   - ports           -> "settings" (viewing and editing alike)
+ *   - links (view)    -> "settings" (matching ports)
+ *   - links (edit)    -> owner or admin of BOTH servers (a link attaches two
+ *                        containers, so both must be the actor's)
+ *   - databases       -> "database"
  *   - delete          -> owner or admin only (never delegable)
  */
 
@@ -36,6 +41,12 @@ import {
   stopServer,
   killServer,
 } from "../services/serverManager";
+import {
+  createServerLink,
+  listServerLinks,
+  removeServerLink,
+} from "../services/serverLinks";
+import { listAuditLogs } from "../services/auditLog";
 // (killServer kept at the end of the lifecycle-action group.)
 import { getServerLogs, getServerStats } from "../nodes/nodeServerApi";
 import { sql } from "../db/client";
@@ -293,3 +304,70 @@ export async function handleUpdateServerEnv(
     note: "Changes take effect the next time the server is restarted.",
   });
 }
+// --- Server links ---------------------------------------------------------------
+
+/**
+ * GET /api/servers/:id/links — this server's connections to other servers.
+ *
+export async function handleListServerLinks(
+  request: Request,
+  serverId: string,
+): Promise<Response> {
+  const id = requireUuidParam(serverId, "serverId");
+  await requireServerPermission(request, id, "settings");
+
+  return json({ links: await listServerLinks(id) });
+}
+
+/**
+ * POST /api/servers/:id/links — connect this server to another of the actor's
+ * servers. Body: { targetId }
+ *
+ * Owner-or-admin on **both** servers: the link attaches the target's container
+ * to a shared network, so a subuser with `settings` on one server must not be
+ * able to reach into a server they only partially control. The target's
+ * existence is not revealed to unrelated users (404, as everywhere).
+ */
+export async function handleCreateServerLink(
+  request: Request,
+  serverId: string,
+): Promise<Response> {
+  const id = requireUuidParam(serverId, "serverId");
+  const { user } = await requireServerOwner(request, id);
+
+  const body = await parseJsonBody(request);
+  const targetId = body.targetId;
+  if (typeof targetId !== "string" || !isUuid(targetId)) {
+    throw badRequest('"targetId" must be a server id.');
+  }
+
+  const link = await createServerLink({
+    serverId: id,
+    targetId,
+    actorId: user.id,
+  });
+
+  return json({ link }, 201);
+}
+
+/**
+ * DELETE /api/servers/:id/links/:linkId — remove a connection.
+ *
+ * Owner-or-admin of this server (the service allows a link to be removed from
+ * either side). The agent detaches the pair network before the row is deleted,
+ * so an unreachable node fails the request rather than leaving live
+ * connectivity behind a vanished link.
+ */
+export async function handleRemoveServerLink(
+  request: Request,
+  serverId: string,
+  linkId: string,
+): Promise<Response> {
+  const id = requireUuidParam(serverId, "serverId");
+  const linkParam = requireUuidParam(linkId, "linkId");
+  const { user } = await requireServerOwner(request, id);
+
+  await removeServerLink(id, linkParam, user.id);
+  return noContent();
+}
+

@@ -257,6 +257,41 @@ export async function sampleNodeServers(
   return result.samples;
 }
 
+// --- Server links --------------------------------------------------------------
+
+/**
+ * POST /v1/servers/:id/links — put two linked servers on their pairwise
+ * network so each reaches the other by container name.
+ *
+ * Only called for same-node links: servers on different nodes share no Docker
+ * daemon, so there is no network to attach — those links ride the target's
+ * public `nodeHostname:port` and never touch the agent.
+ */
+export async function linkServerContainers(
+  nodeId: string,
+  serverId: string,
+  targetId: string,
+): Promise<{ networkName: string }> {
+  return nodeRequest(nodeId, `/v1/servers/${serverId}/links`, {
+    method: "POST",
+    body: { targetId },
+  });
+}
+
+/**
+ * DELETE /v1/servers/:id/links/:targetId — detach both containers from the
+ * pair's network and remove it. Idempotent agent-side.
+ */
+export async function unlinkServerContainers(
+  nodeId: string,
+  serverId: string,
+  targetId: string,
+): Promise<void> {
+  await nodeRequest(nodeId, `/v1/servers/${serverId}/links/${targetId}`, {
+    method: "DELETE",
+  });
+}
+
 
 // --- File manager -------------------------------------------------------------
 export interface FileEntry {

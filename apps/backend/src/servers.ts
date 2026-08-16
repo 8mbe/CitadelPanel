@@ -38,6 +38,8 @@ import {
   type ContainerState,
 } from "./docker/container";
 import {
+  buildLinkNetworkConfig,
+  linkNetworkName,
   serverContainerName,
   serverInstallContainerName,
   serverNetworkName,
@@ -65,6 +67,10 @@ export interface CreateContainerRequest {
   command?: string[];
   /** `uid` or `uid:gid` to run as; see HardenedContainerSpec.user. */
   user?: string;
+  /** Extra networks to attach (e.g. node_db_net when the server has a DB). */
+  extraNetworks?: string[];
+  /** Allocate a pseudo-TTY; see HardenedContainerSpec.tty. */
+  tty?: boolean;
 }
 
 /**
@@ -134,6 +140,8 @@ export async function createServerContainer(
     readOnlyRootFilesystem: request.readOnlyRootFilesystem,
     command: request.command,
     user: request.user,
+    extraNetworks: request.extraNetworks,
+    tty: request.tty === true,
   });
 
   return { containerId, hostDataPath };
@@ -262,6 +270,68 @@ export async function getServerState(serverId: string): Promise<ContainerState> 
   return inspectContainerState(docker, containerId);
 }
 
+/**
+ * Put two linked servers' containers on their pairwise network, so each can
+ * reach the other by container name (`citadel-<id12>`) over Docker's embedded
+ * DNS.
+ *
+ * This is the one sanctioned exception to "a server can reach no other
+ * tenant's container": the panel only calls it after an owner explicitly
+ * connected the two servers. The network is created with ICC enabled — that
+ * is the point of a link — and holds exactly the two linked containers, so a
+ * compromised server can only ever reach servers it was explicitly linked to.
+ *
+ * Both containers must already exist (409 otherwise): there is nothing to
+ * attach to before that. Containers recreated later re-attach automatically
+ * because the panel passes the link network via `extraNetworks`; this route
+ * exists to link two already-created servers without a recreate.
+ *
+ * Idempotent: re-linking reuses the existing network, and an already-attached
+ * container is treated as success.
+ */
+export async function linkServerContainers(
+  serverId: string,
+  targetId: string,
+): Promise<{ networkName: string }> {
+  const networkName = linkNetworkName(serverId, targetId);
+  const [containerId, targetContainerId] = await Promise.all([
+    requireContainerId(serverId),
+    requireContainerId(targetId),
+  ]);
+
+  await ensureNetwork(docker, networkName, buildLinkNetworkConfig(networkName));
+  await attachToNetwork(docker, networkName, containerId);
+  await attachToNetwork(docker, networkName, targetContainerId);
+  return { networkName };
+}
+
+/**
+ * Tear a link down: detach both containers and remove the pair's network.
+ *
+ * Idempotent throughout — a missing container or network means the link is
+ * already gone, which is success. Removal is "if empty": if some endpoint is
+ * still attached (a container recreated mid-unlink), the empty-or-not network
+ * is left for the next unlink rather than failing the call.
+ */
+export async function unlinkServerContainers(
+  serverId: string,
+  targetId: string,
+): Promise<void> {
+  const networkName = linkNetworkName(serverId, targetId);
+  const [containerId, targetContainerId] = await Promise.all([
+    findContainerId(serverId),
+    findContainerId(targetId),
+  ]);
+
+  if (containerId) {
+    await detachFromNetwork(docker, networkName, containerId);
+  }
+  if (targetContainerId) {
+    await detachFromNetwork(docker, networkName, targetContainerId);
+  }
+  await removeNetworkIfEmpty(docker, networkName);
+}
+
 export async function getServerLogs(serverId: string, tail: number): Promise<string> {
   return getContainerLogs(docker, await requireContainerId(serverId), tail);
 }
@@ -293,7 +363,10 @@ export async function streamServerLogs(
     abortSignal: signal,
   });
 
-  return demuxDockerLogStream(nodeStream);
+  // A TTY container's log stream is raw bytes (no 8-byte multiplexing), so the
+  // demuxer must forward as-is rather than misparsing payload as frame headers.
+  const tty = await containerIsTty(docker, containerId);
+  return demuxDockerLogStream(nodeStream, tty);
 }
 
 /**
@@ -424,7 +497,12 @@ export async function attachToServer(
   serverId: string,
   handlers: AttachHandlers,
 ): Promise<Attachment> {
-  return attachToContainer(await requireContainerId(serverId), handlers);
+  const containerId = await requireContainerId(serverId);
+  // A TTY container's attach stream is raw bytes (no 8-byte framing), so the
+  // attach layer reads it differently — see docker/attach.ts. This is what lets
+  // a Minecraft server's JLine3 color codes reach the console.
+  const tty = await containerIsTty(docker, containerId);
+  return attachToContainer(containerId, handlers, tty);
 }
 
 /**

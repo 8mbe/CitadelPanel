@@ -232,22 +232,43 @@ export function buildHardenedContainerConfig(
 /**
  * Options for the per-server bridge network.
  *
- * `enable_icc=false` is what prevents two containers that end up on the same
- * network from reaching each other. For a single-server network it is belt and
- * braces; for the shared `node_db_net` it is load-bearing (plan.md 7.1.1).
- */
-export function buildIsolatedNetworkConfig(networkName: string) {
+/** Options shared by every managed bridge network. */
+function bridgeNetworkConfig(networkName: string, icc: boolean) {
   return {
     Name: networkName,
     Driver: "bridge",
     CheckDuplicate: true,
     Internal: false, // outbound NAT must keep working for plugin/mod downloads
     Options: {
-      "com.docker.network.bridge.enable_icc": "false",
+      "com.docker.network.bridge.enable_icc": icc ? "true" : "false",
       "com.docker.network.bridge.enable_ip_masquerade": "true",
     },
     Labels: { "citadel.managed": "true" },
   };
+}
+
+/**
+ * Options for the per-server bridge network.
+ *
+ * `enable_icc=false` is what prevents two containers that end up on the same
+ * network from reaching each other. For a single-server network it is belt and
+ * braces; for the shared `node_db_net` it is load-bearing (plan.md 7.1.1).
+ */
+export function buildIsolatedNetworkConfig(networkName: string) {
+  return bridgeNetworkConfig(networkName, false);
+}
+
+/**
+ * Options for a link network — the pairwise bridge that lets exactly two
+ * linked servers reach each other (see `linkNetworkName`).
+ *
+ * The mirror image of {@link buildIsolatedNetworkConfig}: ICC is the feature
+ * here. A link is an explicit, user-initiated grant of connectivity between
+ * two specific servers, so the network holds only those two containers and
+ * enables ICC between them — never a third tenant's.
+ */
+export function buildLinkNetworkConfig(networkName: string) {
+  return bridgeNetworkConfig(networkName, true);
 }
 
 /** Deterministic per-server network name, derived from the server id. */
@@ -258,6 +279,20 @@ export function serverNetworkName(serverId: string): string {
 /** Deterministic per-server container name. */
 export function serverContainerName(serverId: string): string {
   return `citadel-${serverId.slice(0, 12)}`;
+}
+
+/**
+ * Deterministic name for the pairwise network that links two servers.
+ *
+ * The two id prefixes are sorted, so (A,B) and (B,A) — the same pair, however
+ * the link row is stored — always resolve to one network. Containers on it
+ * reach each other by container name (`citadel-<id12>`) via Docker's embedded
+ * DNS, which is why links never need to hand out an IP: container IPs change
+ * on every recreate, names do not.
+ */
+export function linkNetworkName(serverIdA: string, serverIdB: string): string {
+  const [a, b] = [serverIdA.slice(0, 12), serverIdB.slice(0, 12)].sort();
+  return `citadel_link_${a}_${b}`;
 }
 
 /**

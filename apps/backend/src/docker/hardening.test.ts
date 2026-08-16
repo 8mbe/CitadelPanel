@@ -10,6 +10,8 @@ import { describe, expect, test } from "bun:test";
 import {
   buildHardenedContainerConfig,
   buildIsolatedNetworkConfig,
+  buildLinkNetworkConfig,
+  linkNetworkName,
   serverContainerName,
   serverNetworkName,
   type HardenedContainerSpec,
@@ -166,6 +168,30 @@ describe("networking", () => {
     const network = buildIsolatedNetworkConfig("citadel_srv_abc");
     expect(network.Options["com.docker.network.bridge.enable_icc"]).toBe("false");
   });
+  test("keeps outbound NAT on link networks too", () => {
+    // A linked server still needs plugin/mod egress; the link only grants
+    // reachability to its one peer, not a walled garden.
+    const network = buildLinkNetworkConfig("citadel_link_aaa_bbb");
+
+    expect(network.Internal).toBe(false);
+    expect(network.Options["com.docker.network.bridge.enable_ip_masquerade"]).toBe(
+      "true",
+    );
+  });
+
+  test("enables inter-container communication on link networks only", () => {
+    // ICC is the entire point of a link: without it, two containers on the
+    // pairwise bridge could never reach each other. The isolated config must
+    // never inherit this — that would collapse tenant isolation.
+    expect(buildLinkNetworkConfig("citadel_link_aaa_bbb").Options[
+      "com.docker.network.bridge.enable_icc"
+    ]).toBe("true");
+    expect(
+      buildIsolatedNetworkConfig("citadel_srv_abc").Options[
+        "com.docker.network.bridge.enable_icc"
+      ],
+    ).toBe("false");
+  });
 });
 
 describe("filesystem", () => {
@@ -205,6 +231,38 @@ describe("naming", () => {
     expect(serverNetworkName(id)).toBe(serverNetworkName(id));
     expect(serverContainerName(id)).toBe(serverContainerName(id));
     expect(serverNetworkName(id)).not.toBe(serverContainerName(id));
+  });
+});
+
+describe("link naming", () => {
+  const a = "9b2c3d4e-5f60-4a71-8a71-3f8a1b2c4d5e";
+  const b = "3f8a1b2c-4d5e-4f60-8a71-9b2c3d4e5f60";
+
+  test("is canonical: the same pair yields one network however it is ordered", () => {
+    // The panel stores a link as (server, target) but the network is
+    // bidirectional — if the names differed, A→B and B→A would silently get
+    // two networks and unlinking one would tear down the other's.
+    expect(linkNetworkName(a, b)).toBe(linkNetworkName(b, a));
+  });
+
+  test("sorts the two id prefixes into a fixed order", () => {
+    expect(linkNetworkName(a, b)).toBe(
+      `citadel_link_${b.slice(0, 12)}_${a.slice(0, 12)}`,
+    );
+  });
+
+  test("derives link names only from 12-char id prefixes", () => {
+    const truncated = linkNetworkName(a, b);
+    const longerIds = linkNetworkName(`${a}ff`, `${b}ff`);
+    expect(truncated).toBe(longerIds);
+    // The 12-char window of a UUID string includes its first dash.
+    expect(truncated).toMatch(/^citadel_link_[0-9a-f-]{12}_[0-9a-f-]{12}$/);
+  });
+
+  test("never collides with per-server network or container names", () => {
+    expect(linkNetworkName(a, b)).not.toBe(serverNetworkName(a));
+    expect(linkNetworkName(a, b)).not.toBe(serverContainerName(a));
+    expect(linkNetworkName(a, b)).not.toBe(serverNetworkName(b));
   });
 });
 

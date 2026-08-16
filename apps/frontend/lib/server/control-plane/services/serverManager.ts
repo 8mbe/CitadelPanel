@@ -46,6 +46,12 @@ import {
 } from "../nodes/nodeServerApi";
 import { assertNodeReadyToProvision } from "../nodes/nodeApi";
 import { recordAudit } from "./auditLog";
+import { getServerLimits } from "./settings";
+import { listServerLinkNetworks, detachAllServerLinks } from "./serverLinks";
+import {
+  autoUpdateServerPlugins,
+  getServerPluginSupportSummary,
+} from "./pluginManager";
 
 export type ServerStatus =
   | "creating"
@@ -676,6 +682,14 @@ export async function deleteServer(
   const server = await loadServerRow(serverId);
   await setStatus(serverId, "deleting");
 
+    await detachAllServerLinks(serverId);
+  } catch (error) {
+    console.error(
+      `[serverManager] link detach failed for ${serverId} (continuing):`,
+      error,
+    );
+  }
+
   try {
     // The agent removes the container, the per-server network and — only when
     // asked — the data directory, all on the node that owns them.
@@ -728,3 +742,41 @@ export async function reconcileServerStatus(serverId: string): Promise<ServerSta
   return mapped;
 }
       tty: blueprint.tty === true,
+      extraNetworks: await extraNetworksForServer(serverId),
+    });
+
+    await sql`
+      UPDATE servers
+      SET container_id = ${containerId}, status = 'stopped', updated_at = now()
+      WHERE id = ${serverId}
+    `;
+
+    // If the server was running before the recreate, bring it back up so the
+    // owner experiences the port change as a brief restart, not a stop.
+    if (wasRunning) {
+      try {
+        await startServerContainer(server.node_id, serverId);
+        await setStatus(serverId, "running");
+      } catch (error) {
+        await setStatus(serverId, "error");
+        console.error(
+          `[serverManager] restart after recreate failed for ${serverId}:`,
+          error,
+        );
+        throw error;
+      }
+    }
+  } catch (error) {
+    await setStatus(serverId, "error");
+    console.error(`[serverManager] recreate failed for ${serverId}:`, error);
+    throw error;
+  }
+}
+
+/** Count a server's owner-added (additional) ports, for limit checks. */
+async function extraNetworksForServer(serverId: string): Promise<string[]> {
+  const networks: string[] = [];
+  networks.push(...(await listServerLinkNetworks(serverId)));
+  return networks;
+}
+

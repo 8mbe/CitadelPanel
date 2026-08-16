@@ -131,6 +131,8 @@ const patterns: Array<{
   { pattern: /^servers\/([^/]+)\/logs$/, methods: { GET: handleGetServerLogs } },
   { pattern: /^servers\/([^/]+)\/stats$/, methods: { GET: handleGetServerStats } },
   { pattern: /^servers\/([^/]+)\/env$/, methods: { GET: handleGetServerEnv, PATCH: handleUpdateServerEnv } },
+  { pattern: /^servers\/([^/]+)\/links$/, methods: { GET: handleListServerLinks, POST: handleCreateServerLink } },
+  { pattern: /^servers\/([^/]+)\/links\/([^/]+)$/, methods: { DELETE: handleRemoveServerLink } },
   { pattern: /^servers\/([^/]+)\/command$/, methods: { POST: handleConsoleCommand } },
   { pattern: /^servers\/([^/]+)\/console\/session$/, methods: { POST: handleConsoleSession } },
   { pattern: /^servers\/([^/]+)\/console\/revoke$/, methods: { POST: handleConsoleRevoke } },

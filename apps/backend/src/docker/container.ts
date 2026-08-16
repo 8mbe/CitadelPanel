@@ -32,10 +32,14 @@ function isConflict(error: unknown): boolean {
  *
  * Idempotent: a pre-existing network is reused. Creation races (two requests
  * for the same server) surface as a 409, which we treat as success.
+ *
+ * `config` defaults to the per-server isolated network; pass
+ * `buildLinkNetworkConfig` for pairwise link networks, which need ICC on.
  */
 export async function ensureNetwork(
   client: Docker,
   networkName: string,
+  config: Docker.NetworkCreateOptions = buildIsolatedNetworkConfig(networkName),
 ): Promise<void> {
   try {
     await client.getNetwork(networkName).inspect();
@@ -45,7 +49,7 @@ export async function ensureNetwork(
   }
 
   try {
-    await client.createNetwork(buildIsolatedNetworkConfig(networkName));
+    await client.createNetwork(config);
   } catch (error) {
     if (!isConflict(error)) throw error;
   }
@@ -87,6 +91,16 @@ export async function createContainer(
   const container = await client.createContainer(
     buildHardenedContainerConfig(spec),
   );
+
+  // Attach any extra networks (e.g. node_db_net) after creation. The primary
+  // network is set via NetworkMode in the container config; extras need a
+  // separate connect call. Idempotent: an already-attached network is a no-op.
+  if (spec.extraNetworks) {
+    for (const networkName of spec.extraNetworks) {
+      await attachToNetwork(client, networkName, container.id);
+    }
+  }
+
   return container.id;
 }
 
@@ -111,6 +125,14 @@ export async function runContainerToCompletion(
   const container = await client.createContainer(
     buildHardenedContainerConfig(spec),
   );
+
+  // Attach extra networks for the install container too, in case the install
+  // script needs DB access (rare, but consistent with the runtime container).
+  if (spec.extraNetworks) {
+    for (const networkName of spec.extraNetworks) {
+      await attachToNetwork(client, networkName, container.id);
+    }
+  }
 
   try {
     await container.start();
@@ -216,6 +238,29 @@ export async function removeNetwork(
   }
 }
 
+/**
+ * Remove a network only once it has no endpoints left.
+ *
+ * Returns whether the network was actually removed. A 403 ("network has
+ * active endpoints") is not an error — the caller asked "remove if empty",
+ * not "remove". Used by link teardown, where a container recreated mid-unlink
+ * may legitimately still be attached; the empty network is harmless until the
+ * next unlink (or link) tidies it up.
+ */
+export async function removeNetworkIfEmpty(
+  client: Docker,
+  networkName: string,
+): Promise<boolean> {
+  try {
+    await client.getNetwork(networkName).remove();
+    return true;
+  } catch (error) {
+    const status = (error as { statusCode?: number }).statusCode;
+    if (status === 404 || status === 403) return false;
+    throw error;
+  }
+}
+
 export type ContainerState =
   | "created"
   | "running"
@@ -282,6 +327,10 @@ export async function getContainerLogs(
     follow: false,
   })) as unknown as Buffer;
 
+  // A TTY container's logs are a raw byte stream with no 8-byte multiplexing
+  // headers, so the header-stripper must be skipped or it would misparse
+  // payload bytes as frame headers.
+  if (await containerIsTty(client, containerId)) return buffer.toString("utf8");
   return stripDockerLogHeaders(buffer);
 }
 
@@ -297,9 +346,14 @@ export async function getContainerLogs(
  *
  * Unlike `stripDockerLogHeaders` (which works on a whole buffer), this is
  * stateful and streaming, so it is what powers the live console's SSE feed.
+ *
+ * When `tty` is true the container was created with `Tty: true`, so Docker
+ * merges stdout/stderr into a single raw byte stream with no framing — the
+ * stream is forwarded verbatim instead of demuxed.
  */
 export function demuxDockerLogStream(
   input: NodeJS.ReadableStream,
+  tty = false,
 ): ReadableStream<Uint8Array> {
   // A partial frame waiting for more bytes: either the 8-byte header is
   // incomplete, or the header is read and `remaining` payload bytes are owed.
@@ -309,6 +363,14 @@ export function demuxDockerLogStream(
     start(controller) {
       const onData = (chunk: Buffer | string) => {
         buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
+
+        // TTY mode: raw byte stream, no 8-byte multiplexing headers. Forward
+        // each chunk as it arrives.
+        if (tty) {
+          controller.enqueue(buffer);
+          buffer = Buffer.alloc(0);
+          return;
+        }
 
         // Peel every complete frame off the front of the buffer.
         while (buffer.length >= 8) {
@@ -346,6 +408,21 @@ export function demuxDockerLogStream(
       input.on("error", onError);
     },
   });
+}
+
+/**
+ * Whether a container was created with a pseudo-TTY (`Tty: true`).
+ *
+ * A TTY container's stdout/stderr are merged into one raw byte stream with no
+ * Docker multiplexing headers, so the attach and log layers must read it
+ * differently from a non-TTY container's 8-byte-framed stream.
+ */
+export async function containerIsTty(
+  client: Docker,
+  containerId: string,
+): Promise<boolean> {
+  const info = await client.getContainer(containerId).inspect();
+  return info.Config.Tty === true;
 }
 
 /**

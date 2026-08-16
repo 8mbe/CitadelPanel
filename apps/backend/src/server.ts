@@ -51,12 +51,14 @@ import {
   getServerStats,
   installServer,
   killServerContainer,
+  linkServerContainers,
   restartServerContainer,
   sampleServers,
   sendServerCommand,
   startServerContainer,
   stopServerContainer,
   streamServerLogs,
+  unlinkServerContainers,
   type CreateContainerRequest,
   type InstallRequest,
 } from "./servers";
@@ -85,6 +87,7 @@ const serverIdOf = (request: Request): string =>
 
 const queryOf = (request: Request) => new URL(request.url).searchParams;
 
+/**
  * Pick a safe filename for a Content-Disposition header.
  *
  * The panel may suggest a name, but the agent owns the final value to prevent
@@ -284,6 +287,7 @@ interface ConsoleSocket {
 const server = Bun.serve<ConsoleSocket, never>({
   port: config.port,
 
+  // Optional TLS. When both cert + key paths are set the agent serves HTTPS/WSS,
   // for plain-HTTP homelab deploys. `Bun.file` is lazy, so this is cheap to build.
     ? { tls: { cert: Bun.file(config.tlsCert), key: Bun.file(config.tlsKey) } }
     : {}),
@@ -375,8 +379,54 @@ const server = Bun.serve<ConsoleSocket, never>({
       }),
     },
 
+    // --- Server links ---------------------------------------------------------
+    //
+    // The panel calls these when a server owner connects two of their servers
+    // that live on this node, so one game (a proxy, a plugin) can reach the
+    // other by its stable container name instead of a public host:port. The
+    // pair gets its own ICC-enabled bridge network — see `docker/hardening.ts`
+    // for why links are pairwise, never one shared network per node.
+
+    /**
+     * POST /v1/servers/:id/links — attach two linked servers' containers to
+     * their pairwise network.
+     *
+     * Body: { targetId }
+     *
+     * Both containers must already exist; recreates re-attach automatically
      * because the panel passes the link network via `extraNetworks` at create.
      */
+    "/v1/servers/:id/links": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+        const targetId = requireServerId(
+          typeof body.targetId === "string" ? body.targetId : undefined,
+        );
+        if (targetId === serverId) {
+          throw badRequest("A server cannot be linked to itself.");
+        }
+        const result = await linkServerContainers(serverId, targetId);
+        return json(result);
+      }),
+    },
+
+    /**
+     * DELETE /v1/servers/:id/links/:targetId — detach both containers from
+     * the pair's network and remove it. Idempotent: a missing container or
+     * network is already-unlinked, not an error.
+     */
+    "/v1/servers/:id/links/:targetId": {
+      DELETE: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const targetId = requireServerId(
+          (request as ParamRequest<"targetId">).params.targetId,
+        );
+        await unlinkServerContainers(serverId, targetId);
+        return noContent();
+      }),
+    },
+
     // --- Container lifecycle --------------------------------------------------
     "/v1/servers/:id/container": {
       POST: route(async (request) => {
@@ -526,6 +576,7 @@ const server = Bun.serve<ConsoleSocket, never>({
       }),
     },
 
+    // POST { paths: [...] } deletes a whole selection in one request. Every
     // path is validated through containment before anything is removed, so a
     // bad entry fails the batch rather than half-deleting it.
     "/v1/servers/:id/files/delete": {

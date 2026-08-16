@@ -9,9 +9,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { ConnectedServersCard } from "@/components/server/connected-servers-card";
 import { useServerData } from "@/components/server/server-data-context";
-import { useSession } from "@/components/session-provider";
-import { formatMb } from "@/lib/format";
+import {
+  ApiError,
 
 /** One read-only allocation row. */
 function Allocation({ label, value }: { label: string; value: string }) {
@@ -49,6 +50,12 @@ export function SettingsTab() {
           <Allocation
             label="Primary port"
             value={server.primaryPort > 0 ? String(server.primaryPort) : "—"}
+        <ConnectedServersCard />
+      </TabsContent>
+    </Tabs>
+  );
+}
+
           />
           <p className="border-t pt-3 text-xs text-muted-foreground">
             Game-specific settings (difficulty, MOTD, and so on) are edited

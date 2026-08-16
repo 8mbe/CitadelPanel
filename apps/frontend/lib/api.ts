@@ -382,6 +382,59 @@ export async function getServerLogs(id: string, tail = 200): Promise<string> {
   return data.logs;
 }
 
+// --- Server links ----------------------------------------------------------------
+
+/**
+ * A connection between this server and another of the owner's servers, as the
+ * settings card renders it.
+ */
+export interface ServerLink {
+  id: string;
+  /** The linked peer. */
+  target: {
+    id: string;
+    name: string;
+    status: ServerStatus;
+    nodeHostname: string | null;
+  };
+  /** "internal" = private Docker network (same node); "external" = public address. */
+  mode: "internal" | "external";
+  /** The hostname this server reaches the peer at. */
+  host: string;
+/** GET /api/servers/:id/links — this server's connections to other servers. */
+export async function getServerLinks(serverId: string): Promise<ServerLink[]> {
+  const data = await request<{ links: ServerLink[] }>(
+    `/api/servers/${serverId}/links`,
+  );
+  return data.links;
+}
+
+/**
+ * POST /api/servers/:id/links — connect this server to another of the caller's
+ * servers. Requires owner (or admin) access to both; same-node pairs get a
+ * private Docker network, cross-node pairs ride the public address.
+ */
+export async function createServerLink(
+  serverId: string,
+  targetId: string,
+): Promise<ServerLink> {
+  const data = await request<{ link: ServerLink }>(
+    `/api/servers/${serverId}/links`,
+    { method: "POST", body: JSON.stringify({ targetId }) },
+  );
+  return data.link;
+}
+
+/** DELETE /api/servers/:id/links/:linkId — remove a connection. */
+export async function removeServerLink(
+  serverId: string,
+  linkId: string,
+): Promise<void> {
+  await request(`/api/servers/${serverId}/links/${linkId}`, {
+    method: "DELETE",
+  });
+}
+
 export async function listServerFiles(
   serverId: string,
   path = "/",
@@ -488,6 +541,8 @@ export async function copyServerFile(
  *
  * A single file downloads raw; multiple `paths` (or a directory) download as a
  * zip archive built on the fly. Returns a blob the caller can turn into a
+ * download link. The Content-Disposition filename is set agent-side.
+ */
 export async function downloadServerFiles(
   serverId: string,
   paths: string[],
@@ -800,6 +855,9 @@ export async function adminUnbanUser(userId: string): Promise<void> {
   await request(`/api/admin/users/${userId}/unban`, { method: "POST" });
 }
 
+ * Mirrors {@link ApiUser} but carries the raw Better Auth row fields plus the
+ * server list (returned in snake_case by the handler, normalized here).
+ */
 /** The signed-in account, as returned by GET /api/me. */
 export interface ApiMe {
   id: string;
@@ -1445,6 +1503,7 @@ export async function adminListAuditLogs(limit = 100): Promise<AdminAuditEntry[]
   }));
 }
 
+ * A single audit entry scoped to one server. Mirrors {@link AdminAuditEntry}
 // --- Admin general settings ---------------------------------------------------
 
 /** Mail providers the panel can send through. Mirrors services/settings.ts. */
