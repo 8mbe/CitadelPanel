@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, ShieldAlert, Trash2 } from "lucide-react";
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -43,8 +44,10 @@ import {
   detailToForm,
   emptyForm,
   formToPayload,
+  MODRINTH_PROVIDER_SPEC,
   type EnvRow,
   type FormValues,
+  type PluginProfileRow,
   type PortRow,
 } from "@/lib/blueprint-io";
 
@@ -148,7 +151,7 @@ export function BlueprintFormDialog({
       ...prev,
       env: [
         ...prev.env,
-        { key: "", required: false, secret: false, default: "", description: "", options: "" },
+        { key: "", required: false, secret: false, editable: false, default: "", description: "", options: "" },
       ],
     }));
 
@@ -160,6 +163,65 @@ export function BlueprintFormDialog({
       ...prev,
       env: prev.env.map((row, i) => (i === index ? { ...row, ...patch } : row)),
     }));
+
+  // --- Plugins -----------------------------------------------------------------
+  // Non-secret env keys are candidates for both the profile selector and the
+  // game-version pointer; secret values must never steer plugin resolution.
+  const envKeys = values.env
+    .map((row) => row.key.trim())
+    .filter((key) => key.length > 0);
+
+  const setPluginProfile = (index: number, patch: Partial<PluginProfileRow>) =>
+    setValues((prev) => ({
+      ...prev,
+      pluginProfiles: prev.pluginProfiles.map((row, i) =>
+        i === index ? { ...row, ...patch } : row,
+      ),
+    }));
+
+  // When the profile-selecting env field changes (or its options do), rebuild
+  // the profile rows from that field's allowed values — edits to a row whose
+  // value still exists are kept, vanished values are dropped. Values that
+  // can't load plugins (e.g. VANILLA) simply stay disabled.
+  React.useEffect(() => {
+    const field = values.pluginEnvField;
+    if (!field) return;
+    setValues((prev) => {
+      const envRow = prev.env.find(
+        (r) => r.key.trim() === field && !r.secret,
+      );
+      const options = envRow
+        ? envRow.options
+            .split(",")
+            .map((o) => o.trim())
+            .filter((o) => o.length > 0)
+        : [];
+      if (options.length === 0) return prev;
+      const byValue = new Map(
+        prev.pluginProfiles
+          .filter((r) => r.envValue)
+          .map((r) => [r.envValue, r] as const),
+      );
+      return {
+        ...prev,
+        pluginProfiles: options.map(
+          (envValue) =>
+            byValue.get(envValue) ?? {
+              enabled: false,
+              envValue,
+              label: "",
+              directory: "",
+              projectType: "plugin" as const,
+              loaders: "",
+              gameVersionEnv: "",
+            },
+        ),
+      };
+    });
+    // Deliberately not watching values.env: option edits shouldn't clobber
+    // profile rows on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [values.pluginEnvField]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -174,7 +236,11 @@ export function BlueprintFormDialog({
       }
       onSaved();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to save blueprint.");
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to save blueprint.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -275,7 +341,9 @@ export function BlueprintFormDialog({
             <FieldSet>
               <FieldLegend>Ports</FieldLegend>
               <FieldDescription>
-                Ports published on the host. Exactly one is the primary
+                The game&apos;s preferred ports — allocated from the node&apos;s
+                port pool when free, and always published as the same number
+                inside and outside the container. Exactly one is the primary
                 (player-facing) port.
               </FieldDescription>
               <div className="flex flex-col gap-2">
@@ -290,7 +358,7 @@ export function BlueprintFormDialog({
                       className="w-28"
                       value={port.container}
                       onChange={(e) => updatePort(i, { container: e.target.value })}
-                      aria-label={`Port ${i + 1} container port`}
+                      aria-label={`Port ${i + 1}`}
                     />
                     <Select
                       value={port.protocol}
@@ -339,8 +407,10 @@ export function BlueprintFormDialog({
             <FieldSet>
               <FieldLegend>Environment variables</FieldLegend>
               <FieldDescription>
-                The only variables a user may set. Unknown keys are never passed
-                to the container.
+                Define every variable the server may receive. Only keys marked
+                Editable can be changed by the server owner after creation; the
+                rest are locked to the default. Unknown keys are never passed to
+                the container.
               </FieldDescription>
               <div className="flex flex-col gap-3">
                 {values.env.map((row, i) => (
@@ -366,6 +436,13 @@ export function BlueprintFormDialog({
                           onCheckedChange={(checked) => updateEnv(i, { secret: checked })}
                         />
                         Secret
+                      </label>
+                      <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                        <Switch
+                          checked={row.editable}
+                          onCheckedChange={(checked) => updateEnv(i, { editable: checked })}
+                        />
+                        Editable
                       </label>
                       <Button
                         type="button"
@@ -487,6 +564,147 @@ export function BlueprintFormDialog({
               )}
             </FieldSet>
 
+            {/* Plugins ------------------------------------------------------- */}
+            <FieldSet>
+              <div className="flex items-center justify-between">
+                <div>
+                  <FieldLegend>Plugins / mods</FieldLegend>
+                  <FieldDescription>
+                    Declares how the panel searches a catalog and installs
+                    plugins into this blueprint&apos;s servers. Pure data — the
+                    panel&apos;s fetch engine interprets it; hosts must be public
+                    https and downloads are pinned to the declared hosts.
+                  </FieldDescription>
+                </div>
+                <Switch
+                  checked={values.pluginsEnabled}
+                  onCheckedChange={(checked) => set("pluginsEnabled", checked)}
+                  aria-label="Enable plugin support"
+                />
+              </div>
+              {values.pluginsEnabled && (
+                <FieldGroup>
+                  <ProviderHostsNote specJson={values.pluginProviderSpec} />
+                  <Field>
+                    <FieldLabel htmlFor="bp-plugin-env">
+                      Active profile follows env value
+                    </FieldLabel>
+                    <Select
+                      value={values.pluginEnvField}
+                      onValueChange={(v) => set("pluginEnvField", v ?? "")}
+                    >
+                      <SelectTrigger id="bp-plugin-env" className="w-full">
+                        <SelectValue placeholder="One profile for all servers" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">One profile for all servers</SelectItem>
+                        {envKeys.map((key) => (
+                          <SelectItem key={key} value={key}>
+                            {key}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FieldDescription>
+                      e.g. <span className="font-mono">TYPE</span>: one profile
+                      per server software. Values without an enabled profile
+                      (e.g. VANILLA) get no plugins tab.
+                    </FieldDescription>
+                  </Field>
+
+                  <div className="flex flex-col gap-3">
+                    {values.pluginEnvField === "" ? (
+                      <PluginProfileCard
+                        row={values.pluginProfiles.find((r) => r.envValue === "") ?? {
+                          enabled: true,
+                          envValue: "",
+                          label: "",
+                          directory: "",
+                          projectType: "plugin",
+                          loaders: "",
+                          gameVersionEnv: "",
+                        }}
+                        envKeys={envKeys}
+                        title="Profile"
+                        onChange={(patch) => {
+                          const index = values.pluginProfiles.findIndex(
+                            (r) => r.envValue === "",
+                          );
+                          if (index === -1) {
+                            setValues((prev) => ({
+                              ...prev,
+                              pluginProfiles: [
+                                ...prev.pluginProfiles,
+                                {
+                                  enabled: true,
+                                  envValue: "",
+                                  label: "",
+                                  directory: "",
+                                  projectType: "plugin" as const,
+                                  loaders: "",
+                                  gameVersionEnv: "",
+                                  ...patch,
+                                },
+                              ],
+                            }));
+                          } else {
+                            setPluginProfile(index, patch);
+                          }
+                        }}
+                      />
+                    ) : (
+                      values.pluginProfiles.map((row, index) => (
+                        <PluginProfileCard
+                          key={row.envValue}
+                          row={row}
+                          envKeys={envKeys}
+                          title={row.envValue}
+                          canDisable
+                          onChange={(patch) => setPluginProfile(index, patch)}
+                        />
+                      ))
+                    )}
+                  </div>
+
+                  <Field>
+                    <div className="flex items-center justify-between">
+                      <FieldLabel htmlFor="bp-plugin-provider">
+                        Provider fetch spec (JSON)
+                      </FieldLabel>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          set(
+                            "pluginProviderSpec",
+                            JSON.stringify(MODRINTH_PROVIDER_SPEC, null, 2),
+                          )
+                        }
+                      >
+                        Modrinth preset
+                      </Button>
+                    </div>
+                    <Textarea
+                      id="bp-plugin-provider"
+                      rows={10}
+                      className="font-mono text-xs"
+                      placeholder='{"id": "modrinth", "baseUrl": "https://…", …}'
+                      value={values.pluginProviderSpec}
+                      onChange={(e) => set("pluginProviderSpec", e.target.value)}
+                    />
+                    <FieldDescription>
+                      How to search the catalog, read its responses and where
+                      files download from. Validated on save: https public
+                      hosts, pinned download hosts, fixed{" "}
+                      <span className="font-mono">{"{placeholders}"}</span>{" "}
+                      only.
+                    </FieldDescription>
+                  </Field>
+                </FieldGroup>
+              )}
+            </FieldSet>
+
             {/* Minimums ------------------------------------------------------ */}
             <FieldSet>
               <FieldLegend>Minimum resources</FieldLegend>
@@ -585,5 +803,169 @@ export function BlueprintFormDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * One install profile: where plugin files land and how the catalog is
+ * filtered for it. With an env-driven setup each card is one allowed value of
+ * the selecting env field (title = the value); disabled cards mean that value
+ * gets no plugins tab.
+ */
+function PluginProfileCard({
+  row,
+  envKeys,
+  title,
+  canDisable,
+  onChange,
+}: {
+  row: PluginProfileRow;
+  envKeys: string[];
+  title: string;
+  canDisable?: boolean;
+  onChange: (patch: Partial<PluginProfileRow>) => void;
+}) {
+  const enabled = row.enabled || !canDisable;
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border p-3">
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-sm font-medium">{title}</span>
+        {canDisable && (
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            Supported
+            <Switch
+              checked={row.enabled}
+              onCheckedChange={(checked) => onChange({ enabled: checked })}
+              aria-label={`${title} supports plugins`}
+            />
+          </label>
+        )}
+      </div>
+      {enabled && (
+        <div className="grid grid-cols-2 gap-3">
+          <Field>
+            <FieldLabel htmlFor={`bp-plugin-label-${title}`}>Tab label</FieldLabel>
+            <Input
+              id={`bp-plugin-label-${title}`}
+              maxLength={32}
+              placeholder="Plugins"
+              value={row.label}
+              onChange={(e) => onChange({ label: e.target.value })}
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`bp-plugin-dir-${title}`}>Directory</FieldLabel>
+            <Input
+              id={`bp-plugin-dir-${title}`}
+              maxLength={64}
+              placeholder="plugins"
+              value={row.directory}
+              onChange={(e) => onChange({ directory: e.target.value })}
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`bp-plugin-type-${title}`}>Content type</FieldLabel>
+            <Select
+              value={row.projectType}
+              onValueChange={(v) => {
+                if (v) onChange({ projectType: v as PluginProfileRow["projectType"] });
+              }}
+            >
+              <SelectTrigger id={`bp-plugin-type-${title}`} className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="plugin">Plugins</SelectItem>
+                <SelectItem value="mod">Mods</SelectItem>
+                <SelectItem value="datapack">Datapacks</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`bp-plugin-loaders-${title}`}>Loaders</FieldLabel>
+            <Input
+              id={`bp-plugin-loaders-${title}`}
+              placeholder="paper, spigot"
+              value={row.loaders}
+              onChange={(e) => onChange({ loaders: e.target.value })}
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`bp-plugin-version-${title}`}>
+              Game version env
+            </FieldLabel>
+            <Select
+              value={row.gameVersionEnv || "none"}
+              onValueChange={(v) =>
+                onChange({ gameVersionEnv: v === "none" ? "" : (v ?? "") })
+              }
+            >
+              <SelectTrigger id={`bp-plugin-version-${title}`} className="w-full">
+                <SelectValue placeholder="None" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                {envKeys.map((key) => (
+                  <SelectItem key={key} value={key}>
+                    {key}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <FieldDescription>
+              Env key holding the game version the user sets. A concrete value
+              filters search and updates by compatibility; a sentinel like
+              LATEST leaves them unfiltered and the plugins tab asks the user
+              to set a version.
+            </FieldDescription>
+          </Field>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The review point for a shared blueprint's plugin section: the hosts the
+ * panel (and this blueprint's auto-updater) will contact, stated plainly
+ * before the blueprint is saved. Parsed best-effort from the spec textarea —
+ * invalid JSON is simply not summarized (save validates fully).
+ */
+function ProviderHostsNote({ specJson }: { specJson: string }) {
+  let baseUrl: unknown;
+  let downloadHosts: unknown;
+  let id: unknown;
+  try {
+    const parsed = JSON.parse(specJson) as Record<string, unknown>;
+    id = parsed.id;
+    baseUrl = parsed.baseUrl;
+    downloadHosts = parsed.downloadHosts;
+  } catch {
+    return null;
+  }
+  if (typeof baseUrl !== "string" || !Array.isArray(downloadHosts)) return null;
+
+  return (
+    <Alert>
+      <ShieldAlert />
+      <AlertTitle>Network access</AlertTitle>
+      <AlertDescription>
+        Servers on this blueprint will search and download plugins via{" "}
+        <span className="font-mono">{String(baseUrl)}</span>
+        {downloadHosts.length > 0 && (
+          <>
+            {" "}
+            (files from{" "}
+            <span className="font-mono">
+              {downloadHosts.filter((h) => typeof h === "string").join(", ")}
+            </span>
+            )
+          </>
+        )}
+        . When auto-update is on, new release versions are fetched from these
+        hosts before every start — make sure you trust{" "}
+        {typeof id === "string" ? `"${id}"` : "this catalog"} before saving.
+      </AlertDescription>
+    </Alert>
   );
 }

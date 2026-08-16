@@ -98,6 +98,16 @@ export interface ServerSummary {
   diskLimitMb: number;
   ports: { hostPort: number; containerPort: number; protocol: string; isPrimary: boolean }[];
   createdAt: Date;
+   * Plugin/mod support resolved against the server's env, when the blueprint
+   * declares it: what the tab is called and which provider serves it. Only
+   * set on the detail read (`getServer`), never on list reads — list callers
+   * don't need it and it costs a blueprint + env lookup.
+   */
+  pluginSupport?: {
+    label: string;
+    providerId: string;
+    directory: string;
+  } | null;
 }
 
 // --- Reads --------------------------------------------------------------------
@@ -202,7 +212,11 @@ async function loadServerRow(serverId: string): Promise<ServerRow> {
 }
 
 export async function getServer(serverId: string): Promise<ServerSummary> {
-  return toSummary(await loadServerRow(serverId));
+  const summary = await toSummary(await loadServerRow(serverId));
+  return {
+    ...summary,
+    pluginSupport: await getServerPluginSupportSummary(serverId),
+  };
 }
 
 async function setStatus(serverId: string, status: ServerStatus): Promise<void> {
@@ -351,12 +365,6 @@ export async function createServer(
     resolved.values.MEMORY = deriveJvmMemory(input.memoryLimitMb);
   }
 
-  // A blueprint's startup command is interpolated with the resolved env once,
-  // here, so the agent receives a concrete argv rather than a template.
-  const command = blueprint.startupCommand
-    ? ["/bin/sh", "-c", interpolateCommand(blueprint.startupCommand, resolved.values)]
-    : undefined;
-
   const node = input.nodeId
     ? await scheduleServerOnNode(input.nodeId, request)
     : await scheduleServer(request);
@@ -386,9 +394,13 @@ export async function createServer(
     // concurrent creation safe; allocateHostPort just picks a likely candidate.
     const bindings: PortBinding[] = [];
     const mainPort = primaryPort(blueprint);
+    let primaryHostPort: number | undefined;
 
     for (const port of blueprint.defaultPorts) {
       const isPrimary = port === mainPort;
+      // Best-effort preference: the admin's explicit choice for the primary
+      // port, otherwise the blueprint's preferred number (e.g. 25565) when it
+      // happens to be in the node's pool and free.
       const hostPort = await allocateHostPort(
         node.nodeId,
         port.protocol,
@@ -515,6 +527,10 @@ export async function startServer(
 
   await setStatus(serverId, "starting");
   try {
+    // Plugins must be on disk before the game process boots, so the
+    // auto-updater runs inside the "starting" phase. Best-effort by contract —
+    // a catalog outage never blocks a start.
+    await autoUpdateServerPlugins(serverId);
     await startServerContainer(server.node_id, serverId);
     await setStatus(serverId, "running");
   } catch (error) {
@@ -602,6 +618,9 @@ export async function restartServer(
   assertHasContainer(server);
 
   try {
+    // A restart re-reads the plugins directory at boot, so the auto-updater
+    // runs before the agent restarts the container.
+    await autoUpdateServerPlugins(serverId);
     await restartServerContainer(server.node_id, serverId);
     await setStatus(serverId, "running");
   } catch (error) {

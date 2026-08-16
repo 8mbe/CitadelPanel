@@ -15,7 +15,11 @@ import type {
   NodePortPoolEntry,
   NodeServerView,
   NodeView,
+  BlueprintPluginsSpec,
   BlueprintView,
+  PluginSearchResult,
+  PluginVersionView,
+  ServerPluginList,
   ServerStatus,
   ServerView,
   SubuserView,
@@ -196,6 +200,13 @@ export function completeSetup(): Promise<{
   return request("/api/setup/complete", { method: "POST" });
 }
 
+/**
+ * GET /api/settings/public — unauthenticated panel-wide settings.
+ *
+ * Surfaces the captcha config (for the sign-in form) and the upload size cap
+ * (so the file manager can pre-validate uploads client-side). The upload cap is
+ * the only file-manager-relevant field here; captcha is consumed by the widget.
+ */
 export async function getPublicSettings(): Promise<{
   captcha: PublicCaptchaSettings;
   uploadMaxBytes: number;
@@ -267,6 +278,12 @@ export interface ApiServerSummary {
     isPrimary: boolean;
   }[];
   createdAt: string;
+  /** Present on detail responses only: resolved plugin/mod support, if any. */
+  pluginSupport?: {
+    label: string;
+    providerId: string;
+    directory: string;
+  } | null;
 }
 
 export interface CreateServerPayload {
@@ -294,7 +311,7 @@ export function adminCreateServer(
 /**
  * Map a backend server summary into the display shape used across the UI.
  *
- * Live samples (CPU, players, uptime, throughput) come from the stats feed
+ * Live samples (CPU, memory, disk, uptime) come from the stats feed
  * (`getServerStats`) rather than the summary, so they start at zero and are
  * filled in by the page that polls for them.
  */
@@ -322,6 +339,9 @@ export function toServerView(summary: ApiServerSummary): ServerView {
     networkRxBps: 0,
     networkTxBps: 0,
     createdAt: summary.createdAt,
+    suspensionReason: summary.suspensionReason ?? null,
+    suspendedAt: summary.suspendedAt ?? null,
+    pluginSupport: summary.pluginSupport ?? null,
   };
 }
 
@@ -335,13 +355,20 @@ export function listServers(): Promise<ServerView[]> {
   );
 }
 
-/** GET /api/servers/:id — one server's detail. Returns null on 404. */
+/**
+ * GET /api/servers/:id — one server's detail. Returns null on 404. The
+ * response also carries the caller's access (`viewer`), which the server page
+ * uses to hide sections the caller holds no permission for.
+ */
 export async function getServer(id: string): Promise<ServerView | null> {
   try {
-    const data = await request<{ server: ApiServerSummary | null }>(
-      `/api/servers/${id}`,
-    );
-    return data.server ? toServerView(data.server) : null;
+    const data = await request<{
+      server: ApiServerSummary | null;
+      viewer: ServerView["viewer"];
+    }>(`/api/servers/${id}`);
+    return data.server
+      ? { ...toServerView(data.server), viewer: data.viewer }
+      : null;
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) return null;
     throw error;
@@ -390,6 +417,10 @@ export async function getServerLogs(id: string, tail = 200): Promise<string> {
   return data.logs;
 }
 
+/**
+ * An environment variable the server owner may view and edit. Only keys the
+ * blueprint marks `editable` are returned; secret values arrive masked.
+ */
 // --- Server links ----------------------------------------------------------------
 
 /**
@@ -714,6 +745,87 @@ export async function pullServerFileFromUrl(
   );
 }
 
+// --- Plugins --------------------------------------------------------------
+
+/**
+ * GET /api/servers/:id/plugins — installed plugins reconciled against the
+ * actual directory, plus the resolved support (label, directory, provider
+ * hosts) and the auto-update setting.
+ */
+export function getServerPlugins(serverId: string): Promise<ServerPluginList> {
+  return request<ServerPluginList>(`/api/servers/${serverId}/plugins`);
+}
+
+/** GET /api/servers/:id/plugins/search?q= — catalog search, proxied by the panel. */
+export function searchServerPlugins(
+  serverId: string,
+  q: string,
+  offset = 0,
+): Promise<{ total: number; results: PluginSearchResult[] }> {
+  const params = new URLSearchParams({ q, offset: String(offset) });
+  return request<{ total: number; results: PluginSearchResult[] }>(
+    `/api/servers/${serverId}/plugins/search?${params}`,
+  );
+}
+
+/** GET /api/servers/:id/plugins/versions/:projectId — installable versions. */
+export async function getServerPluginVersions(
+  serverId: string,
+  projectId: string,
+): Promise<PluginVersionView[]> {
+  const data = await request<{ versions: PluginVersionView[] }>(
+    `/api/servers/${serverId}/plugins/versions/${encodeURIComponent(projectId)}`,
+  );
+  return data.versions;
+}
+
+/**
+ * POST /api/servers/:id/plugins/install — install (or update) a plugin to a
+ * specific catalog version. The panel re-resolves the version and pins the
+ * download URL before the agent fetches it.
+ */
+export function installServerPlugin(
+  serverId: string,
+  projectId: string,
+  versionId: string,
+): Promise<{ installed: boolean }> {
+  return request(`/api/servers/${serverId}/plugins/install`, {
+    method: "POST",
+    body: JSON.stringify({ projectId, versionId }),
+  });
+}
+
+/** POST /api/servers/:id/plugins/:pluginId/toggle — enable or disable. */
+export function toggleServerPlugin(
+  serverId: string,
+  pluginId: string,
+): Promise<void> {
+  return request(`/api/servers/${serverId}/plugins/${pluginId}/toggle`, {
+    method: "POST",
+  });
+}
+
+/** DELETE /api/servers/:id/plugins/:pluginId — remove the file and row. */
+export function removeServerPlugin(
+  serverId: string,
+  pluginId: string,
+): Promise<void> {
+  return request(`/api/servers/${serverId}/plugins/${pluginId}`, {
+    method: "DELETE",
+  });
+}
+
+/** PATCH /api/servers/:id/plugins — per-server plugin settings. */
+export function updateServerPluginSettings(
+  serverId: string,
+  autoUpdate: boolean,
+): Promise<{ autoUpdate: boolean }> {
+  return request(`/api/servers/${serverId}/plugins`, {
+    method: "PATCH",
+    body: JSON.stringify({ autoUpdate }),
+  });
+}
+
 /** Power actions. Each returns the updated summary. */
 export function startServer(id: string): Promise<ApiServerSummary> {
   return request<{ server: ApiServerSummary }>(`/api/servers/${id}/start`, {
@@ -745,6 +857,9 @@ export function killServer(id: string): Promise<ApiServerSummary> {
   }).then((d) => d.server);
 }
 
+// --- SFTP credentials --------------------------------------------------------
+
+/** A credential whose plaintext password was just revealed (creation/regenerate). */
 // --- Blueprints ---------------------------------------------------------------
 
 /** GET /api/blueprints — the blueprints a server can be provisioned with. */
@@ -1366,6 +1481,7 @@ export interface AdminBlueprintDetail {
   startupCommand: string | null;
   stopCommand: string | null;
   install: BlueprintInstallSpec | null;
+  plugins: BlueprintPluginsSpec | null;
   dataPath: string;
   minimums: { cpuLimit: number; memoryLimitMb: number; diskLimitMb: number };
   supportsReadOnlyRoot: boolean;
@@ -1391,11 +1507,13 @@ export interface BlueprintPayload {
     key: string;
     required?: boolean;
     secret?: boolean;
+    editable?: boolean;
     default?: string;
     description?: string;
     options?: string[];
   }[];
   install?: { image: string; script: string; entrypoint?: string[] | null } | null;
+  plugins?: BlueprintPluginsSpec | null;
   minimums: { cpuLimit: number; memoryLimitMb: number; diskLimitMb: number };
 }
 
@@ -1535,7 +1653,9 @@ export async function adminReviewSuspicious(
 // --- Admin audit -------------------------------------------------------------
 
 // NOTE: this endpoint returns raw DB rows in snake_case, unlike the camelCase
-// server/node endpoints. Normalize at the client boundary.
+// server/node endpoints. Normalize at the client boundary. The handler also
+// batch-resolves actor identity and target names server-side so the UI can show
+// "who" and "what" without a second round-trip per row.
 
 export interface AdminAuditEntry {
   id: string;
@@ -1546,6 +1666,12 @@ export interface AdminAuditEntry {
   ip: string | null;
   createdAt: string;
   metadata: Record<string, unknown>;
+  /** Actor's email (null for system actions or deleted accounts). */
+  actorEmail: string | null;
+  /** Actor's display name (null for system actions or deleted accounts). */
+  actorName: string | null;
+  /** Human-readable target name (null when the target has no name or was deleted). */
+  targetName: string | null;
 }
 
 export async function adminListAuditLogs(limit = 100): Promise<AdminAuditEntry[]> {
@@ -1559,6 +1685,9 @@ export async function adminListAuditLogs(limit = 100): Promise<AdminAuditEntry[]
       ip: string | null;
       metadata: Record<string, unknown> | null;
       created_at: string;
+      actor_email: string | null;
+      actor_name: string | null;
+      target_name: string | null;
     }[];
   }>(`/api/admin/audit-logs?limit=${limit}`);
 
@@ -1571,6 +1700,9 @@ export async function adminListAuditLogs(limit = 100): Promise<AdminAuditEntry[]
     ip: row.ip,
     createdAt: row.created_at,
     metadata: row.metadata ?? {},
+    actorEmail: row.actor_email,
+    actorName: row.actor_name,
+    targetName: row.target_name,
   }));
 }
 

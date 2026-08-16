@@ -19,6 +19,13 @@ import type {
   BlueprintPayload,
   BlueprintResourceProfile,
 } from "./api";
+import { MODRINTH_PROVIDER_SPEC } from "./modrinth-preset";
+import type {
+  BlueprintPluginProfileSpec,
+  BlueprintPluginsSpec,
+} from "./types";
+
+export { MODRINTH_PROVIDER_SPEC };
 
 const RESOURCE_PROFILES: BlueprintResourceProfile[] = [
   "bursty",
@@ -33,6 +40,7 @@ export interface BlueprintFileEnvField {
   description?: string;
   options?: string[];
   secret?: boolean;
+  editable?: boolean;
 }
 
 /** The canonical, hand-editable JSON representation of a blueprint. */
@@ -49,6 +57,13 @@ export interface BlueprintFile {
   defaultPorts: { container: number; protocol: "tcp" | "udp"; primary?: boolean }[];
   envSchema?: Record<string, BlueprintFileEnvField>;
   install?: { image: string; script: string; entrypoint?: string[] | null } | null;
+  /**
+   * Plugin/mod support, including the provider fetch spec. Travels with the
+   * file (shareable like the rest of the blueprint); the backend validates it
+   * strictly on save — https-only catalog hosts that pass the SSRF blocklist,
+   * pinned download hosts, fixed template vocabulary.
+   */
+  plugins?: BlueprintPluginsSpec | null;
   minimums: { cpuLimit: number; memoryLimitMb: number; diskLimitMb: number };
 }
 
@@ -64,6 +79,7 @@ export interface EnvRow {
   key: string;
   required: boolean;
   secret: boolean;
+  editable: boolean;
   default: string;
   description: string;
   /** Comma-separated allowed values; empty means free-form. */
@@ -90,6 +106,32 @@ export interface FormValues {
   installScript: string;
   /** Whitespace-separated; empty means the agent default (/bin/sh -c). */
   installEntrypoint: string;
+  // Plugins section. Profiles are structured rows; the provider fetch spec is
+  // edited as JSON (a "Modrinth preset" button fills the standard spec).
+  pluginsEnabled: boolean;
+  /** Env key whose value selects the active profile; empty = static default. */
+  pluginEnvField: string;
+  pluginProfiles: PluginProfileRow[];
+  pluginProviderSpec: string;
+}
+
+/**
+ * One install profile. With a `pluginEnvField` set, `envValue` names the env
+ * value that activates this profile ("" never matches — the default profile
+ * is a separate row). `enabled` marks which env values support plugins at all
+ * (e.g. PAPER yes, VANILLA no).
+ */
+export interface PluginProfileRow {
+  enabled: boolean;
+  /** Empty for the static default profile. */
+  envValue: string;
+  label: string;
+  directory: string;
+  projectType: "mod" | "plugin" | "datapack";
+  /** Comma-separated loader facets; empty means no loader filter. */
+  loaders: string;
+  /** Env key holding the game version; empty means none. */
+  gameVersionEnv: string;
 }
 
 export function emptyForm(): FormValues {
@@ -112,6 +154,97 @@ export function emptyForm(): FormValues {
     installImage: "",
     installScript: "",
     installEntrypoint: "",
+    pluginsEnabled: false,
+    pluginEnvField: "",
+    pluginProfiles: [{ ...EMPTY_PROFILE_ROW, envValue: "", enabled: true }],
+    pluginProviderSpec: JSON.stringify(MODRINTH_PROVIDER_SPEC, null, 2),
+  };
+}
+
+const EMPTY_PROFILE_ROW: Omit<PluginProfileRow, "envValue" | "enabled"> = {
+  label: "",
+  directory: "",
+  projectType: "plugin",
+  loaders: "",
+  gameVersionEnv: "",
+};
+
+/** A plugins section → the editable pieces of the form. */
+function pluginsToForm(
+  plugins: BlueprintPluginsSpec | null | undefined,
+): Pick<FormValues, "pluginsEnabled" | "pluginEnvField" | "pluginProfiles" | "pluginProviderSpec"> {
+  if (!plugins) {
+    return {
+      pluginsEnabled: false,
+      pluginEnvField: "",
+      pluginProfiles: [{ ...EMPTY_PROFILE_ROW, envValue: "", enabled: true }],
+      pluginProviderSpec: JSON.stringify(MODRINTH_PROVIDER_SPEC, null, 2),
+    };
+  }
+
+  const toRow = (
+    envValue: string,
+    profile: BlueprintPluginProfileSpec,
+  ): PluginProfileRow => ({
+    enabled: true,
+    envValue,
+    label: profile.label ?? "",
+    directory: profile.directory,
+    projectType: profile.projectType,
+    loaders: (profile.loaders ?? []).join(", "),
+    gameVersionEnv: profile.gameVersionEnv ?? "",
+  });
+
+  const rows = Object.entries(plugins.variants ?? {}).map(([envValue, profile]) =>
+    toRow(envValue, profile),
+  );
+  if (plugins.default) rows.unshift(toRow("", plugins.default));
+
+  return {
+    pluginsEnabled: true,
+    pluginEnvField: plugins.envField ?? "",
+    pluginProfiles: rows,
+    pluginProviderSpec: JSON.stringify(plugins.provider, null, 2),
+  };
+}
+
+/** Form values → the plugins section of an API payload. */
+function formToPlugins(
+  values: FormValues,
+): BlueprintPluginsSpec | null {
+  if (!values.pluginsEnabled) return null;
+
+  let provider: BlueprintPluginsSpec["provider"];
+  try {
+    provider = JSON.parse(values.pluginProviderSpec);
+  } catch {
+    throw new Error("The plugin provider spec is not valid JSON.");
+  }
+
+  const variants: Record<string, BlueprintPluginProfileSpec> = {};
+  let defaultProfile: BlueprintPluginProfileSpec | undefined;
+  for (const row of values.pluginProfiles) {
+    if (!row.enabled) continue;
+    const loaders = row.loaders
+      .split(",")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    const profile: BlueprintPluginsSpec["default"] = {
+      ...(row.label.trim() ? { label: row.label.trim() } : {}),
+      directory: row.directory.trim(),
+      projectType: row.projectType,
+      ...(loaders.length > 0 ? { loaders } : {}),
+      ...(row.gameVersionEnv ? { gameVersionEnv: row.gameVersionEnv } : {}),
+    };
+    if (row.envValue.trim()) variants[row.envValue.trim()] = profile;
+    else defaultProfile = profile;
+  }
+
+  return {
+    ...(values.pluginEnvField ? { envField: values.pluginEnvField } : {}),
+    ...(Object.keys(variants).length > 0 ? { variants } : {}),
+    ...(defaultProfile ? { default: defaultProfile } : {}),
+    provider,
   };
 }
 
@@ -149,6 +282,7 @@ export function detailToForm(detail: AdminBlueprintDetail): FormValues {
       key,
       required: field.required,
       secret: field.secret === true,
+      editable: field.editable === true,
       default: field.default ?? "",
       description: field.description ?? "",
       options: (field.options ?? []).join(", "),
@@ -157,6 +291,7 @@ export function detailToForm(detail: AdminBlueprintDetail): FormValues {
     installImage: detail.install?.image ?? "",
     installScript: detail.install?.script ?? "",
     installEntrypoint: (detail.install?.entrypoint ?? []).join(" "),
+    ...pluginsToForm(detail.plugins),
   };
 }
 
@@ -188,6 +323,7 @@ export function fileToForm(file: BlueprintFile): FormValues {
       key,
       required: field.required === true,
       secret: field.secret === true,
+      editable: field.editable === true,
       default: field.default ?? "",
       description: field.description ?? "",
       options: (field.options ?? []).join(", "),
@@ -196,6 +332,7 @@ export function fileToForm(file: BlueprintFile): FormValues {
     installImage: file.install?.image ?? "",
     installScript: file.install?.script ?? "",
     installEntrypoint: (file.install?.entrypoint ?? []).join(" "),
+    ...pluginsToForm(file.plugins),
   };
 }
 
@@ -220,6 +357,7 @@ export function formToPayload(values: FormValues): BlueprintPayload {
       key: row.key.trim(),
       required: row.required,
       secret: row.secret,
+      editable: row.editable,
       default: row.default.trim() || undefined,
       description: row.description.trim() || undefined,
       options: row.options
@@ -237,6 +375,7 @@ export function formToPayload(values: FormValues): BlueprintPayload {
               : null,
         }
       : null,
+    plugins: formToPlugins(values),
     minimums: {
       cpuLimit: Number(values.minCpu),
       memoryLimitMb: Number(values.minMemoryMb),
@@ -270,6 +409,7 @@ export function detailToFile(detail: AdminBlueprintDetail): BlueprintFile {
           entrypoint: detail.install.entrypoint,
         }
       : null,
+    plugins: detail.plugins,
     minimums: detail.minimums,
   };
 }
@@ -318,6 +458,13 @@ export function parseBlueprintFile(text: string): BlueprintFile {
   }
   if (typeof obj.minimums !== "object" || obj.minimums === null) {
     throw new Error('"minimums" is required (cpuLimit, memoryLimitMb, diskLimitMb).');
+  }
+  if (
+    obj.plugins !== undefined &&
+    obj.plugins !== null &&
+    (typeof obj.plugins !== "object" || Array.isArray(obj.plugins))
+  ) {
+    throw new Error('"plugins" must be an object.');
   }
 
   return raw as BlueprintFile;

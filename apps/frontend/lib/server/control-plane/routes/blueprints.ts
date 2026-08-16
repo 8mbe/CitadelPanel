@@ -32,6 +32,7 @@ import type {
   BlueprintPort,
   ResourceProfile,
 } from "../blueprints/types";
+import { parsePluginSupport } from "../blueprints/plugins";
 
 const KEY_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -140,6 +141,7 @@ function parseEnvSchema(value: unknown): Record<string, BlueprintEnvField> {
     if (description !== null) field.description = description;
     if (options && options.length > 0) field.options = options;
     if (entry.secret === true) field.secret = true;
+    if (entry.editable === true) field.editable = true;
 
     schema[key] = field;
   }
@@ -191,16 +193,31 @@ function parseBlueprintInput(body: Record<string, unknown>): BlueprintInput {
     throw badRequest('"minimums" is required.');
   }
 
+  const envSchema = parseEnvSchema(body.envFields);
+
+  // The plugins section is pure data but security-relevant (it names the
+  // hosts the panel's plugin fetch engine and auto-updater will contact), so
+  // it is validated as strictly as the install script — see plugins.ts.
+  let plugins: BlueprintInput["plugins"] = null;
+  if (body.plugins !== undefined && body.plugins !== null) {
+    try {
+      plugins = parsePluginSupport(body.plugins, envSchema, isBlockedHost);
+    } catch (error) {
+      throw badRequest((error as Error).message);
+    }
+  }
+
   return {
     key,
     name: str(body.name, "name", 128),
     description: optStr(body.description, "description", 1024),
     dockerImage: str(body.dockerImage, "dockerImage", 512),
     defaultPorts: parsePorts(body.ports),
-    envSchema: parseEnvSchema(body.envFields),
+    envSchema,
     startupCommand: optStr(body.startupCommand, "startupCommand", 8192),
     stopCommand: optStr(body.stopCommand, "stopCommand", 512),
     install: parseInstall(body.install),
+    plugins,
     dataPath,
     minimums: {
       cpuLimit: num(minimums.cpuLimit, "minimums.cpuLimit", 0.1, 64),
@@ -295,13 +312,6 @@ export async function handleAdminDeleteBlueprint(
 const MAX_IMPORT_BYTES = 256 * 1024;
 const FETCH_TIMEOUT_MS = 8_000;
 
-/**
- * Block obviously-internal hosts so a link import can't be pointed at the
- * control-plane's own network. Admins are already trusted (they author install
- * scripts that run root-equivalent on a node), so this is a guardrail against
- * accidents, not a hardened SSRF boundary — it does not defend against DNS
- * rebinding.
- */
 /**
  * POST /api/admin/blueprints/import-url
  *

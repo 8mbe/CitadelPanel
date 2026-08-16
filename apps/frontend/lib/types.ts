@@ -161,6 +161,166 @@ export interface ServerView {
   networkRxBps: number;
   networkTxBps: number;
   createdAt: string;
+   * Plugin/mod support resolved from the blueprint for this server, when it
+   * declares any: what the tab is called and which provider serves it. Null
+   * or undefined means no plugins tab. Only set by the detail endpoint.
+   */
+  pluginSupport?: {
+    label: string;
+    providerId: string;
+    directory: string;
+  } | null;
+}
+
+// --- Plugins --------------------------------------------------------------------
+
+/** One installed plugin, as the plugins tab displays it. */
+export interface InstalledPluginView {
+  id: string;
+  projectId: string;
+  slug: string | null;
+  title: string;
+  iconUrl: string | null;
+  versionId: string;
+  versionNumber: string;
+  channel: string;
+  filename: string;
+  fileSizeBytes: number | null;
+  enabled: boolean;
+  installedAt: string;
+  updatedAt: string;
+  /** Reconciled against the directory listing: enabled | disabled | missing. */
+  status: "enabled" | "disabled" | "missing";
+}
+
+export interface ServerPluginList {
+  support: {
+    label: string;
+    directory: string;
+    projectType: string;
+    gameVersion?: string;
+    /** Shown in the tab so the content source is never hidden. */
+    provider: { id: string; baseUrl: string; downloadHosts: string[] };
+  };
+  autoUpdate: boolean;
+  /** False when the directory listing failed (node down): DB state only. */
+  reconciled: boolean;
+  plugins: InstalledPluginView[];
+  untracked: string[];
+}
+
+/** A catalog search hit. */
+export interface PluginSearchResult {
+  projectId: string;
+  slug?: string;
+  title: string;
+  description: string;
+  author: string;
+  iconUrl?: string;
+  downloads: number;
+  categories: string[];
+  gameVersions: string[];
+}
+
+/** A catalog version offered for install. */
+export interface PluginVersionView {
+  versionId: string;
+  projectId: string;
+  name: string;
+  versionNumber: string;
+  channel: "release" | "beta" | "alpha";
+  gameVersions: string[];
+  loaders: string[];
+  datePublished: string;
+  files: {
+    url: string;
+    filename: string;
+    sizeBytes: number;
+    primary: boolean;
+  }[];
+}
+
+// --- Blueprint plugins section (wire shape) ---------------------------------------
+//
+// Mirrors the server's `BlueprintPluginSupport` (control-plane module
+// `blueprints/plugins.ts`, which validates it strictly). Duplicated here
+// because client code never imports server modules — keep the two in sync.
+
+export interface BlueprintPluginProfileSpec {
+  label?: string;
+  directory: string;
+  projectType: "mod" | "plugin" | "datapack";
+  loaders?: string[];
+  gameVersionEnv?: string;
+}
+
+interface BlueprintVersionEndpointSpec {
+  path: string;
+  query?: Record<string, string>;
+  root?: string;
+  fields: {
+    versionId: string;
+    versionNumber: string;
+    projectId?: string;
+    name?: string;
+    channel?: string;
+    gameVersions?: string;
+    loaders?: string;
+    datePublished?: string;
+    files: {
+      path: string;
+      fields: {
+        url: string;
+        filename: string;
+        sizeBytes?: string;
+        primary?: string;
+      };
+    };
+  };
+}
+
+export interface BlueprintPluginProviderSpec {
+  id: string;
+  baseUrl: string;
+  downloadHosts: string[];
+  facets?: { source: "projectType" | "loaders" | "gameVersion"; prefix: string }[];
+  search: {
+    path: string;
+    query?: Record<string, string>;
+    root?: string;
+    total?: string;
+    fields: {
+      projectId: string;
+      title: string;
+      slug?: string;
+      description?: string;
+      author?: string;
+      iconUrl?: string;
+      downloads?: string;
+      categories?: string;
+      gameVersions?: string;
+    };
+  };
+  project?: {
+    path: string;
+    fields: {
+      projectId: string;
+      title: string;
+      slug?: string;
+      iconUrl?: string;
+      description?: string;
+    };
+  };
+  versions: BlueprintVersionEndpointSpec;
+  version?: BlueprintVersionEndpointSpec;
+}
+
+export interface BlueprintPluginsSpec {
+  label?: string;
+  envField?: string;
+  variants?: Record<string, BlueprintPluginProfileSpec>;
+  default?: BlueprintPluginProfileSpec;
+  provider: BlueprintPluginProviderSpec;
 }
 
 /** A per-server delegated user. */
@@ -170,13 +330,6 @@ export interface SubuserView {
   email: string;
   permissions: string[];
   createdAt: string | null;
-}
-
-/** A currently-connected player. */
-export interface PlayerView {
-  id: string;
-  username: string;
-  joinedAt: string;
 }
 
 /** A single line of console output. */
@@ -212,4 +365,23 @@ export interface BlueprintView {
   name: string;
   description: string | null;
   minimums: { cpuLimit: number; memoryLimitMb: number; diskLimitMb: number };
+}
+
+// --- File manager -------------------------------------------------------------
+
+/** A file or folder entry in a server data directory listing. */
+export interface FileEntry {
+  name: string;
+  /** POSIX-style path relative to the server's data root, e.g. "/plugins/foo". */
+  path: string;
+  type: "file" | "directory" | "other";
+  sizeBytes: number;
+  /** ISO timestamp of the last modification. */
+  modifiedAt: string;
+}
+
+/** The shape returned by a directory listing endpoint. */
+export interface DirectoryListing {
+  path: string;
+  entries: FileEntry[];
 }

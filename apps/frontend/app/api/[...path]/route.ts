@@ -84,6 +84,14 @@ import {
   handleUpdateSubuser,
 } from "@/lib/server/control-plane/routes/subusers";
 import { handleDeleteAccount, handleGetMe } from "@/lib/server/control-plane/routes/users";
+  handleInstallPlugin,
+  handleListPluginVersions,
+  handleListServerPlugins,
+  handlePluginSettings,
+  handleRemovePlugin,
+  handleSearchServerPlugins,
+  handleTogglePlugin,
+} from "@/lib/server/control-plane/routes/plugins";
 import { recordAuditFromRequest } from "@/lib/server/control-plane/services/auditLog";
 
 export const runtime = "nodejs";
@@ -151,6 +159,15 @@ const patterns: Array<{
   { pattern: /^servers\/([^/]+)\/files\/download$/, methods: { GET: handleDownloadFile } },
   { pattern: /^servers\/([^/]+)\/files\/upload$/, methods: { POST: handleUploadFile } },
   { pattern: /^servers\/([^/]+)\/files\/pull$/, methods: { POST: handlePullFromUrl } },
+  // Literal plugin paths must be matched before the `:pluginId` pattern,
+  // otherwise POST /plugins/install matches the toggle route's :pluginId
+  // capture and returns 405.
+  { pattern: /^servers\/([^/]+)\/plugins$/, methods: { GET: handleListServerPlugins, PATCH: handlePluginSettings } },
+  { pattern: /^servers\/([^/]+)\/plugins\/search$/, methods: { GET: handleSearchServerPlugins } },
+  { pattern: /^servers\/([^/]+)\/plugins\/install$/, methods: { POST: handleInstallPlugin } },
+  { pattern: /^servers\/([^/]+)\/plugins\/versions\/([^/]+)$/, methods: { GET: handleListPluginVersions } },
+  { pattern: /^servers\/([^/]+)\/plugins\/([^/]+)\/toggle$/, methods: { POST: handleTogglePlugin } },
+  { pattern: /^servers\/([^/]+)\/plugins\/([^/]+)$/, methods: { DELETE: handleRemovePlugin } },
   { pattern: /^servers\/([^/]+)\/subusers$/, methods: { GET: handleListSubusers, POST: handleInviteSubuser } },
   { pattern: /^servers\/([^/]+)\/subusers\/([^/]+)$/, methods: { PATCH: handleUpdateSubuser, DELETE: handleRemoveSubuser } },
   { pattern: /^admin\/nodes\/([^/]+)$/, methods: { GET: handleGetNode, PATCH: handleUpdateNode, DELETE: handleDeleteNode } },

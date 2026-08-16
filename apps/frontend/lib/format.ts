@@ -112,3 +112,47 @@ export function initials(name: string): string {
     .slice(0, 2)
     .toUpperCase();
 }
+// --- Game versions ---------------------------------------------------------------
+
+/**
+ * Compare game version strings by numeric segments, not lexicographically —
+ * string order would call "1.8.8" newer than "1.21.1", and date-style
+ * versions ("26.2") older than both. Each dot-separated segment contributes
+ * its leading integer (0 when it has none) and missing segments count as 0,
+ * so "1.21" equals "1.21.0". A version carrying non-numeric characters
+ * anywhere ("1.21.4-pre2", "24w33a"-style snapshot tails) is a pre-release
+ * of its clean counterpart and sorts just below it.
+ */
+export function compareGameVersions(a: string, b: string): number {
+  const segments = (v: string) =>
+    v.split(".").map((part) => {
+      const digits = /^\d+/.exec(part);
+      return digits ? Number(digits[0]) : 0;
+    });
+  const preRelease = (v: string) => /[^0-9.]/.test(v);
+
+  const left = segments(a);
+  const right = segments(b);
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    const x = left[i] ?? 0;
+    const y = right[i] ?? 0;
+    if (x !== y) return x - y;
+  }
+  if (preRelease(a) !== preRelease(b)) return preRelease(a) ? -1 : 1;
+  return 0;
+}
+
+/**
+ * The newest version in a list — catalogs return supported-version lists in
+ * arbitrary (often oldest-first) order, so the last or first element can't be
+ * trusted to be it.
+ */
+export function newestGameVersion(versions: string[]): string | undefined {
+  return versions.reduce<string | undefined>(
+    (best, version) =>
+      best === undefined || compareGameVersions(version, best) > 0
+        ? version
+        : best,
+    undefined,
+  );
+}
