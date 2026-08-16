@@ -6,16 +6,14 @@
  * host. The traversal cases below are the ones that actually get tried.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-// config.ts reads the environment at import time, so the root must be set
-// before `paths.ts` is pulled in.
-const root = await mkdtemp(join(tmpdir(), "citadel-agent-test-"));
-process.env.SERVER_DATA_ROOT = root;
-process.env.AGENT_TOKEN ??= "test-agent-token-that-is-long-enough-0123456789";
+// The data root is a temp directory prepared by the test preload
+// (test-setup.ts) before any test module — and therefore any config import —
+// runs. It is imported here only to learn where it is.
+const root = (await import("../test-setup")).testRoot;
 
 const { isInside, resolveExistingServerPath, resolveServerPath, serverDataPath } =
   await import("./paths");
@@ -25,10 +23,6 @@ const SERVER_ID = "11111111-2222-3333-4444-555555555555";
 beforeAll(async () => {
   await mkdir(join(root, SERVER_ID, "plugins"), { recursive: true });
   await writeFile(join(root, "outside-secret.txt"), "should never be readable");
-});
-
-afterAll(async () => {
-  await rm(root, { recursive: true, force: true });
 });
 
 describe("isInside", () => {
