@@ -179,6 +179,15 @@ function parseCreateRequest(body: Record<string, unknown>): CreateContainerReque
     throw badRequest('"user" must be a "uid" or "uid:gid" of digits only.');
   }
 
+  const extraNetworks = Array.isArray(body.extraNetworks)
+    ? body.extraNetworks.map((entry) => {
+        if (typeof entry !== "string" || entry.length === 0) {
+          throw badRequest('"extraNetworks" must be an array of non-empty strings.');
+        }
+        return entry;
+      })
+    : undefined;
+
   return {
     image,
     containerDataPath,
@@ -189,6 +198,8 @@ function parseCreateRequest(body: Record<string, unknown>): CreateContainerReque
     readOnlyRootFilesystem: body.readOnlyRootFilesystem === true,
     command,
     user,
+    extraNetworks,
+    tty: body.tty === true,
   };
 }
 
@@ -258,10 +269,15 @@ function timeoutOf(body: Record<string, unknown>): number | undefined {
  * Per-socket state for an attached console.
  *
  * The attachment is held here rather than in a module map so it is released
- * when the socket closes, with no keyed cleanup to get wrong.
+ * when the socket closes, with no keyed cleanup to get wrong. `userId` and
+ * `token` come from the panel's session-validation response and ride the socket
+ * only so per-command audit callbacks can attribute input — they are never
+ * re-read for authorization (that was settled at the WS handshake).
  */
 interface ConsoleSocket {
   serverId: string;
+  userId: string;
+  token: string;
   attachment: Attachment | null;
 }
 
@@ -359,6 +375,8 @@ const server = Bun.serve<ConsoleSocket, never>({
       }),
     },
 
+     * because the panel passes the link network via `extraNetworks` at create.
+     */
     // --- Container lifecycle --------------------------------------------------
     "/v1/servers/:id/container": {
       POST: route(async (request) => {

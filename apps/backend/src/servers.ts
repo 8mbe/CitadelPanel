@@ -19,13 +19,18 @@ import {
   type Attachment,
 } from "./docker/attach";
 import {
+  attachToNetwork,
   createContainer,
+  containerIsTty,
   demuxDockerLogStream,
+  detachFromNetwork,
+  ensureNetwork,
   getContainerLogs,
   inspectContainerState,
   killContainer,
   removeContainer,
   removeNetwork,
+  removeNetworkIfEmpty,
   restartContainer,
   runContainerToCompletion,
   startContainer,

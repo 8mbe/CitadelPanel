@@ -87,14 +87,37 @@ function drainFrames(state: StreamState, onData: (chunk: Buffer) => void): void 
 }
 
 /**
+ * Forward a TTY container's raw byte stream verbatim.
+ *
+ * A `Tty: true` container has no 8-byte multiplexing: stdout and stderr are
+ * merged into one byte stream that carries the server's own ANSI escape codes
+ * (which is the whole point of TTY mode — JLine3 emits color only to a
+ * terminal). Every buffered byte is emitted as a single chunk and the buffer
+ * is cleared, so partial reads flush immediately rather than waiting for a
+ * frame boundary that will never come.
+ */
+function drainRaw(state: StreamState, onData: (chunk: Buffer) => void): void {
+  if (state.buffer.length === 0) return;
+  onData(state.buffer);
+  state.buffer = Buffer.alloc(0);
+}
+
+/**
  * Attach to a container's stdin/stdout/stderr.
  *
  * The container must have been created with `OpenStdin` (see `hardening.ts`),
  * otherwise there is no stdin to write to and the console is read-only.
+ *
+ * When `tty` is true the container was created with `Tty: true`, so Docker
+ * merges stdout/stderr into a single raw byte stream (no 8-byte multiplexing
+ * headers). The data handler then forwards bytes verbatim instead of peeling
+ * frames — this is the path that carries a Minecraft server's ANSI color codes
+ * (JLine3 only emits them when stdout is a terminal).
  */
 export async function attachToContainer(
   containerId: string,
   handlers: AttachHandlers,
+  tty = false,
 ): Promise<Attachment> {
   const state: StreamState = { handshakeDone: false, buffer: Buffer.alloc(0) };
 
@@ -119,7 +142,11 @@ export async function attachToContainer(
           try {
             if (!state.handshakeDone && !consumeHandshake(state)) return;
             resolveReady();
-            drainFrames(state, handlers.onData);
+            if (tty) {
+              drainRaw(state, handlers.onData);
+            } else {
+              drainFrames(state, handlers.onData);
+            }
           } catch (error) {
             const wrapped =
               error instanceof Error ? error : new Error(String(error));

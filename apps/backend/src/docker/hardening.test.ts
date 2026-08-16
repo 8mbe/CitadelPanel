@@ -236,11 +236,19 @@ describe("console attachment", () => {
     expect(config.StdinOnce).toBe(false);
   });
 
-  test("does not allocate a TTY", () => {
-    // A pty would echo input back and emit escape sequences, and would collapse
-    // stdout/stderr into one unframed stream that stripDockerLogHeaders cannot
-    // parse.
+  test("does not allocate a TTY by default", () => {
+    // Non-TTY is the safe default: stdout and stderr stay separately 8-byte
+    // framed, which the attach and log-demux layers expect.
     const config = buildHardenedContainerConfig(baseSpec());
     expect(config.Tty).toBe(false);
+  });
+
+  test("allocates a TTY when the blueprint opts in", () => {
+    // A TTY container merges stdout/stderr into a raw stream that carries the
+    // server's own ANSI color codes — needed for software like JLine3 that
+    // only emits color to a terminal. The attach layer detects this and reads
+    // the stream without 8-byte framing.
+    const config = buildHardenedContainerConfig(baseSpec({ tty: true }));
+    expect(config.Tty).toBe(true);
   });
 });

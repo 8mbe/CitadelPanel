@@ -432,6 +432,10 @@ export async function createServer(
       readOnlyRootFilesystem: blueprint.supportsReadOnlyRoot === true,
       command,
       user: blueprint.user,
+      tty: blueprint.tty === true,
+      // A newly created server has no databases yet, but the call is kept for
+      // symmetry with recreateServerContainer.
+      extraNetworks: await extraNetworksForServer(server.id),
     });
 
     await sql`
@@ -723,3 +727,4 @@ export async function reconcileServerStatus(serverId: string): Promise<ServerSta
   }
   return mapped;
 }
+      tty: blueprint.tty === true,

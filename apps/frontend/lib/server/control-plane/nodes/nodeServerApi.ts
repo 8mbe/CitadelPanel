@@ -34,6 +34,10 @@ export interface CreateContainerRequest {
   command?: string[];
   /** `uid` or `uid:gid` to run the container as; null = image default USER. */
   user?: string;
+  /** Extra networks to attach (e.g. node_db_net when the server has a DB). */
+  extraNetworks?: string[];
+  /** Allocate a pseudo-TTY — see Blueprint.tty. */
+  tty?: boolean;
 }
 
 /**

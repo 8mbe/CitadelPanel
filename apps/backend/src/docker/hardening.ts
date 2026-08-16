@@ -66,6 +66,27 @@ export interface HardenedContainerSpec {
    * per-preset is a hardening win where supported.
    */
   readOnlyRootFilesystem?: boolean;
+
+  /**
+   * Allocate a pseudo-TTY for the container's primary process.
+   *
+   * Some server software (notably itzg/minecraft-server via JLine3) only emits
+   * ANSI color when stdout is a TTY; without one it strips all color, leaving
+   * the panel's ANSI console renderer with nothing to render. A TTY also
+   * changes the attach stream from Docker's 8-byte multiplexed framing to a raw
+   * byte stream (stdout and stderr merged), which the attach layer detects
+   * per-container. Off by default — most servers don't need it and non-TTY
+   * keeps stdout/stderr cleanly separated.
+   */
+  tty?: boolean;
+
+  /**
+   * Additional networks to attach the container to after creation, beyond its
+   * primary isolated `networkName`. Used for `node_db_net` — a server whose
+   * owner has provisioned a database must reach the shared MariaDB, so the
+   * panel passes that network name here and the agent attaches it post-create.
+   */
+  extraNetworks?: string[];
 }
 
 /** Bytes per megabyte, for Docker's byte-denominated memory limits. */

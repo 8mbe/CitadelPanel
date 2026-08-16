@@ -28,7 +28,7 @@ function isConflict(error: unknown): boolean {
 }
 
 /**
- * Ensure the per-server isolated network exists.
+ * Ensure a managed network exists.
  *
  * Idempotent: a pre-existing network is reused. Creation races (two requests
  * for the same server) surface as a 409, which we treat as success.
