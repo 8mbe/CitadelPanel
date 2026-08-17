@@ -966,14 +966,21 @@ export function toggleServerPlugin(
   });
 }
 
-/** DELETE /api/servers/:id/plugins/:pluginId — remove the file and row. */
+/**
+ * DELETE /api/servers/:id/plugins/:pluginId — remove the file and row.
+ * `deleteData` also wipes the plugin's config/data folder (matched by the
+ * project's title/slug inside the install directory).
+ */
 export function removeServerPlugin(
   serverId: string,
   pluginId: string,
+  deleteData: boolean,
 ): Promise<void> {
-  return request(`/api/servers/${serverId}/plugins/${pluginId}`, {
-    method: "DELETE",
-  });
+  const params = new URLSearchParams({ deleteData: String(deleteData) });
+  return request(
+    `/api/servers/${serverId}/plugins/${pluginId}?${params}`,
+    { method: "DELETE" },
+  );
 }
 
 /** PATCH /api/servers/:id/plugins — per-server plugin settings. */

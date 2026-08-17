@@ -8,6 +8,7 @@ import { Download, History, Puzzle, Search, Settings, Trash2 } from "lucide-reac
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -20,6 +21,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -300,6 +302,10 @@ export function PluginsTab({ serverId }: { serverId: string }) {
     projectId: string;
     title: string;
   } | null>(null);
+  // Removal goes through a confirm dialog: the jar always goes, the plugin's
+  // config/data folder only when the (default-on) checkbox says so.
+  const [removeTarget, setRemoveTarget] = React.useState<InstalledPluginView | null>(null);
+  const [removeConfigs, setRemoveConfigs] = React.useState(true);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -375,13 +381,19 @@ export function PluginsTab({ serverId }: { serverId: string }) {
     }
   };
 
-  const remove = async (plugin: InstalledPluginView) => {
-    setBusyId(plugin.id);
+  const remove = async () => {
+    if (!removeTarget) return;
+    setBusyId(removeTarget.id);
     setError(null);
     setNote(null);
     try {
-      await removeServerPlugin(serverId, plugin.id);
-      setNote(`Removed ${plugin.title}. Restart to apply.`);
+      await removeServerPlugin(serverId, removeTarget.id, removeConfigs);
+      setNote(
+        `Removed ${removeTarget.title}${
+          removeConfigs ? " and its config folder" : ""
+        }. Restart to apply.`,
+      );
+      setRemoveTarget(null);
       reload();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to remove plugin.");
@@ -601,7 +613,10 @@ export function PluginsTab({ serverId }: { serverId: string }) {
                       size="icon-sm"
                       aria-label={`Remove ${plugin.title}`}
                       disabled={busyId === plugin.id}
-                      onClick={() => remove(plugin)}
+                      onClick={() => {
+                        setRemoveConfigs(true);
+                        setRemoveTarget(plugin);
+                      }}
                     >
                       {busyId === plugin.id ? <Spinner /> : <Trash2 />}
                     </Button>
@@ -683,6 +698,63 @@ export function PluginsTab({ serverId }: { serverId: string }) {
           }}
         />
       )}
+
+      <Dialog
+        open={removeTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setRemoveTarget(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Remove {removeTarget?.title}</DialogTitle>
+            <DialogDescription>
+              Deletes{" "}
+              <span className="font-mono">{removeTarget?.filename}</span> from{" "}
+              <span className="font-mono">
+                {list?.support.directory}
+              </span>{" "}
+              and removes it from this list.
+            </DialogDescription>
+          </DialogHeader>
+
+          <label className="flex items-start gap-2 text-sm">
+            <Checkbox
+              className="mt-0.5"
+              checked={removeConfigs}
+              onCheckedChange={(checked) => setRemoveConfigs(checked === true)}
+              aria-label="Also delete the plugin's config folder"
+            />
+            <span className="text-muted-foreground">
+              Also delete the plugin&apos;s config folder (
+              <span className="font-mono">
+                {list?.support.directory}/{removeTarget?.title}/
+              </span>
+              ) — its settings and data. Uncheck to keep configs for a
+              reinstall.
+            </span>
+          </label>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRemoveTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={busyId !== null}
+              onClick={remove}
+            >
+              {busyId !== null && <Spinner />}
+              Remove
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

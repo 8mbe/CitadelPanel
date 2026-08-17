@@ -46,7 +46,17 @@ The browser never talks to the catalog; the panel never executes catalog
 content. The agent is unchanged — installs are ordinary `files/pull`
 operations, contained by `paths.ts` like every other file write. Enable/disable
 is a rename to `<file>.jar.disabled` (which Bukkit-family loaders and Fabric
-ignore); remove deletes the file and the row.
+ignore).
+
+Removal deletes the jar and the row; optionally (`deleteData`, a checkbox in
+the confirm dialog, default on) it also deletes the plugin's config/data
+folder. Bukkit-family plugins name that folder after the *plugin*, not the jar
+(`plugins/EssentialsX/` for `EssentialsX-2.20.1.jar`), so the panel matches
+install-directory subfolders against the project's title and slug
+(case-insensitive) and deletes the matches — matching rather than name-deriving
+means it can only touch folders the catalog's own names point at. Wiped
+folders are recorded in the audit row; a failed directory listing leaves the
+configs in place rather than failing the removal.
 
 ## Safety model for shared blueprints
 

@@ -278,7 +278,18 @@ export function describeMetadata(
       if (plugin && version) return `${plugin} ${version}`;
       return plugin;
     }
-    case "server.plugin.remove":
+    case "server.plugin.remove": {
+      const plugin = str(meta.plugin);
+      const filename = str(meta.filename);
+      const dirs = meta.deletedConfigDirs;
+      const wiped =
+        Array.isArray(dirs) && dirs.length > 0
+          ? ` · wiped ${dirs.filter((d): d is string => typeof d === "string").join(", ")}`
+          : "";
+      return plugin
+        ? `${plugin}${filename ? ` (${filename})` : ""}${wiped}`
+        : filename || null;
+    }
     case "server.plugin.toggle": {
       const plugin = str(meta.plugin);
       const enabled = meta.enabled;

@@ -112,7 +112,12 @@ export async function handleTogglePlugin(
   return noContent();
 }
 
-/** DELETE /api/servers/:id/plugins/:pluginId — remove file and row. */
+/**
+ * DELETE /api/servers/:id/plugins/:pluginId?deleteData= — remove the jar, the
+ * row, and (opt-in) the plugin's config/data folder. `deleteData` defaults to
+ * false at the API level so an unaware caller can't wipe configs; the plugins
+ * tab always sends it explicitly from its confirm checkbox.
+ */
 export async function handleRemovePlugin(
   request: Request,
   serverId: string,
@@ -122,7 +127,9 @@ export async function handleRemovePlugin(
   const { user } = await requireServerPermission(request, id, "files");
   const plugin = requireUuidParam(pluginId, "pluginId");
 
-  await removePlugin(id, user.id, plugin);
+  const deleteData =
+    new URL(request.url).searchParams.get("deleteData") === "true";
+  await removePlugin(id, user.id, plugin, deleteData);
   return noContent();
 }
 

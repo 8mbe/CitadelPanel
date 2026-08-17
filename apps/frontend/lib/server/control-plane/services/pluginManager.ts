@@ -372,21 +372,64 @@ export async function togglePlugin(
   });
 }
 
+/**
+ * Remove a plugin: delete its jar (either enable state), optionally the
+ * plugin's config/data folder, then the row.
+ *
+ * Bukkit-family plugins keep their settings in a folder named after the
+ * PLUGIN, not the jar (`plugins/EssentialsX/` for `EssentialsX-2.20.1.jar`),
+ * so `deleteData` matches install-directory subfolders against the project's
+ * title and slug, case-insensitively, and deletes the matches. Matching —
+ * rather than deriving a name — is deliberate: it can only ever touch a
+ * folder the catalog's own names point at, never a neighbour's. A failed
+ * directory listing (node down) leaves the configs in place rather than
+ * failing the whole removal; the audit row records what was wiped.
+ */
 export async function removePlugin(
   serverId: string,
   actorId: string,
   pluginId: string,
+  deleteData: boolean,
 ): Promise<void> {
   const ctx = await requirePluginContext(serverId);
 
   const rows = (await sql`
-    SELECT filename, project_title FROM server_plugins
+    SELECT filename, project_slug, project_title FROM server_plugins
     WHERE id = ${pluginId} AND server_id = ${serverId}
-  `) as { filename: string; project_title: string }[];
+  `) as { filename: string; project_slug: string | null; project_title: string }[];
   const row = rows[0];
   if (!row) throw notFound("Plugin not found");
 
   await deletePluginFileBestEffort(ctx, row.filename);
+
+  const deletedConfigDirs: string[] = [];
+  if (deleteData) {
+    const wanted = new Set(
+      [row.project_title, row.project_slug]
+        .filter((name): name is string => name !== null)
+        .map((name) => name.toLowerCase()),
+    );
+    try {
+      const listing = await listServerFiles(
+        ctx.nodeId,
+        serverId,
+        `/${ctx.support.directory}`,
+      );
+      for (const entry of listing.entries) {
+        if (entry.type === "directory" && wanted.has(entry.name.toLowerCase())) {
+          await deleteServerFile(
+            ctx.nodeId,
+            serverId,
+            `/${ctx.support.directory}/${entry.name}`,
+          );
+          deletedConfigDirs.push(entry.name);
+        }
+      }
+    } catch {
+      // The jar is already gone; leave the configs rather than aborting.
+    }
+  }
+
   await sql`DELETE FROM server_plugins WHERE id = ${pluginId}`;
 
   await recordAudit({
@@ -398,6 +441,9 @@ export async function removePlugin(
       provider: ctx.support.provider.id,
       plugin: row.project_title,
       filename: row.filename,
+      ...(deletedConfigDirs.length > 0
+        ? { deletedConfigDirs }
+        : {}),
     },
   });
 }
