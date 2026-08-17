@@ -8,6 +8,7 @@
     "dev:backend": "bun run --cwd apps/backend dev",
     "dev:frontend": "bun run --cwd apps/frontend dev",
     "test": "bun run --cwd apps/backend test",
+    "test:e2e": "bun test e2e/",
     "typecheck": "bun run --cwd apps/backend typecheck && bun run --cwd apps/frontend typecheck",
     "setup": "bun run --cwd apps/frontend setup",
     "setup-db": "bun run --cwd apps/backend setup-db",

@@ -5,6 +5,7 @@ node_modules/
 .env
 .env.local
 .env.*.local
+.env.e2e
 *.pem
 *.key
 *.crt
@@ -17,6 +18,7 @@ data/
 out/
 dist/
 build/
+*.tsbuildinfo
 
 # Logs
 *.log
