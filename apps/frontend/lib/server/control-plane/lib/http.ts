@@ -6,6 +6,7 @@
  */
 
 import { env } from "../config/env";
+import { APIError } from "better-auth/api";
 
 export class HttpError extends Error {
   constructor(
@@ -72,8 +73,12 @@ export function withCors(response: Response): Response {
 /**
  * Convert a thrown value into a JSON response.
  *
- * Unexpected errors are logged in full but reported generically, so internal
- * details (stack traces, SQL text) never reach the client.
+ * Better Auth `APIError`s (thrown by the auth layer and its plugins — e.g. an
+ * invalid API key failing the plugin's before-hook during `getSession`) keep
+ * their own status and message; an invalid credential surfaces as 401 rather
+ * than a generic 500. Everything else unexpected is logged in full but
+ * reported generically, so internal details (stack traces, SQL text) never
+ * reach the client.
  */
 export function toErrorResponse(error: unknown): Response {
   if (error instanceof HttpError) {
@@ -81,6 +86,12 @@ export function toErrorResponse(error: unknown): Response {
       { error: error.message, ...(error.details ? { details: error.details } : {}) },
       error.status,
     );
+  }
+
+  if (error instanceof APIError) {
+    const status =
+      error.body?.code === "INVALID_API_KEY" || error.statusCode === 401 ? 401 : error.statusCode;
+    return json({ error: error.body?.message ?? "Authentication failed" }, status);
   }
 
   console.error("[http] unhandled error:", error);

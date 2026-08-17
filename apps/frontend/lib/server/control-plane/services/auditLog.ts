@@ -73,6 +73,9 @@ export type AuditAction =
   | "user.ban"
   | "user.unban"
   | "user.delete"
+  | "apikey.create"
+  | "apikey.update"
+  | "apikey.delete"
   | "setup.admin.create"
   | "setup.complete"
   | "settings.update";
@@ -85,6 +88,7 @@ export type AuditTargetType =
   | "database"
   | "blueprint"
   | "suspicious_activity"
+  | "api_key"
   | "settings";
 
 export interface AuditEntry {
@@ -125,7 +129,37 @@ export async function recordAuditFromRequest(
   request: Request,
   entry: Omit<AuditEntry, "ip">,
 ): Promise<void> {
-  await recordAudit({ ...entry, ip: clientIp(request) });
+  await recordAudit({ ...entry, ip: clientIp(request), metadata: withApiKeyAttribution(request, entry.metadata) });
+}
+
+/**
+ * When the request was authenticated with an API key (either header
+ * convention — see `middleware.withApiKeyHeaderAlias`), stamp the entry's
+ * metadata so the audit trail distinguishes "the admin clicked this" from "a
+ * script holding the admin's key did". `viaKeyPrefix` records the first 8
+ * chars of the credential actually used — distinct from a handler-supplied
+ * `keyPrefix`, which names the key being *acted on* (the two are often
+ * different keys). Never the key material itself is recorded. Requests from
+ * the panel UI never carry these headers, and a request bearing an invalid
+ * key is rejected 401 before any audited handler runs, so header presence at
+ * this point means the key authenticated.
+ */
+function withApiKeyAttribution(
+  request: Request,
+  metadata: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const authorization = request.headers.get("authorization");
+  const bearer = authorization?.toLowerCase().startsWith("bearer ")
+    ? authorization.slice(7).trim()
+    : null;
+  const raw = request.headers.get("x-api-key") ?? bearer;
+  if (!raw) return metadata ?? {};
+
+  return {
+    ...(metadata ?? {}),
+    viaApiKey: true,
+    viaKeyPrefix: raw.slice(0, 8),
+  };
 }
 
 export interface AuditLogRow {

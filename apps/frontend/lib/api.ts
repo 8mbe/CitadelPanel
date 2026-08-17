@@ -2238,6 +2238,68 @@ export async function listServerActivity(
   return data.entries ?? [];
 }
 
+// --- Admin API keys -----------------------------------------------------------
+
+/** One API key as the admin oversight page sees it. Never carries key material. */
+export interface AdminApiKeyView {
+  id: string;
+  name: string | null;
+  /** The plugin's short display prefix; the full key is unrecoverable. */
+  prefix: string | null;
+  enabled: boolean;
+  status: "active" | "disabled" | "expired";
+  requestCount: number;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string | null;
+  ownerId: string;
+  ownerEmail: string | null;
+  ownerName: string | null;
+  ownerRole: "admin" | "user";
+}
+
+/**
+ * GET /api/admin/api-keys — every key on the panel, owner context included
+ * (admin only). `q` filters by owner email/name or key name.
+ */
+export async function adminListApiKeys(q?: string): Promise<AdminApiKeyView[]> {
+  const query = q && q.trim().length > 0 ? `?q=${encodeURIComponent(q.trim())}` : "";
+  const data = await request<{ keys: AdminApiKeyView[] }>(`/api/admin/api-keys${query}`);
+  return data.keys;
+}
+
+/**
+ * POST /api/admin/api-keys — mint a key for the calling admin.
+ *
+ * The full key is returned once, as `token`; it is stored hashed and can never
+ * be retrieved again. Show it immediately.
+ */
+export async function adminCreateApiKey(
+  name: string,
+): Promise<{ key: AdminApiKeyView | null; token: string }> {
+  return request<{ key: AdminApiKeyView | null; token: string }>("/api/admin/api-keys", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+/** PATCH /api/admin/api-keys/:id — enable or disable any user's key (admin only). */
+export async function adminSetApiKeyEnabled(
+  keyId: string,
+  enabled: boolean,
+): Promise<AdminApiKeyView> {
+  const data = await request<{ key: AdminApiKeyView }>(`/api/admin/api-keys/${keyId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
+  });
+  return data.key;
+}
+
+/** DELETE /api/admin/api-keys/:id — revoke any user's key (admin only). */
+export async function adminDeleteApiKey(keyId: string): Promise<void> {
+  await request(`/api/admin/api-keys/${keyId}`, { method: "DELETE" });
+}
+
 // --- Admin general settings ---------------------------------------------------
 
 /** Mail providers the panel can send through. Mirrors services/settings.ts. */

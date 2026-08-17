@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   Blocks,
   ClipboardList,
+  KeyRound,
   Server,
   Settings,
   ShieldAlert,
@@ -21,6 +22,7 @@ export const ADMIN_SECTIONS = [
   { href: "/admin/nodes", label: "Nodes", icon: HardDrive },
   { href: "/admin/blueprints", label: "Blueprints", icon: Blocks },
   { href: "/admin/users", label: "Users", icon: Users },
+  { href: "/admin/api-keys", label: "API keys", icon: KeyRound },
   { href: "/admin/security", label: "Security", icon: ShieldAlert },
   { href: "/admin/audit", label: "Audit log", icon: ClipboardList },
   { href: "/admin/settings", label: "Settings", icon: Settings },

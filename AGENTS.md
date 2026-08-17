@@ -60,6 +60,13 @@ Existing docs:
 - `docs/plugins.md` — blueprint-declared plugin/mod support: the provider
   fetch spec (data, never code), the fetch engine's host pinning, and the
   pre-start auto-updater.
+- `docs/database-explorer.md` — the in-panel database browser/editor for
+  provisioned server databases: panel-composed SQL (never browser SQL), the
+  scoped-user execution model, and why the agent parses `--xml` output.
+- `docs/api-keys.md` — API keys for programmatic `/api/*` access: the
+  key-is-its-owner session-synthesis model, the `Authorization: Bearer`
+  alias, admin oversight (`/admin/api-keys`), and via-API-key audit
+  attribution.
 
 When adding a feature, create `docs/<feature>.md` in the same style and cross-link related docs. Don't duplicate what the code already says — document the *why* and the cross-cutting flow, the way the existing docs do.
 

@@ -20,6 +20,27 @@ import { sql } from "../db/client";
 import { forbidden, notFound, unauthorized } from "../lib/http";
 
 /**
+ * Accept `Authorization: Bearer <api-key>` as an alias for the `x-api-key`
+ * header the plugin is configured to read.
+ *
+ * The apiKey plugin only inspects `apiKeyHeaders` (`x-api-key`); Better Auth's
+ * own `bearer()` plugin translates Bearer *session tokens*, not keys. Rather
+ * than fight either library, the alias is normalized here — the single place
+ * sessions are resolved — so scripts can use the conventional Bearer scheme
+ * against the same `/api/*` surface. Only the headers handed to Better Auth
+ * are rewritten; the original request (and its audit-trail headers) is kept.
+ */
+function withApiKeyHeaderAlias(headers: Headers): Headers {
+  if (headers.get("x-api-key")) return headers;
+  const authorization = headers.get("authorization");
+  if (!authorization?.toLowerCase().startsWith("bearer ")) return headers;
+
+  const rewritten = new Headers(headers);
+  rewritten.set("x-api-key", authorization.slice(7).trim());
+  return rewritten;
+}
+
+/**
  * Resolve the current session into a typed user, or null when unauthenticated.
  *
  * `role` is read defensively: if the column somehow holds an unexpected value,
@@ -34,7 +55,9 @@ import { forbidden, notFound, unauthorized } from "../lib/http";
 export async function getAuthenticatedUser(
   request: Request,
 ): Promise<AuthenticatedUser | null> {
-  const session = await auth.api.getSession({ headers: request.headers });
+  const session = await auth.api.getSession({
+    headers: withApiKeyHeaderAlias(request.headers),
+  });
   if (!session?.user) return null;
 
   const rawRole = (session.user as { role?: unknown }).role;

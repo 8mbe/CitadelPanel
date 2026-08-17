@@ -189,6 +189,14 @@ export function actionMeta(action: string): ActionMeta {
     case "user.delete":
       return { label: "User deleted", category: "admin", icon: UserX };
 
+    // API keys
+    case "apikey.create":
+      return { label: "API key created", category: "security", icon: KeyRound };
+    case "apikey.update":
+      return { label: "API key updated", category: "security", icon: KeyRound };
+    case "apikey.delete":
+      return { label: "API key revoked", category: "security", icon: KeyRound };
+
     // Security
     case "suspicious.review":
       return { label: "Suspicious activity reviewed", category: "security", icon: ShieldAlert };
@@ -227,8 +235,27 @@ export const CATEGORY_TONE: Record<ActionCategory, string> = {
  * Render the action-specific detail from metadata as a short string.
  * Metadata never contains secret values (only paths, keys, sizes), so it is
  * safe to surface directly.
+ *
+ * Actions performed with an API key (rather than the session cookie) get a
+ * "via API key" suffix regardless of action — the marker is stamped on the
+ * metadata by the audit writer, not per-action.
  */
 export function describeMetadata(
+  action: string,
+  meta: Record<string, unknown>,
+): string | null {
+  const base = describeActionMetadata(action, meta);
+
+  if (meta.viaApiKey === true) {
+    const prefix =
+      typeof meta.viaKeyPrefix === "string" ? meta.viaKeyPrefix : null;
+    const suffix = prefix ? `via API key ${prefix}…` : "via API key";
+    return base ? `${base} · ${suffix}` : suffix;
+  }
+  return base;
+}
+
+function describeActionMetadata(
   action: string,
   meta: Record<string, unknown>,
 ): string | null {
@@ -421,6 +448,30 @@ export function describeMetadata(
     case "user.ban": {
       const reason = str(meta.reason);
       return reason ?? null;
+    }
+    case "apikey.create": {
+      // The creator is always the key's owner (admins mint keys for
+      // themselves), so naming the owner again would be noise.
+      const name = str(meta.keyName);
+      return name ? `"${name}"` : str(meta.keyPrefix) ? `${str(meta.keyPrefix)}…` : null;
+    }
+    case "apikey.delete": {
+      const name = str(meta.keyName);
+      const label = name ? `"${name}"` : str(meta.keyPrefix) ? `${str(meta.keyPrefix)}…` : null;
+      const owner = str(meta.ownerEmail);
+      if (label && owner) return `${label} · ${owner}`;
+      return label;
+    }
+    case "apikey.update": {
+      const name = str(meta.keyName);
+      const label = name ? `"${name}"` : str(meta.keyPrefix) ? `${str(meta.keyPrefix)}…` : null;
+      const enabled = meta.enabled;
+      const state =
+        typeof enabled === "boolean" ? (enabled ? "enabled" : "disabled") : null;
+      const owner = str(meta.ownerEmail);
+      const parts = [label, state].filter((p): p is string => p !== null);
+      if (owner) parts.push(owner);
+      return parts.length > 0 ? parts.join(" · ") : null;
     }
     case "suspicious.flag": {
       const score = num(meta.score);

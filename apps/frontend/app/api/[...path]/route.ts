@@ -23,6 +23,12 @@ import {
   handleUpdateUserRole,
 } from "@/lib/server/control-plane/routes/admin";
 import {
+  handleAdminCreateApiKey,
+  handleAdminDeleteApiKey,
+  handleAdminListApiKeys,
+  handleAdminSetApiKeyEnabled,
+} from "@/lib/server/control-plane/routes/apiKeys";
+import {
   handleAdminCreateBlueprint,
   handleAdminDeleteBlueprint,
   handleAdminGetBlueprint,
@@ -164,6 +170,7 @@ const exact = new Map<string, Partial<Record<string, Handler>>>([
   ["admin/blueprints", { GET: handleAdminListBlueprints, POST: handleAdminCreateBlueprint }],
   ["admin/blueprints/import-url", { POST: handleAdminImportBlueprintUrl }],
   ["admin/users", { GET: handleListUsers }],
+  ["admin/api-keys", { GET: handleAdminListApiKeys, POST: handleAdminCreateApiKey }],
   ["admin/audit-logs", { GET: handleListAuditLogs }],
   // Agent callbacks for the direct-console WebSocket (see routes/console.ts).
   ["internal/console/sessions/validate", { POST: handleConsoleSessionValidate }],
@@ -246,6 +253,8 @@ const patterns: Array<{
   { pattern: /^admin\/users\/([^/]+)\/role$/, methods: { PATCH: handleUpdateUserRole } },
   { pattern: /^admin\/users\/([^/]+)\/ban$/, methods: { POST: handleBanUser } },
   { pattern: /^admin\/users\/([^/]+)\/unban$/, methods: { POST: handleUnbanUser } },
+  // API-key oversight (see routes/apiKeys.ts).
+  { pattern: /^admin\/api-keys\/([^/]+)$/, methods: { PATCH: handleAdminSetApiKeyEnabled, DELETE: handleAdminDeleteApiKey } },
   // Must come after the /role, /ban, /unban patterns so those more specific
   // paths match first rather than being captured by the bare :id GET.
   { pattern: /^admin\/users\/([^/]+)$/, methods: { GET: handleGetUser } },

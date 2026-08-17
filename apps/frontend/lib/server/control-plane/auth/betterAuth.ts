@@ -349,11 +349,18 @@ export const auth = betterAuth({
     // how the BFF's `requireAuth`/`requireAdmin` guards resolve sessions — so a
     // user key works against every panel route with no guard changes and can
     // never escalate to admin (the mock session carries the owner's real role,
-    // re-checked by `requireAdmin`). `x-api-key` mirrors the project's own
-    // header convention; `Authorization: Bearer` also works.
+    // re-checked by `requireAdmin`). The plugin reads the `x-api-key` header;
+    // `Authorization: Bearer` is normalized onto it by
+    // `middleware.withApiKeyHeaderAlias`.
     apiKey({
       enableSessionForAPIKeys: true,
       apiKeyHeaders: ["x-api-key"],
+      // The plugin defaults to 10 requests per 24 hours per key — fine for
+      // production, but the e2e suite issues hundreds of requests per key and
+      // would blow the budget on the first run. Gated on the same env knob as
+      // Better Auth's own limiter below, so `RATE_LIMIT_ENABLED=false` opts out
+      // of both in one shot.
+      rateLimit: { enabled: env.rateLimitEnabled },
     }),
     // The admin plugin owns the `role` field (replacing the manual
     // additionalField we used to declare — identical schema: string, not user-
@@ -450,7 +457,7 @@ export const auth = betterAuth({
   // tighter on the endpoints an attacker scripts (brute-force sign-in, mass
   // account creation, reset-email flooding).
   rateLimit: {
-    enabled: true,
+    enabled: env.rateLimitEnabled,
     window: 60,
     max: 20,
     customRules: {

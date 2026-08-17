@@ -42,6 +42,16 @@ export const env = {
   firstUserBecomesAdmin: bool("FIRST_USER_BECOMES_ADMIN", true),
   nodeApiTimeoutMs: integer("NODE_API_TIMEOUT_MS", 15_000),
   /**
+   * Whether Better Auth's own rate limiter (the credential-stuffing guard on
+   * /sign-in, /sign-up, …) AND the api-key plugin's per-key limiter (10
+   * requests / 24 h by default) are enabled. Production keeps the default
+   * (true); set `RATE_LIMIT_ENABLED=false` in the panel's `.env` to disable
+   * both for the e2e suite, which issues hundreds of requests per key and
+   * would otherwise exhaust the per-key budget in seconds. The gate is read at
+   * boot, so a restart is required to pick it up.
+   */
+  rateLimitEnabled: bool("RATE_LIMIT_ENABLED", true),
+  /**
    * Cap on a single file uploaded through the file manager, in bytes. Enforced
    * BFF-side (so an oversized upload is rejected before it reaches the node)
    * and again agent-side. The agent's own `AGENT_MAX_UPLOAD_BYTES` must be >=
