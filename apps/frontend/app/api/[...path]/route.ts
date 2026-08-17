@@ -95,6 +95,19 @@ import {
   handleUpdateServerEnv,
 } from "@/lib/server/control-plane/routes/servers";
 import {
+  handleAddExplorerColumn,
+  handleChangeExplorerColumn,
+  handleCreateExplorerTable,
+  handleDeleteExplorerRow,
+  handleDropExplorerColumn,
+  handleDropExplorerTable,
+  handleGetExplorerTableRows,
+  handleGetExplorerTableSchema,
+  handleInsertExplorerRow,
+  handleListExplorerTables,
+  handleUpdateExplorerRow,
+} from "@/lib/server/control-plane/routes/dbExplorer";
+import {
   handleGetSettings,
   handlePublicSettings,
   handleSetupComplete,
@@ -180,6 +193,15 @@ const patterns: Array<{
   // and returns 405.
   { pattern: /^servers\/([^/]+)\/databases\/([^/]+)\/reset-password$/, methods: { POST: handleResetServerDatabasePassword } },
   { pattern: /^servers\/([^/]+)\/databases\/([^/]+)$/, methods: { DELETE: handleRemoveServerDatabase } },
+  // Database explorer (see routes/dbExplorer.ts). Literal segments (`schema`,
+  // `rows`, `columns`) come before the bare `:table` DELETE so they are not
+  // captured as a table name.
+  { pattern: /^servers\/([^/]+)\/databases\/([^/]+)\/explorer\/tables$/, methods: { GET: handleListExplorerTables, POST: handleCreateExplorerTable } },
+  { pattern: /^servers\/([^/]+)\/databases\/([^/]+)\/explorer\/tables\/([^/]+)\/schema$/, methods: { GET: handleGetExplorerTableSchema } },
+  { pattern: /^servers\/([^/]+)\/databases\/([^/]+)\/explorer\/tables\/([^/]+)\/rows$/, methods: { GET: handleGetExplorerTableRows, POST: handleInsertExplorerRow, PATCH: handleUpdateExplorerRow, DELETE: handleDeleteExplorerRow } },
+  { pattern: /^servers\/([^/]+)\/databases\/([^/]+)\/explorer\/tables\/([^/]+)\/columns$/, methods: { POST: handleAddExplorerColumn } },
+  { pattern: /^servers\/([^/]+)\/databases\/([^/]+)\/explorer\/tables\/([^/]+)\/columns\/([^/]+)$/, methods: { PATCH: handleChangeExplorerColumn, DELETE: handleDropExplorerColumn } },
+  { pattern: /^servers\/([^/]+)\/databases\/([^/]+)\/explorer\/tables\/([^/]+)$/, methods: { DELETE: handleDropExplorerTable } },
   { pattern: /^servers\/([^/]+)\/activity$/, methods: { GET: handleListServerActivity } },
   { pattern: /^servers\/([^/]+)\/command$/, methods: { POST: handleConsoleCommand } },
   { pattern: /^servers\/([^/]+)\/console\/session$/, methods: { POST: handleConsoleSession } },

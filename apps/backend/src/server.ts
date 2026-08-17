@@ -26,6 +26,7 @@ import {
   getNodeDbInfo,
   provisionServerDatabase,
   dropServerDatabase,
+  runServerDatabaseSql,
 } from "./docker/database";
 import { createSftpServer } from "./sftp";
 import {
@@ -500,6 +501,49 @@ const server = Bun.serve<ConsoleSocket, never>({
 
         await dropServerDatabase(serverId, dbName, dbUser, adminUser, adminPassword);
         return noContent();
+      }),
+    },
+
+    /**
+     * POST /v1/servers/:id/database/query — run explorer SQL as the scoped user.
+     *
+     * Body: { dbName, dbUser, dbPassword, sql }
+     *
+     * This is the database explorer's only agent dependency. Unlike the routes
+     * above it never touches the admin credential: the SQL runs as the
+     * per-database user, whose grants cover exactly one database, so MariaDB
+     * contains whatever the panel composes. The panel builds every statement
+     * from structured explorer operations (validated identifiers, hex-encoded
+     * values) — the browser never sends SQL. Results come back as parsed
+     * `--xml` output; see `docker/database.ts` for why XML over batch mode.
+     */
+    "/v1/servers/:id/database/query": {
+      POST: route(async (request) => {
+        // Route keyed by server id for consistency with the section above; the
+        // query itself needs no container lookup, so the id is intentionally
+        // unused beyond validating its shape.
+        serverIdOf(request);
+        const body = await parseJsonBody(request);
+
+        const dbName = body.dbName;
+        if (typeof dbName !== "string" || dbName.length === 0) {
+          throw badRequest('"dbName" is required.');
+        }
+        const dbUser = body.dbUser;
+        if (typeof dbUser !== "string" || dbUser.length === 0) {
+          throw badRequest('"dbUser" is required.');
+        }
+        const dbPassword = body.dbPassword;
+        if (typeof dbPassword !== "string" || dbPassword.length === 0) {
+          throw badRequest('"dbPassword" is required.');
+        }
+        const sqlText = body.sql;
+        if (typeof sqlText !== "string" || sqlText.length === 0) {
+          throw badRequest('"sql" is required.');
+        }
+
+        const results = await runServerDatabaseSql(dbName, dbUser, dbPassword, sqlText);
+        return json({ results });
       }),
     },
 

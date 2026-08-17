@@ -652,6 +652,208 @@ export async function resetServerDatabasePassword(
   );
 }
 
+// --- Database explorer ----------------------------------------------------------
+
+/** One table in a database, as the explorer sidebar lists it. */
+export interface DbTableSummary {
+  name: string;
+  /** InnoDB's estimate — labeled "≈" in the UI. */
+  rowsEstimate: number | null;
+  sizeBytes: number | null;
+  engine: string | null;
+  comment: string | null;
+}
+
+/** One column of a table, as `SHOW FULL COLUMNS` reports it. */
+export interface DbColumnSchema {
+  name: string;
+  /** Full type text, e.g. "varchar(255)" or "int unsigned". */
+  type: string;
+  nullable: boolean;
+  /** "PRI" for primary-key members, "UNI"/"MUL" for other keys, else null. */
+  keyType: string | null;
+  defaultValue: string | null;
+  extra: string | null;
+  comment: string | null;
+}
+
+/** A table's structure plus its primary key (row identity for edit/delete). */
+export interface DbTableSchema {
+  columns: DbColumnSchema[];
+  primaryKey: string[];
+}
+
+/** One page of a table's rows. Values stay strings — BIGINTs must not lose precision. */
+export interface DbRowsPage {
+  columns: string[];
+  rows: (string | null)[][];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+/**
+ * A column as the create/edit forms submit it. `baseType` comes from the fixed
+ * dropdown the backend allows; the browser never composes SQL type syntax.
+ */
+export interface DbColumnSpec {
+  name: string;
+  baseType: string;
+  length?: string;
+  unsigned?: boolean;
+  nullable: boolean;
+  autoIncrement?: boolean;
+  /** Create-table only — the UI hides it when editing (keys are table-level). */
+  primaryKey?: boolean;
+  defaultKind: "none" | "null" | "literal" | "currentTimestamp";
+  defaultValue?: string;
+  comment?: string;
+}
+
+/** GET .../explorer/tables — the database's tables. */
+export async function getDatabaseTables(
+  serverId: string,
+  databaseId: string,
+): Promise<DbTableSummary[]> {
+  const data = await request<{ tables: DbTableSummary[] }>(
+    `/api/servers/${serverId}/databases/${databaseId}/explorer/tables`,
+  );
+  return data.tables;
+}
+
+/** GET .../explorer/tables/:table/schema — columns and primary key. */
+export async function getDatabaseTableSchema(
+  serverId: string,
+  databaseId: string,
+  table: string,
+): Promise<DbTableSchema> {
+  const data = await request<{ schema: DbTableSchema }>(
+    `/api/servers/${serverId}/databases/${databaseId}/explorer/tables/${encodeURIComponent(table)}/schema`,
+  );
+  return data.schema;
+}
+
+/** GET .../explorer/tables/:table/rows — one page of rows. */
+export async function getDatabaseTableRows(
+  serverId: string,
+  databaseId: string,
+  table: string,
+  { offset, limit }: { offset: number; limit: number },
+): Promise<DbRowsPage> {
+  const data = await request<{ page: DbRowsPage }>(
+    `/api/servers/${serverId}/databases/${databaseId}/explorer/tables/${encodeURIComponent(table)}/rows?offset=${offset}&limit=${limit}`,
+  );
+  return data.page;
+}
+
+/** POST .../explorer/tables — create a table from column specs. */
+export async function createDatabaseTable(
+  serverId: string,
+  databaseId: string,
+  table: string,
+  columns: DbColumnSpec[],
+): Promise<void> {
+  await request(`/api/servers/${serverId}/databases/${databaseId}/explorer/tables`, {
+    method: "POST",
+    body: JSON.stringify({ table, columns }),
+  });
+}
+
+/** DELETE .../explorer/tables/:table — drop a table. */
+export async function dropDatabaseTable(
+  serverId: string,
+  databaseId: string,
+  table: string,
+): Promise<void> {
+  await request(
+    `/api/servers/${serverId}/databases/${databaseId}/explorer/tables/${encodeURIComponent(table)}`,
+    { method: "DELETE" },
+  );
+}
+
+/** POST .../explorer/tables/:table/columns — add a column. */
+export async function addDatabaseColumn(
+  serverId: string,
+  databaseId: string,
+  table: string,
+  column: DbColumnSpec,
+): Promise<void> {
+  await request(
+    `/api/servers/${serverId}/databases/${databaseId}/explorer/tables/${encodeURIComponent(table)}/columns`,
+    { method: "POST", body: JSON.stringify({ column }) },
+  );
+}
+
+/** PATCH .../explorer/tables/:table/columns/:column — edit a column. */
+export async function updateDatabaseColumn(
+  serverId: string,
+  databaseId: string,
+  table: string,
+  column: string,
+  spec: DbColumnSpec,
+): Promise<void> {
+  await request(
+    `/api/servers/${serverId}/databases/${databaseId}/explorer/tables/${encodeURIComponent(table)}/columns/${encodeURIComponent(column)}`,
+    { method: "PATCH", body: JSON.stringify({ column: spec }) },
+  );
+}
+
+/** DELETE .../explorer/tables/:table/columns/:column — drop a column. */
+export async function dropDatabaseColumn(
+  serverId: string,
+  databaseId: string,
+  table: string,
+  column: string,
+): Promise<void> {
+  await request(
+    `/api/servers/${serverId}/databases/${databaseId}/explorer/tables/${encodeURIComponent(table)}/columns/${encodeURIComponent(column)}`,
+    { method: "DELETE" },
+  );
+}
+
+/** POST .../explorer/tables/:table/rows — insert a row. */
+export async function insertDatabaseRow(
+  serverId: string,
+  databaseId: string,
+  table: string,
+  values: Record<string, string | null>,
+): Promise<void> {
+  await request(
+    `/api/servers/${serverId}/databases/${databaseId}/explorer/tables/${encodeURIComponent(table)}/rows`,
+    { method: "POST", body: JSON.stringify({ values }) },
+  );
+}
+
+/**
+ * PATCH .../explorer/tables/:table/rows — update one row by primary key.
+ * Only the changed columns are submitted (binary columns can stay untouched).
+ */
+export async function updateDatabaseRow(
+  serverId: string,
+  databaseId: string,
+  table: string,
+  pk: Record<string, string | null>,
+  values: Record<string, string | null>,
+): Promise<void> {
+  await request(
+    `/api/servers/${serverId}/databases/${databaseId}/explorer/tables/${encodeURIComponent(table)}/rows`,
+    { method: "PATCH", body: JSON.stringify({ pk, values }) },
+  );
+}
+
+/** DELETE .../explorer/tables/:table/rows — delete one row by primary key. */
+export async function deleteDatabaseRow(
+  serverId: string,
+  databaseId: string,
+  table: string,
+  pk: Record<string, string | null>,
+): Promise<void> {
+  await request(
+    `/api/servers/${serverId}/databases/${databaseId}/explorer/tables/${encodeURIComponent(table)}/rows`,
+    { method: "DELETE", body: JSON.stringify({ pk }) },
+  );
+}
+
 /**
  * POST /api/servers/:id/console/session — mint a direct-console capability token.
  *

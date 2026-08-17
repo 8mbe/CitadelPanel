@@ -317,3 +317,145 @@ async function findContainerIdByName(name: string): Promise<string | null> {
   const exact = matches.find((c) => (c.Names ?? []).some((n) => n === `/${name}`));
   return exact?.Id ?? null;
 }
+
+// --- Database explorer queries --------------------------------------------------
+//
+// The panel's database explorer runs its SQL as the *scoped* per-database user,
+// not the admin. The user's grants cover exactly one database, so MariaDB itself
+// contains the blast radius of anything the panel composes — the admin
+// credential is never in play for explorer traffic.
+
+/**
+ * One statement's result: column names (empty when the statement returned no
+ * rows — the mariadb XML format only names fields on rows) and the rows as
+ * nullable strings. Values stay strings end-to-end: BIGINT ids must not round-
+ * trip through JavaScript numbers, and MariaDB coerces string literals against
+ * numeric columns on INSERT/UPDATE anyway.
+ */
+export interface DbQueryResult {
+  columns: string[];
+  rows: (string | null)[][];
+}
+
+/** Decode the small set of entities the mariadb client emits in `--xml` output. */
+function xmlUnescape(value: string): string {
+  return value
+    .replace(/&#x([0-9a-fA-F]+);/g, (_m, hex: string) =>
+      String.fromCodePoint(Number.parseInt(hex, 16)),
+    )
+    .replace(/&#(\d+);/g, (_m, dec: string) => String.fromCodePoint(Number(dec)))
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+const RESULTSET_RE = /<resultset\b[^>]*>([\s\S]*?)<\/resultset>/g;
+const ROW_RE = /<row>([\s\S]*?)<\/row>/g;
+const FIELD_RE = /<field\b([^>]*?)(?:\/>|>([\s\S]*?)<\/field>)/g;
+
+/**
+ * Parse the mariadb client's `--xml` output into {@link DbQueryResult}s.
+ *
+ * Why XML and not the default tab-separated `--batch` mode: batch mode escapes
+ * tabs/newlines but renders NULL and the literal string "NULL" identically, so
+ * an owner's data could be silently mis-read (and a row edit keyed on a
+ * mis-read value would target the wrong row). The XML format carries
+ * `xsi:nil="true"` for real NULLs, which removes the ambiguity, and the client
+ * XML-escapes values so `</field>` can never appear inside one.
+ *
+ * The format is rigid (a resultset per statement, a row per record, a field per
+ * cell), so regex extraction is deterministic here — this is not general XML
+ * parsing. Statements that return no result set (DDL, INSERT, …) emit nothing
+ * and simply do not appear in the output.
+ */
+export function parseMysqlXmlOutput(stdout: string): DbQueryResult[] {
+  const results: DbQueryResult[] = [];
+  for (const resultset of stdout.matchAll(RESULTSET_RE)) {
+    const body = resultset[1] ?? "";
+    let columns: string[] = [];
+    const rows: (string | null)[][] = [];
+
+    for (const row of body.matchAll(ROW_RE)) {
+      const values: (string | null)[] = [];
+      for (const field of (row[1] ?? "").matchAll(FIELD_RE)) {
+        const attrs = field[1] ?? "";
+        const nameMatch = /\bname\s*=\s*"([^"]*)"/.exec(attrs);
+        const isNil = /\bxsi:nil\s*=\s*"(?:true|1)"/.test(attrs);
+        const text = field[2];
+        values.push(isNil || text === undefined ? null : xmlUnescape(text));
+        if (columns.length < values.length) {
+          columns.push(xmlUnescape(nameMatch?.[1] ?? ""));
+        }
+      }
+      rows.push(values);
+    }
+
+    results.push({ columns, rows });
+  }
+  return results;
+}
+
+/** Upper bound on SQL the agent will exec for one explorer request. */
+const MAX_EXPLORER_SQL = 128 * 1024;
+
+/**
+ * Run SQL against one server database **as its scoped user**.
+ *
+ * The credentials arrive in the request body (the panel decrypts the user's
+ * stored password); the agent never persists them. The database is preselected
+ * via the CLI argument, so `DATABASE()` in information_schema filters resolves
+ * to the one database the user can see. Output is captured as `--xml` and
+ * parsed by {@link parseMysqlXmlOutput}.
+ *
+ * The SQL text itself is composed by the panel from structured explorer
+ * operations — the browser never sends SQL. The panel holds root-equivalent
+ * trust on this channel already (it delivers the admin credential for
+ * provisioning), so trusting it to compose statements changes nothing; running
+ * them as the scoped user is what keeps a bug or XSS from reaching anything
+ * beyond the one database.
+ */
+export async function runServerDatabaseSql(
+  dbName: string,
+  dbUser: string,
+  dbPassword: string,
+  sqlText: string,
+): Promise<DbQueryResult[]> {
+  assertValidDbIdentifier(dbName, "name");
+  assertValidDbIdentifier(dbUser, "user");
+  if (sqlText.length === 0 || sqlText.length > MAX_EXPLORER_SQL) {
+    throw badRequest(
+      `"sql" must be between 1 and ${MAX_EXPLORER_SQL} characters.`,
+    );
+  }
+
+  const { containerId } = await requireNodeDb();
+
+  const { stdout, stderr, exitCode } = await execInContainer(
+    docker,
+    config.dockerSocket,
+    containerId,
+    {
+      cmd: [
+        "mariadb",
+        "-u",
+        dbUser,
+        "-h",
+        "127.0.0.1",
+        "--default-character-set=utf8mb4",
+        "--xml",
+        "-e",
+        sqlText,
+        dbName,
+      ],
+      env: [`MYSQL_PWD=${dbPassword}`],
+    },
+  );
+
+  if (exitCode !== 0) {
+    const detail = (stderr || stdout).trim().slice(0, 500);
+    throw badRequest(`Database query failed (exit ${exitCode}): ${detail}`);
+  }
+  return parseMysqlXmlOutput(stdout);
+}

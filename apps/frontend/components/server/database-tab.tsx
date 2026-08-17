@@ -7,10 +7,12 @@ import {
   Database,
   KeyRound,
   Plus,
+  Table2,
   Trash2,
 } from "lucide-react";
 
 import { CopyButton } from "@/components/copy-button";
+import { DatabaseExplorer } from "@/components/server/db-explorer/db-explorer";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -61,11 +63,13 @@ function DatabaseRow({
   database,
   onRemove,
   onResetPassword,
+  onExplore,
   busy,
 }: {
   database: ServerDatabase;
   onRemove: () => void;
   onResetPassword: () => void;
+  onExplore: () => void;
   busy: boolean;
 }) {
   // The plaintext password arrives only at creation or reset; show it then.
@@ -90,6 +94,16 @@ function DatabaseRow({
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={onExplore}
+          >
+            <Table2 className="size-3.5" />
+            Explore
+          </Button>
           <Button
             type="button"
             variant="ghost"
@@ -170,6 +184,8 @@ export function DatabaseTab({ serverId }: { serverId: string }) {
 
   const [adding, setAdding] = React.useState(false);
   const [busyId, setBusyId] = React.useState<string | null>(null);
+  // The database whose explorer is open; null shows the databases list.
+  const [exploring, setExploring] = React.useState<ServerDatabase | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -257,6 +273,18 @@ export function DatabaseTab({ serverId }: { serverId: string }) {
     );
   }
 
+  // The explorer replaces the list until the owner navigates back — it owns
+  // the whole tab so its sidebar and views get the available width.
+  if (exploring) {
+    return (
+      <DatabaseExplorer
+        serverId={serverId}
+        database={exploring}
+        onExit={() => setExploring(null)}
+      />
+    );
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -295,6 +323,7 @@ export function DatabaseTab({ serverId }: { serverId: string }) {
                 database={db}
                 onRemove={() => void remove(db)}
                 onResetPassword={() => void resetPassword(db)}
+                onExplore={() => setExploring(db)}
                 busy={busyId === db.id}
               />
             ))}

@@ -373,6 +373,42 @@ export async function dropServerDatabase(
   });
 }
 
+/**
+ * One statement's result from the agent's explorer query endpoint: column names
+ * (empty when the statement returned no rows) and rows of nullable strings.
+ * Values stay strings end-to-end — BIGINT ids must not round-trip through
+ * JavaScript numbers.
+ */
+export interface DbQueryResult {
+  columns: string[];
+  rows: (string | null)[][];
+}
+
+/**
+ * POST /v1/servers/:id/database/query — run explorer SQL as the scoped user.
+ *
+ * The database user's password is decrypted from the `server_databases` row and
+ * passed through; the agent execs it inside the DB container with the database
+ * preselected, so the scoped user's grants are the containment. Statements are
+ * composed by the panel from structured explorer operations — see
+ * `services/dbExplorerSql.ts` — never forwarded from the browser.
+ */
+export async function queryServerDatabase(
+  nodeId: string,
+  serverId: string,
+  dbName: string,
+  dbUser: string,
+  dbPassword: string,
+  sqlText: string,
+): Promise<{ results: DbQueryResult[] }> {
+  return nodeRequest(nodeId, `/v1/servers/${serverId}/database/query`, {
+    method: "POST",
+    body: { dbName, dbUser, dbPassword, sql: sqlText },
+    // A slow COUNT(*) or a big page scan can take a few seconds on a busy node.
+    timeoutMs: 60_000,
+  });
+}
+
 // --- File manager -------------------------------------------------------------
 export interface FileEntry {
   name: string;

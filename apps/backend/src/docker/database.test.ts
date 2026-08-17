@@ -1,5 +1,6 @@
 /**
- * Tests for the DB identifier validation in `docker/database.ts`.
+ * Tests for `docker/database.ts`: the DB identifier validation the agent's SQL
+ * relies on, and the `--xml` output parser behind the database explorer.
  *
  * The agent interpolates `dbName`/`dbUser` directly into SQL (backticked for
  * identifiers, single-quoted for the user host), so they must be vetted before
@@ -7,13 +8,15 @@
  * MariaDB and defends itself: anything that doesn't match the strict identifier
  * shape is rejected with a 400 before any SQL runs.
  *
- * These tests pin that shape so a regression (loosening the regex, or dropping
- * the check) is caught.
+ * The parser tests pin the mariadb client's `--xml` wire format — including the
+ * `xsi:nil` distinction that keeps a literal "NULL" string and a real NULL from
+ * being conflated — because a silent mis-parse there would feed the explorer
+ * (and row edits keyed on mis-read values) wrong data.
  */
 
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
-import { assertValidDbIdentifier } from "./database";
+import { assertValidDbIdentifier, parseMysqlXmlOutput } from "./database";
 
 test("accepts a well-formed database name", () => {
   expect(() => assertValidDbIdentifier("db_48160ddadc87ab", "name")).not.toThrow();
@@ -95,4 +98,87 @@ test("the thrown error is a 400 HttpError", () => {
     expect((err as { status: number }).status).toBe(400);
     expect((err as Error).message).toContain("database name");
   }
+});
+
+// --- parseMysqlXmlOutput --------------------------------------------------------
+
+/** The exact shape the mariadb client emits with `--xml`. */
+const wrap = (statement: string, rows: string) =>
+  `<?xml version="1.0"?>\n\n<resultset statement="${statement}" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n${rows}</resultset>\n`;
+
+const field = (name: string, value: string) =>
+  `<field name="${name}">${value}</field>`;
+const nilField = (name: string) =>
+  `<field name="${name}" xsi:nil="true" />`;
+
+describe("parseMysqlXmlOutput", () => {
+  test("returns [] for empty output (DDL / no result set)", () => {
+    expect(parseMysqlXmlOutput("")).toEqual([]);
+  });
+
+  test("parses columns and values", () => {
+    const xml = wrap(
+      "select id, name from t",
+      `<row>\n${field("id", "1")}\n${field("name", "Steve")}\n</row>\n`,
+    );
+    expect(parseMysqlXmlOutput(xml)).toEqual([
+      { columns: ["id", "name"], rows: [["1", "Steve"]] },
+    ]);
+  });
+
+  test("maps xsi:nil fields to null, keeping literal NULL strings distinct", () => {
+    const xml = wrap(
+      "select a, b from t",
+      `<row>\n${field("a", "NULL")}\n${nilField("b")}\n</row>\n`,
+    );
+    expect(parseMysqlXmlOutput(xml)).toEqual([
+      { columns: ["a", "b"], rows: [["NULL", null]] },
+    ]);
+  });
+
+  test("decodes XML entities in values and column names", () => {
+    const xml = wrap(
+      "select q from t",
+      `<row>\n${field("q&amp;uote&quot;", "a &lt;tag&gt; &amp; &apos;\\' &#65;&#x42;")}\n</row>\n`,
+    );
+    const [result] = parseMysqlXmlOutput(xml);
+    expect(result?.columns).toEqual([`q&uote"`]);
+    expect(result?.rows[0]).toEqual(["a <tag> & '\\' AB"]);
+  });
+
+  test("keeps newlines and tabs inside values", () => {
+    const xml = wrap(
+      "select body from t",
+      `<row>\n${field("body", "line1\nline2\ttabbed")}\n</row>\n`,
+    );
+    expect(parseMysqlXmlOutput(xml)[0]?.rows[0]).toEqual(["line1\nline2\ttabbed"]);
+  });
+
+  test("a resultset with no rows has no column names", () => {
+    const xml = wrap("select * from empty_t", "");
+    expect(parseMysqlXmlOutput(xml)).toEqual([{ columns: [], rows: [] }]);
+  });
+
+  test("separates consecutive statements into separate results", () => {
+    const xml =
+      wrap("select 1", `<row>\n${field("1", "1")}\n</row>\n`) +
+      wrap("select 2", `<row>\n${field("2", "2")}\n</row>\n`);
+    expect(parseMysqlXmlOutput(xml)).toEqual([
+      { columns: ["1"], rows: [["1"]] },
+      { columns: ["2"], rows: [["2"]] },
+    ]);
+  });
+
+  test("big integer ids survive as exact strings", () => {
+    const id = "9007199254740993"; // 2^53 + 1, wrong after Number()
+    const xml = wrap("select id", `<row>\n${field("id", id)}\n</row>\n`);
+    expect(parseMysqlXmlOutput(xml)[0]?.rows[0]).toEqual([id]);
+  });
+
+  test("ignores text outside resultsets (xml declaration, junk)", () => {
+    const xml = `junk before<?xml version="1.0"?>\n` +
+      wrap("select x", `<row>\n${field("x", "1")}\n</row>\n`) +
+      "trailing junk";
+    expect(parseMysqlXmlOutput(xml)).toHaveLength(1);
+  });
 });
