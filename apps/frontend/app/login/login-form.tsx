@@ -77,11 +77,6 @@ export default function LoginForm({ next }: { next?: string }) {
           </CardContent>
         </Tabs>
       </Card>
-
-      <p className="max-w-sm text-center text-xs text-muted-foreground">
-        Accounts start without any servers — servers are provisioned by an
-        administrator. Credentials are handled by Better Auth.
-      </p>
     </div>
   );
 }
