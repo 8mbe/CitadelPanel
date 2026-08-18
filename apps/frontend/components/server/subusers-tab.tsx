@@ -246,7 +246,7 @@ function InviteDialog({
           <Field>
             <FieldLabel>Permissions</FieldLabel>
             <FieldDescription>Scope what this user can do.</FieldDescription>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {PERMISSION_OPTIONS.map((perm) => (
                 <label
                   key={perm.key}

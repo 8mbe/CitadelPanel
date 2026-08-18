@@ -272,7 +272,7 @@ export function BlueprintFormDialog({
           <form onSubmit={submit} className="flex flex-col gap-6">
             {/* Identity ------------------------------------------------------ */}
             <FieldGroup>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field>
                   <FieldLabel htmlFor="bp-name">Name</FieldLabel>
                   <Input
@@ -312,7 +312,7 @@ export function BlueprintFormDialog({
                   onChange={(e) => set("description", e.target.value)}
                 />
               </Field>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field>
                   <FieldLabel htmlFor="bp-image">Runtime image</FieldLabel>
                   <Input
@@ -455,7 +455,7 @@ export function BlueprintFormDialog({
                         <Trash2 />
                       </Button>
                     </div>
-                    <div className="mt-2 grid grid-cols-2 gap-2">
+                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <Input
                         placeholder="Default value"
                         value={row.default}
@@ -711,7 +711,7 @@ export function BlueprintFormDialog({
               <FieldDescription>
                 Server creation is rejected below these.
               </FieldDescription>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <Field>
                   <FieldLabel htmlFor="bp-min-cpu">CPU (vCPU)</FieldLabel>
                   <Input
@@ -754,7 +754,7 @@ export function BlueprintFormDialog({
 
             {/* Advanced ------------------------------------------------------ */}
             <FieldSeparator />
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="bp-profile">Resource profile</FieldLabel>
                 <Select
@@ -842,7 +842,7 @@ function PluginProfileCard({
         )}
       </div>
       {enabled && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field>
             <FieldLabel htmlFor={`bp-plugin-label-${title}`}>Tab label</FieldLabel>
             <Input

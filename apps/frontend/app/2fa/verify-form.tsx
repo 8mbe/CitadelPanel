@@ -62,7 +62,7 @@ export default function TwoFactorVerifyForm({ next }: { next?: string }) {
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-background p-4">
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-6 bg-background p-4">
       <div className="flex flex-col items-center gap-2 text-center">
         <span className="flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
           <ShieldCheck className="size-5" />

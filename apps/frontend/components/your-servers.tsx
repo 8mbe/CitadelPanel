@@ -60,14 +60,16 @@ function Meter({
   muted?: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-1">
+    // `min-w-0` so a long value truncates instead of forcing the three-column
+    // grid wider than a phone-width card.
+    <div className="flex min-w-0 flex-col gap-1">
       <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
         <Icon className="size-3.5 shrink-0" />
         {label}
       </span>
       <span
         className={cn(
-          "text-sm leading-none font-medium tabular-nums",
+          "truncate text-sm leading-none font-medium tabular-nums",
           muted && "text-muted-foreground",
         )}
       >
@@ -128,7 +130,7 @@ function ServerTile({ server }: { server: ServerView }) {
           </span>
         </div>
 
-        <div className="grid grid-cols-3 gap-x-4">
+        <div className="grid grid-cols-3 gap-x-3 sm:gap-x-4">
           <Meter
             icon={Cpu}
             label="CPU"
@@ -203,7 +205,7 @@ function TileSkeleton() {
         <div className="border-y py-2">
           <Skeleton className="h-4 w-full" />
         </div>
-        <div className="grid grid-cols-3 gap-x-4">
+        <div className="grid grid-cols-3 gap-x-3 sm:gap-x-4">
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="flex flex-col gap-1.5">
               <Skeleton className="h-3 w-12" />

@@ -353,7 +353,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                     node. 0% lets servers use the full total.
                   </span>
                 </div>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <Field>
                     <FieldLabel htmlFor="node-cpu-reserve">CPU %</FieldLabel>
                     <Input
@@ -437,7 +437,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                         internal network (from the setup-db output).
                       </FieldDescription>
                     </Field>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <Field>
                         <FieldLabel htmlFor="node-db-port">DB port</FieldLabel>
                         <Input

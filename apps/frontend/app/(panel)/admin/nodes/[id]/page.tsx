@@ -730,7 +730,7 @@ function NodeHeader({
                   node. 0% lets servers use the full total.
                 </span>
               </div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <Field>
                   <FieldLabel htmlFor="node-edit-cpu-reserve">CPU %</FieldLabel>
                   <Input
