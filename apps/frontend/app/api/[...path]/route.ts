@@ -114,6 +114,10 @@ import {
   handleUpdateExplorerRow,
 } from "@/lib/server/control-plane/routes/dbExplorer";
 import {
+  handleGetLegal,
+  handleUpdateLegal,
+} from "@/lib/server/control-plane/routes/legal";
+import {
   handleGetSettings,
   handlePublicSettings,
   handleSetupComplete,
@@ -162,6 +166,7 @@ const exact = new Map<string, Partial<Record<string, Handler>>>([
   ["admin/settings/test-email", { POST: handleTestEmail }],
   ["admin/settings/ai/models", { POST: handleFetchAiModels }],
   ["admin/settings/ai/test", { POST: handleTestAi }],
+  ["admin/legal", { GET: handleGetLegal }],
   ["me", { GET: handleGetMe }],
   ["account/delete", { POST: handleDeleteAccount }],
   ["blueprints", { GET: handleListBlueprints }],
@@ -263,6 +268,8 @@ const patterns: Array<{
   { pattern: /^admin\/users\/([^/]+)\/unban$/, methods: { POST: handleUnbanUser } },
   // API-key oversight (see routes/apiKeys.ts).
   { pattern: /^admin\/api-keys\/([^/]+)$/, methods: { PATCH: handleAdminSetApiKeyEnabled, DELETE: handleAdminDeleteApiKey } },
+  // Terms of service / privacy policy source (see routes/legal.ts).
+  { pattern: /^admin\/legal\/([^/]+)$/, methods: { PUT: handleUpdateLegal } },
   // Must come after the /role, /ban, /unban patterns so those more specific
   // paths match first rather than being captured by the bare :id GET.
   { pattern: /^admin\/users\/([^/]+)$/, methods: { GET: handleGetUser } },

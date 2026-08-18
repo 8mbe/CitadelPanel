@@ -4,6 +4,11 @@ import { redirect } from "next/navigation";
 import type { SetupStatus } from "@/lib/api";
 import { getAuthenticatedUser } from "@/lib/server/control-plane/auth/middleware";
 import { handleSetupStatus } from "@/lib/server/control-plane/routes/setup";
+import {
+  getRegistrationSettings,
+  isRegistrationOpen,
+} from "@/lib/server/control-plane/services/settings";
+import { getLegalAvailability } from "@/lib/server/site-settings";
 
 import LoginForm from "./login-form";
 
@@ -52,7 +57,21 @@ export default async function LoginPage({
     redirect(next ?? (status?.needsSetup && session.role === "admin" ? "/setup" : "/"));
   }
 
-  return <LoginForm next={next} />;
+  // Resolved here rather than in the form so the sign-up tab and the legal links
+  // are correct in the first HTML response. `isRegistrationOpen` already accounts
+  // for the bootstrap exemption; a read failure falls back to offering sign-up,
+  // which the Better Auth gate will still refuse if it is actually closed.
+  const [registration, legal] = await Promise.all([
+    getRegistrationSettings()
+      .then(async (settings) => ({
+        enabled: await isRegistrationOpen(),
+        disabledMessage: settings.disabledMessage,
+      }))
+      .catch(() => ({ enabled: true, disabledMessage: "" })),
+    getLegalAvailability(),
+  ]);
+
+  return <LoginForm next={next} registration={registration} legal={legal} />;
 }
 
 async function loadSetupStatus(): Promise<SetupStatus | null> {

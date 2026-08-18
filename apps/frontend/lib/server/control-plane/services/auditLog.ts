@@ -79,7 +79,8 @@ export type AuditAction =
   | "apikey.delete"
   | "setup.admin.create"
   | "setup.complete"
-  | "settings.update";
+  | "settings.update"
+  | "settings.legal.update";
 
 export type AuditTargetType =
   | "server"

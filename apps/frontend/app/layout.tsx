@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import { Inter, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
+import { Analytics } from "@/components/analytics";
+import { BrandingProvider } from "@/components/branding-provider";
 import { ThemeProvider } from "@/components/theme-provider";
+import { buildSiteMetadata, getSiteSettings } from "@/lib/server/site-settings";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
@@ -11,19 +14,23 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: {
-    default: "CitadelPanel",
-    template: "%s · CitadelPanel",
-  },
-  description: "Self-hosted game server management panel.",
-};
+/**
+ * Metadata is generated per request rather than exported statically because the
+ * site name, description, and indexing policy live in `panel_settings` — an
+ * admin renames the panel and every `<title>` follows without a redeploy. See
+ * `lib/server/site-settings.ts` for the build and its failure behaviour.
+ */
+export function generateMetadata(): Promise<Metadata> {
+  return buildSiteMetadata();
+}
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const { branding, analytics } = await getSiteSettings();
+
   return (
     <html
       lang="en"
@@ -37,8 +44,9 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          {children}
+          <BrandingProvider branding={branding}>{children}</BrandingProvider>
         </ThemeProvider>
+        <Analytics settings={analytics} />
       </body>
     </html>
   );

@@ -34,18 +34,26 @@ import {
 import { recordAuditFromRequest } from "../services/auditLog";
 import { sendMail } from "../services/mail";
 import {
+  ANALYTICS_PROVIDERS,
   countAdmins,
   countUsers,
   getAiApiKey,
   getAiSettings,
+  getAnalyticsSettings,
+  getBranding,
   getCaptchaSettings,
+  getLegalSettings,
   getMailSettings,
   getPublicAiSettings,
   getPublicCaptchaSettings,
   getPublicMailSettings,
+  getRegistrationSettings,
+  getSeoSettings,
+  isRegistrationOpen,
   getSetupState,
   getVerificationPolicy,
   getTimezone,
+  isAnalyticsProvider,
   isCaptchaProvider,
   isMailProvider,
   isSetupComplete,
@@ -53,8 +61,12 @@ import {
   MAIL_PROVIDERS,
   markSetupComplete,
   setAiSettings,
+  setAnalyticsSettings,
+  setBranding,
   setCaptchaSettings,
   setMailSettings,
+  setRegistrationSettings,
+  setSeoSettings,
   setVerificationPolicy,
   setTimezone,
   getServerLimits,
@@ -98,6 +110,23 @@ export async function handleSetupStatus(): Promise<Response> {
      */
     canCreateAdmin: admins === 0,
   });
+}
+
+/**
+ * Narrow a settings-group field to a plain object, or reject.
+ *
+ * Every group in `handleUpdateSettings` needs the same guard; arrays and null
+ * both pass `typeof === "object"`, so both are excluded explicitly.
+ */
+function requireObject(
+  body: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> {
+  const value = body[key];
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw badRequest(`"${key}" must be an object`);
+  }
+  return value as Record<string, unknown>;
 }
 
 async function countNodes(): Promise<number> {
@@ -440,9 +469,140 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
     changed.push("ai");
   }
 
+  if (body.branding !== undefined) {
+    const branding = requireObject(body, "branding");
+    try {
+      await setBranding(
+        {
+          siteName: optionalString(branding, "siteName", { max: 64 }) ?? undefined,
+          tagline:
+            branding.tagline === undefined
+              ? undefined
+              : (optionalString(branding, "tagline", { max: 160 }) ?? ""),
+        },
+        admin.id,
+      );
+    } catch (error) {
+      throw badRequest(
+        error instanceof Error ? error.message : "Invalid branding configuration",
+      );
+    }
+    changed.push("branding");
+  }
+
+  if (body.registration !== undefined) {
+    const registration = requireObject(body, "registration");
+    if (registration.enabled !== undefined && typeof registration.enabled !== "boolean") {
+      throw badRequest('"registration.enabled" must be a boolean');
+    }
+    try {
+      await setRegistrationSettings(
+        {
+          enabled: registration.enabled as boolean | undefined,
+          disabledMessage:
+            registration.disabledMessage === undefined
+              ? undefined
+              : (optionalString(registration, "disabledMessage", { max: 240 }) ?? ""),
+        },
+        admin.id,
+      );
+    } catch (error) {
+      throw badRequest(
+        error instanceof Error ? error.message : "Invalid registration configuration",
+      );
+    }
+    changed.push("registration");
+  }
+
+  if (body.seo !== undefined) {
+    const seo = requireObject(body, "seo");
+    if (seo.allowIndexing !== undefined && typeof seo.allowIndexing !== "boolean") {
+      throw badRequest('"seo.allowIndexing" must be a boolean');
+    }
+    if (seo.keywords !== undefined && !Array.isArray(seo.keywords)) {
+      throw badRequest('"seo.keywords" must be an array of strings');
+    }
+    try {
+      await setSeoSettings(
+        {
+          allowIndexing: seo.allowIndexing as boolean | undefined,
+          siteUrl:
+            seo.siteUrl === undefined
+              ? undefined
+              : (optionalString(seo, "siteUrl", { max: 512 }) ?? null),
+          description:
+            seo.description === undefined
+              ? undefined
+              : (optionalString(seo, "description", { max: 300 }) ?? ""),
+          keywords:
+            seo.keywords === undefined
+              ? undefined
+              : (seo.keywords as unknown[])
+                  .filter((k): k is string => typeof k === "string")
+                  .map((k) => k.slice(0, 64)),
+          ogImageUrl:
+            seo.ogImageUrl === undefined
+              ? undefined
+              : (optionalString(seo, "ogImageUrl", { max: 512 }) ?? null),
+        },
+        admin.id,
+      );
+    } catch (error) {
+      throw badRequest(
+        error instanceof Error ? error.message : "Invalid SEO configuration",
+      );
+    }
+    changed.push("seo");
+  }
+
+  if (body.analytics !== undefined) {
+    const analytics = requireObject(body, "analytics");
+    if (analytics.enabled !== undefined && typeof analytics.enabled !== "boolean") {
+      throw badRequest('"analytics.enabled" must be a boolean');
+    }
+    let provider: (typeof ANALYTICS_PROVIDERS)[number] | null | undefined;
+    if (analytics.provider !== undefined) {
+      if (analytics.provider === null) {
+        provider = null;
+      } else if (isAnalyticsProvider(analytics.provider)) {
+        provider = analytics.provider;
+      } else {
+        throw badRequest(
+          `"analytics.provider" must be one of: ${ANALYTICS_PROVIDERS.join(", ")}`,
+        );
+      }
+    }
+    try {
+      await setAnalyticsSettings(
+        {
+          enabled: analytics.enabled as boolean | undefined,
+          provider,
+          plausibleDomain:
+            analytics.plausibleDomain === undefined
+              ? undefined
+              : (optionalString(analytics, "plausibleDomain", { max: 253 }) ?? null),
+          plausibleScriptUrl:
+            analytics.plausibleScriptUrl === undefined
+              ? undefined
+              : (optionalString(analytics, "plausibleScriptUrl", { max: 512 }) ?? null),
+          googleMeasurementId:
+            analytics.googleMeasurementId === undefined
+              ? undefined
+              : (optionalString(analytics, "googleMeasurementId", { max: 64 }) ?? null),
+        },
+        admin.id,
+      );
+    } catch (error) {
+      throw badRequest(
+        error instanceof Error ? error.message : "Invalid analytics configuration",
+      );
+    }
+    changed.push("analytics");
+  }
+
   if (changed.length === 0) {
     throw badRequest(
-      "Provide at least one of: timezone, captcha, mail, verification, serverLimits, ai",
+      "Provide at least one of: timezone, captcha, mail, verification, serverLimits, ai, branding, registration, seo, analytics",
     );
   }
 
@@ -454,14 +614,7 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
     metadata: { changed },
   });
 
-  return json({
-    timezone: await getTimezone(),
-    captcha: await getAdminCaptchaView(),
-    mail: await getPublicMailSettings(),
-    verification: await getVerificationPolicy(),
-    serverLimits: await getServerLimits(),
-    ai: await getPublicAiSettings(),
-  });
+  return json(await adminSettingsView());
 }
 
 /**
@@ -474,15 +627,29 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
 export async function handleGetSettings(request: Request): Promise<Response> {
   await requireAdmin(request);
 
-  return json({
+  return json({ ...(await adminSettingsView()), setup: await getSetupState() });
+}
+
+/**
+ * The admin form's view of every settings group.
+ *
+ * Shared by the GET and the PATCH response so a saved form always re-renders
+ * from the same shape it loaded from — there is no second projection that could
+ * drop a field only on one of the two paths.
+ */
+async function adminSettingsView() {
+  return {
     timezone: await getTimezone(),
     captcha: await getAdminCaptchaView(),
     mail: await getPublicMailSettings(),
     verification: await getVerificationPolicy(),
     serverLimits: await getServerLimits(),
-    setup: await getSetupState(),
     ai: await getPublicAiSettings(),
-  });
+    branding: await getBranding(),
+    registration: await getRegistrationSettings(),
+    seo: await getSeoSettings(),
+    analytics: await getAnalyticsSettings(),
+  };
 }
 
 async function getAdminCaptchaView() {
@@ -526,11 +693,12 @@ export async function handleTestEmail(request: Request): Promise<Response> {
     );
   }
 
+  const { siteName } = await getBranding();
   const sent = await sendMail({
     to,
-    subject: "CitadelPanel test email",
-    text: `This is a test email from CitadelPanel, sent by ${admin.email}. If you received it, your mail configuration is working.`,
-    html: `<p>This is a test email from CitadelPanel, sent by <strong>${admin.email}</strong>.</p><p>If you received it, your mail configuration is working.</p>`,
+    subject: `${siteName} test email`,
+    text: `This is a test email from ${siteName}, sent by ${admin.email}. If you received it, your mail configuration is working.`,
+    html: `<p>This is a test email from ${siteName}, sent by <strong>${admin.email}</strong>.</p><p>If you received it, your mail configuration is working.</p>`,
   });
 
   return json({ ok: sent });
@@ -574,6 +742,11 @@ export async function handleSetupComplete(request: Request): Promise<Response> {
  * consistently before sign-in.
  */
 export async function handlePublicSettings(): Promise<Response> {
+  const [registration, legal] = await Promise.all([
+    getRegistrationSettings(),
+    getLegalSettings(),
+  ]);
+
   return json({
     timezone: await getTimezone(),
     captcha: await getPublicCaptchaSettings(),
@@ -583,6 +756,21 @@ export async function handlePublicSettings(): Promise<Response> {
     // Surfaced so the console can show (or hide) the AI helper button without
     // a separate round-trip per server page. Only the boolean; no URL/key/model.
     ai: await getPublicAiSettings(),
+    // The site name and tagline the sign-in page renders. Public by definition —
+    // it is the text in the page title.
+    branding: await getBranding(),
+    // Lets the sign-in page hide the sign-up tab. The gate itself is the Better
+    // Auth before-hook; this only avoids offering a form that would be refused.
+    registration: {
+      enabled: await isRegistrationOpen(),
+      disabledMessage: registration.disabledMessage,
+    },
+    // Only whether each document is published, so the footer can link to the
+    // ones that exist without fetching their bodies.
+    legal: {
+      terms: legal.terms.content.length > 0,
+      privacy: legal.privacy.content.length > 0,
+    },
   });
 }
 

@@ -723,6 +723,437 @@ export async function setAiSettings(
   await writeSetting("ai", next satisfies StoredAiSettings, updatedBy);
 }
 
+// --- Branding -----------------------------------------------------------------
+
+/**
+ * The panel's public identity: the name in the header, on the sign-in page, and
+ * in every `<title>`.
+ *
+ * "CitadelPanel" is the default, not a constant. An operator running this for a
+ * hosting brand renames it here once and every surface follows, because the name
+ * is read from settings rather than hardcoded per component — which is also why
+ * the header no longer carries a fixed product glyph beside it.
+ */
+export interface BrandingSettings {
+  siteName: string;
+  /** One-line strapline under the name on the sign-in page. */
+  tagline: string;
+}
+
+const DEFAULT_BRANDING: BrandingSettings = {
+  siteName: "CitadelPanel",
+  tagline: "Self-hosted game server management.",
+};
+
+export async function getBranding(): Promise<BrandingSettings> {
+  const stored = await readSetting<Partial<BrandingSettings>>(
+    "branding",
+    DEFAULT_BRANDING,
+  );
+  // A blank name would render an empty header and an empty <title>, so an empty
+  // stored value falls back rather than being honoured.
+  const siteName =
+    typeof stored.siteName === "string" && stored.siteName.trim()
+      ? stored.siteName.trim()
+      : DEFAULT_BRANDING.siteName;
+  const tagline =
+    typeof stored.tagline === "string" ? stored.tagline : DEFAULT_BRANDING.tagline;
+  return { siteName, tagline };
+}
+
+export async function setBranding(
+  update: Partial<BrandingSettings>,
+  updatedBy: string | null,
+): Promise<BrandingSettings> {
+  const current = await getBranding();
+  const next: BrandingSettings = {
+    siteName: update.siteName === undefined ? current.siteName : update.siteName.trim(),
+    tagline: update.tagline === undefined ? current.tagline : update.tagline.trim(),
+  };
+  if (!next.siteName) throw new Error("The site name cannot be empty.");
+  if (next.siteName.length > 64) {
+    throw new Error("The site name must be 64 characters or fewer.");
+  }
+  if (next.tagline.length > 160) {
+    throw new Error("The tagline must be 160 characters or fewer.");
+  }
+  await writeSetting("branding", next satisfies BrandingSettings, updatedBy);
+  return next;
+}
+
+// --- Registration ---------------------------------------------------------------
+
+/**
+ * Whether strangers may create their own accounts.
+ *
+ * Turning this off makes the panel invite-only in the only way that matters:
+ * the sign-up endpoint refuses. The login form hides its "Create account" tab
+ * too, but that is cosmetic — the gate is the Better Auth before-hook in
+ * `auth/betterAuth.ts`, which every client shares.
+ *
+ * The bootstrap window is exempt: while no admin exists, sign-up must work or a
+ * fresh install could lock itself out before anyone can sign in to turn the
+ * toggle back on.
+ */
+export interface RegistrationSettings {
+  enabled: boolean;
+  /** Shown on the sign-in page in place of the sign-up tab. */
+  disabledMessage: string;
+}
+
+const DEFAULT_REGISTRATION: RegistrationSettings = {
+  enabled: true,
+  disabledMessage: "Registration is closed. Ask an administrator for an account.",
+};
+
+export async function getRegistrationSettings(): Promise<RegistrationSettings> {
+  const stored = await readSetting<Partial<RegistrationSettings>>(
+    "registration",
+    DEFAULT_REGISTRATION,
+  );
+  return {
+    enabled: stored.enabled !== false,
+    disabledMessage:
+      typeof stored.disabledMessage === "string" && stored.disabledMessage.trim()
+        ? stored.disabledMessage.trim()
+        : DEFAULT_REGISTRATION.disabledMessage,
+  };
+}
+
+export async function setRegistrationSettings(
+  update: Partial<RegistrationSettings>,
+  updatedBy: string | null,
+): Promise<RegistrationSettings> {
+  const current = await getRegistrationSettings();
+  const next: RegistrationSettings = {
+    enabled: update.enabled === undefined ? current.enabled : update.enabled,
+    disabledMessage:
+      update.disabledMessage === undefined
+        ? current.disabledMessage
+        : update.disabledMessage.trim() || DEFAULT_REGISTRATION.disabledMessage,
+  };
+  if (next.disabledMessage.length > 240) {
+    throw new Error("The message must be 240 characters or fewer.");
+  }
+  await writeSetting("registration", next satisfies RegistrationSettings, updatedBy);
+  return next;
+}
+
+/**
+ * Is self-service sign-up allowed right now?
+ *
+ * The admin count is checked here rather than at the call site so the bootstrap
+ * exemption cannot be forgotten by a second caller.
+ */
+export async function isRegistrationOpen(): Promise<boolean> {
+  const registration = await getRegistrationSettings();
+  if (registration.enabled) return true;
+  return (await countAdmins()) === 0;
+}
+
+// --- SEO ----------------------------------------------------------------------
+
+/**
+ * Search-engine facing configuration.
+ *
+ * `allowIndexing` defaults to **false**, which is the opposite of most SEO
+ * settings and deliberate: a game-server control panel is an authenticated
+ * surface with no public content worth ranking, and its URLs leak the fact that
+ * a given host runs one. An operator who *does* want the sign-in page indexed
+ * (a public hosting brand, say) opts in. The toggle drives both `robots.txt`
+ * and the per-page `robots` meta, so the two can never disagree.
+ *
+ * `siteUrl` is the panel's public origin. It is what `metadataBase` needs to
+ * turn relative OG image paths into the absolute URLs crawlers require; when
+ * unset the panel falls back to `FRONTEND_URL`.
+ */
+export interface SeoSettings {
+  allowIndexing: boolean;
+  siteUrl: string | null;
+  /** Meta description and OG description. Falls back to the branding tagline. */
+  description: string;
+  keywords: string[];
+  /** Absolute URL or panel-relative path to the social preview image. */
+  ogImageUrl: string | null;
+}
+
+const DEFAULT_SEO: SeoSettings = {
+  allowIndexing: false,
+  siteUrl: null,
+  description: "",
+  keywords: [],
+  ogImageUrl: null,
+};
+
+export async function getSeoSettings(): Promise<SeoSettings> {
+  const stored = await readSetting<Partial<SeoSettings>>("seo", DEFAULT_SEO);
+  return {
+    allowIndexing: stored.allowIndexing === true,
+    siteUrl: typeof stored.siteUrl === "string" && stored.siteUrl ? stored.siteUrl : null,
+    description: typeof stored.description === "string" ? stored.description : "",
+    keywords: Array.isArray(stored.keywords)
+      ? stored.keywords.filter((k): k is string => typeof k === "string")
+      : [],
+    ogImageUrl:
+      typeof stored.ogImageUrl === "string" && stored.ogImageUrl
+        ? stored.ogImageUrl
+        : null,
+  };
+}
+
+export async function setSeoSettings(
+  update: Partial<SeoSettings>,
+  updatedBy: string | null,
+): Promise<SeoSettings> {
+  const current = await getSeoSettings();
+  const siteUrl =
+    update.siteUrl === undefined ? current.siteUrl : (update.siteUrl?.trim() || null);
+  if (siteUrl) {
+    let parsed: URL;
+    try {
+      parsed = new URL(siteUrl);
+    } catch {
+      throw new Error("The site URL must be absolute, e.g. https://panel.example.com");
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("The site URL must use http or https.");
+    }
+  }
+
+  const next: SeoSettings = {
+    allowIndexing:
+      update.allowIndexing === undefined ? current.allowIndexing : update.allowIndexing,
+    // Store without a trailing slash so callers can concatenate paths freely.
+    siteUrl: siteUrl ? siteUrl.replace(/\/+$/, "") : null,
+    description:
+      update.description === undefined ? current.description : update.description.trim(),
+    keywords:
+      update.keywords === undefined
+        ? current.keywords
+        : update.keywords.map((k) => k.trim()).filter(Boolean).slice(0, 20),
+    ogImageUrl:
+      update.ogImageUrl === undefined
+        ? current.ogImageUrl
+        : (update.ogImageUrl?.trim() || null),
+  };
+  if (next.description.length > 300) {
+    throw new Error("The description must be 300 characters or fewer.");
+  }
+  await writeSetting("seo", next satisfies SeoSettings, updatedBy);
+  return next;
+}
+
+// --- Analytics ----------------------------------------------------------------
+
+/**
+ * Optional first-party-ish web analytics, injected into the document head.
+ *
+ * Two providers, both script-tag-only: Plausible (cookieless, self-hostable)
+ * and Google Analytics 4. Neither needs a server-side secret, so unlike captcha
+ * or mail there is nothing here to encrypt — the measurement id and domain are
+ * public by construction, visible in the page source of any site using them.
+ *
+ * The panel never proxies analytics traffic. When `enabled` is false no script
+ * is emitted at all, which is the point of the toggle: an operator running a
+ * private panel ships zero third-party requests.
+ */
+export const ANALYTICS_PROVIDERS = ["plausible", "google"] as const;
+export type AnalyticsProvider = (typeof ANALYTICS_PROVIDERS)[number];
+
+export function isAnalyticsProvider(value: unknown): value is AnalyticsProvider {
+  return (
+    typeof value === "string" &&
+    (ANALYTICS_PROVIDERS as readonly string[]).includes(value)
+  );
+}
+
+export interface AnalyticsSettings {
+  enabled: boolean;
+  provider: AnalyticsProvider | null;
+  /** Plausible: the site name registered with the provider, e.g. "panel.example.com". */
+  plausibleDomain: string | null;
+  /**
+   * Plausible: full script URL for a self-hosted instance, e.g.
+   * "https://analytics.example.com/js/script.js". Defaults to plausible.io.
+   */
+  plausibleScriptUrl: string | null;
+  /** Google Analytics 4 measurement id, e.g. "G-XXXXXXXXXX". */
+  googleMeasurementId: string | null;
+}
+
+const DEFAULT_ANALYTICS: AnalyticsSettings = {
+  enabled: false,
+  provider: null,
+  plausibleDomain: null,
+  plausibleScriptUrl: null,
+  googleMeasurementId: null,
+};
+
+export async function getAnalyticsSettings(): Promise<AnalyticsSettings> {
+  const stored = await readSetting<Partial<AnalyticsSettings>>(
+    "analytics",
+    DEFAULT_ANALYTICS,
+  );
+  return { ...DEFAULT_ANALYTICS, ...stored };
+}
+
+/**
+ * True when the stored config can actually emit a working snippet. A provider
+ * chosen but left unconfigured must not be treated as "analytics is on" — it
+ * would inject a script tag that 404s on every page load.
+ */
+export function isAnalyticsUsable(analytics: AnalyticsSettings): boolean {
+  if (!analytics.enabled || !analytics.provider) return false;
+  if (analytics.provider === "plausible") return Boolean(analytics.plausibleDomain);
+  if (analytics.provider === "google") return Boolean(analytics.googleMeasurementId);
+  return false;
+}
+
+/** The analytics config as the document head needs it, or null when off. */
+export async function getActiveAnalytics(): Promise<AnalyticsSettings | null> {
+  const analytics = await getAnalyticsSettings();
+  return isAnalyticsUsable(analytics) ? analytics : null;
+}
+
+export async function setAnalyticsSettings(
+  update: Partial<AnalyticsSettings>,
+  updatedBy: string | null,
+): Promise<AnalyticsSettings> {
+  const current = await getAnalyticsSettings();
+  const next: AnalyticsSettings = {
+    enabled: update.enabled === undefined ? current.enabled : update.enabled,
+    provider: update.provider === undefined ? current.provider : update.provider,
+    plausibleDomain:
+      update.plausibleDomain === undefined
+        ? current.plausibleDomain
+        : (update.plausibleDomain?.trim() || null),
+    plausibleScriptUrl:
+      update.plausibleScriptUrl === undefined
+        ? current.plausibleScriptUrl
+        : (update.plausibleScriptUrl?.trim() || null),
+    googleMeasurementId:
+      update.googleMeasurementId === undefined
+        ? current.googleMeasurementId
+        : (update.googleMeasurementId?.trim() || null),
+  };
+
+  if (next.plausibleScriptUrl) {
+    try {
+      const parsed = new URL(next.plausibleScriptUrl);
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+        throw new Error("protocol");
+      }
+    } catch {
+      throw new Error(
+        "The Plausible script URL must be absolute, e.g. https://analytics.example.com/js/script.js",
+      );
+    }
+  }
+  // GA4 ids are "G-" followed by an alphanumeric stream id. Rejecting anything
+  // else here catches the common paste of a UA- or GTM- id, which would load a
+  // snippet that silently records nothing.
+  if (next.googleMeasurementId && !/^G-[A-Z0-9]{4,}$/i.test(next.googleMeasurementId)) {
+    throw new Error(
+      'A Google Analytics measurement id looks like "G-XXXXXXXXXX". GTM container and legacy UA ids are not supported.',
+    );
+  }
+
+  if (next.enabled && !isAnalyticsUsable(next)) {
+    throw new Error(
+      "A complete analytics configuration is required to enable it: a provider and its site identifier.",
+    );
+  }
+
+  await writeSetting("analytics", next satisfies AnalyticsSettings, updatedBy);
+  return next;
+}
+
+// --- Legal documents ----------------------------------------------------------
+
+/**
+ * Operator-authored terms of service and privacy policy, stored as Markdown.
+ *
+ * These are deliberately *not* shipped with default text. A privacy policy is a
+ * legal statement about what a specific operator does with a specific set of
+ * users' data, and a plausible-looking default would be worse than none: it
+ * would be wrong for most installs and would still look authoritative. What the
+ * panel does provide is a starter that enumerates the data this codebase
+ * actually stores (see `legalTemplates.ts`), which the admin then edits in the
+ * full editor at `/admin/legal`.
+ *
+ * An empty `content` means "not published": the public route 404s rather than
+ * rendering a blank page, and the footer link disappears.
+ */
+export const LEGAL_DOCUMENTS = ["terms", "privacy"] as const;
+export type LegalDocumentKey = (typeof LEGAL_DOCUMENTS)[number];
+
+export function isLegalDocumentKey(value: unknown): value is LegalDocumentKey {
+  return (
+    typeof value === "string" &&
+    (LEGAL_DOCUMENTS as readonly string[]).includes(value)
+  );
+}
+
+export interface LegalDocument {
+  /** Markdown source. Empty means the document is unpublished. */
+  content: string;
+  /** ISO timestamp of the last save, or null when never written. */
+  updatedAt: string | null;
+}
+
+export type LegalSettings = Record<LegalDocumentKey, LegalDocument>;
+
+const EMPTY_DOCUMENT: LegalDocument = { content: "", updatedAt: null };
+
+/** Hard cap so a paste cannot put an unbounded blob in `panel_settings`. */
+const LEGAL_MAX_CHARS = 100_000;
+
+export async function getLegalSettings(): Promise<LegalSettings> {
+  const stored = await readSetting<Partial<Record<LegalDocumentKey, Partial<LegalDocument>>>>(
+    "legal",
+    {},
+  );
+  const read = (key: LegalDocumentKey): LegalDocument => {
+    const doc = stored[key];
+    return {
+      content: typeof doc?.content === "string" ? doc.content : EMPTY_DOCUMENT.content,
+      updatedAt: typeof doc?.updatedAt === "string" ? doc.updatedAt : null,
+    };
+  };
+  return { terms: read("terms"), privacy: read("privacy") };
+}
+
+export async function getLegalDocument(
+  key: LegalDocumentKey,
+): Promise<LegalDocument> {
+  return (await getLegalSettings())[key];
+}
+
+export async function setLegalDocument(
+  key: LegalDocumentKey,
+  content: string,
+  updatedBy: string | null,
+): Promise<LegalSettings> {
+  if (content.length > LEGAL_MAX_CHARS) {
+    throw new Error(
+      `The document must be ${LEGAL_MAX_CHARS.toLocaleString("en-US")} characters or fewer.`,
+    );
+  }
+  const current = await getLegalSettings();
+  const trimmed = content.trim();
+  const next: LegalSettings = {
+    ...current,
+    [key]: {
+      content: trimmed,
+      // Clearing a document unpublishes it, so there is no "last updated" to
+      // show; keeping a stale timestamp on an empty page would be a lie.
+      updatedAt: trimmed ? new Date().toISOString() : null,
+    },
+  };
+  await writeSetting("legal", next satisfies LegalSettings, updatedBy);
+  return next;
+}
+
 // --- Setup state --------------------------------------------------------------
 
 export function getSetupState(): Promise<SetupState> {

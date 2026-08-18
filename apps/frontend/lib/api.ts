@@ -203,21 +203,25 @@ export function completeSetup(): Promise<{
 /**
  * GET /api/settings/public — unauthenticated panel-wide settings.
  *
- * Surfaces the captcha config (for the sign-in form) and the upload size cap
- * (so the file manager can pre-validate uploads client-side). The upload cap is
- * the only file-manager-relevant field here; captcha is consumed by the widget.
+ * Surfaces the captcha config (for the sign-in form), the upload size cap (so
+ * the file manager can pre-validate uploads client-side), the site branding, and
+ * whether sign-up and the legal pages are available. Everything here is public
+ * by construction — it is text and booleans the sign-in page renders.
  */
-export async function getPublicSettings(): Promise<{
+export interface PublicSettings {
   captcha: PublicCaptchaSettings;
   uploadMaxBytes: number;
   /** Whether the AI console helper is configured — the console shows the button only when true. */
   ai: { enabled: boolean };
-}> {
-  return request<{
-    captcha: PublicCaptchaSettings;
-    uploadMaxBytes: number;
-    ai: { enabled: boolean };
-  }>("/api/settings/public");
+  branding: BrandingSettings;
+  /** `enabled` already accounts for the bootstrap exemption. */
+  registration: RegistrationSettings;
+  /** Whether each document has been published, so a footer can link only to those. */
+  legal: { terms: boolean; privacy: boolean };
+}
+
+export async function getPublicSettings(): Promise<PublicSettings> {
+  return request<PublicSettings>("/api/settings/public");
 }
 
 /** POST /api/admin/nodes — register a node. Returns a generated token once. */
@@ -2339,6 +2343,47 @@ export interface AdminSettings {
   verification: { requireVerifiedSignIn: boolean };
   serverLimits: { maxAdditionalPortsPerServer: number; maxDatabasesPerServer: number };
   ai: AdminAiSettings;
+  branding: BrandingSettings;
+  registration: RegistrationSettings;
+  seo: SeoSettings;
+  analytics: AnalyticsSettings;
+}
+
+/** The site name and strapline shown in the header, on sign-in, and in titles. */
+export interface BrandingSettings {
+  siteName: string;
+  tagline: string;
+}
+
+/** Whether strangers may create their own accounts. */
+export interface RegistrationSettings {
+  enabled: boolean;
+  disabledMessage: string;
+}
+
+/** Search-engine facing configuration. `allowIndexing` defaults to false. */
+export interface SeoSettings {
+  allowIndexing: boolean;
+  siteUrl: string | null;
+  description: string;
+  keywords: string[];
+  ogImageUrl: string | null;
+}
+
+export const ANALYTICS_PROVIDERS = ["plausible", "google"] as const;
+export type AnalyticsProvider = (typeof ANALYTICS_PROVIDERS)[number];
+
+/**
+ * Web analytics config. Unlike captcha/mail/AI there is nothing secret here —
+ * a measurement id and a site domain are public in any page that uses them —
+ * so the admin view carries the real values rather than "is one stored?".
+ */
+export interface AnalyticsSettings {
+  enabled: boolean;
+  provider: AnalyticsProvider | null;
+  plausibleDomain: string | null;
+  plausibleScriptUrl: string | null;
+  googleMeasurementId: string | null;
 }
 
 /** AI config as the admin form sees it: no secrets, just "is one stored?". */
@@ -2381,6 +2426,10 @@ export interface AdminSettingsUpdate {
     apiKey?: string | null;
     model?: string | null;
   };
+  branding?: Partial<BrandingSettings>;
+  registration?: Partial<RegistrationSettings>;
+  seo?: Partial<SeoSettings>;
+  analytics?: Partial<AnalyticsSettings>;
 }
 
 /**
@@ -2459,6 +2508,38 @@ export async function requestConsoleAiHelper(
   return request<{ reply: string }>(`/api/servers/${serverId}/ai-helper`, {
     method: "POST",
     body: JSON.stringify({ message }),
+  });
+}
+
+// --- Legal documents ----------------------------------------------------------
+
+export interface LegalDocument {
+  /** Markdown source. Empty means the document is not published. */
+  content: string;
+  updatedAt: string | null;
+}
+
+export type LegalDocumentKey = "terms" | "privacy";
+export type LegalSettings = Record<LegalDocumentKey, LegalDocument>;
+
+/** GET /api/admin/legal — both documents' Markdown source (admin only). */
+export async function getLegalDocuments(): Promise<LegalSettings> {
+  return request<LegalSettings>("/api/admin/legal");
+}
+
+/**
+ * PUT /api/admin/legal/:document — replace one document (admin only).
+ *
+ * A whole-document replace, because the editor's buffer *is* the document.
+ * Saving `""` unpublishes the page.
+ */
+export async function saveLegalDocument(
+  document: LegalDocumentKey,
+  content: string,
+): Promise<LegalSettings> {
+  return request<LegalSettings>(`/api/admin/legal/${document}`, {
+    method: "PUT",
+    body: JSON.stringify({ content }),
   });
 }
 

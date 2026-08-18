@@ -1,14 +1,15 @@
 "use client";
 
 import * as React from "react";
-import { Castle } from "lucide-react";
 
-import { getSetupStatus } from "@/lib/api";
+import { getSetupStatus, type PublicSettings } from "@/lib/api";
 import {
   CaptchaWidget,
   usePublicCaptcha,
   type CaptchaWidgetHandle,
 } from "@/components/captcha-widget";
+import { useBranding } from "@/components/branding-provider";
+import { SiteFooter, type LegalAvailability } from "@/components/site-footer";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -39,44 +40,75 @@ const CAPTCHA_HEADER = "x-captcha-response";
  * `next` is the already-validated internal path the visitor was heading for
  * before being sent here; when absent, a successful credential exchange lands on
  * the panel root (or the wizard, when setup is unfinished).
+ *
+ * `registration` and `legal` are resolved server-side by `page.tsx`, so the
+ * sign-up tab is either there on first paint or never — it does not appear a
+ * moment after the page settles.
  */
-export default function LoginForm({ next }: { next?: string }) {
+export default function LoginForm({
+  next,
+  registration,
+  legal,
+}: {
+  next?: string;
+  registration: PublicSettings["registration"];
+  legal: LegalAvailability;
+}) {
   const captcha = usePublicCaptcha();
+  const { siteName, tagline } = useBranding();
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-background p-4">
-      <div className="flex flex-col items-center gap-2 text-center">
-        <span className="flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
-          <Castle className="size-5" />
-        </span>
-        <h1 className="font-heading text-xl font-semibold tracking-tight">
-          CitadelPanel
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Self-hosted game server management.
-        </p>
+    <div className="flex min-h-dvh flex-col">
+      <div className="flex flex-1 flex-col items-center justify-center gap-6 p-4">
+        <div className="flex flex-col items-center gap-1 text-center">
+          <h1 className="font-heading text-xl font-semibold tracking-tight">
+            {siteName}
+          </h1>
+          {tagline && (
+            <p className="text-sm text-muted-foreground">{tagline}</p>
+          )}
+        </div>
+
+        <Card className="w-full max-w-sm">
+          {registration.enabled ? (
+            <Tabs defaultValue="signin">
+              <CardHeader>
+                <CardTitle className="flex justify-center">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="signin">Sign in</TabsTrigger>
+                    <TabsTrigger value="signup">Create account</TabsTrigger>
+                  </TabsList>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <TabsContent value="signin">
+                  <AuthForm mode="signin" captcha={captcha} next={next} />
+                </TabsContent>
+                <TabsContent value="signup">
+                  <AuthForm mode="signup" captcha={captcha} next={next} />
+                </TabsContent>
+              </CardContent>
+            </Tabs>
+          ) : (
+            <>
+              <CardHeader>
+                <CardTitle>Sign in</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                <AuthForm mode="signin" captcha={captcha} next={next} />
+                {/* The operator's own wording for how to get an account. The
+                    gate itself is server-side; this only explains the absence
+                    of a sign-up form. */}
+                <p className="text-center text-xs text-muted-foreground">
+                  {registration.disabledMessage}
+                </p>
+              </CardContent>
+            </>
+          )}
+        </Card>
       </div>
 
-      <Card className="w-full max-w-sm">
-        <Tabs defaultValue="signin">
-          <CardHeader>
-            <CardTitle className="flex justify-center">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="signin">Sign in</TabsTrigger>
-                <TabsTrigger value="signup">Create account</TabsTrigger>
-              </TabsList>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <TabsContent value="signin">
-              <AuthForm mode="signin" captcha={captcha} next={next} />
-            </TabsContent>
-            <TabsContent value="signup">
-              <AuthForm mode="signup" captcha={captcha} next={next} />
-            </TabsContent>
-          </CardContent>
-        </Tabs>
-      </Card>
+      <SiteFooter legal={legal} siteName={siteName} />
     </div>
   );
 }

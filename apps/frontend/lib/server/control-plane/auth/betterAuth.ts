@@ -17,8 +17,11 @@ import { env } from "../config/env";
 import { CAPTCHA_HEADER, verifyCaptcha } from "../security/captcha";
 import { sendMail } from "../services/mail";
 import {
+  getBranding,
+  getRegistrationSettings,
   getVerificationPolicy,
   isMailUsable,
+  isRegistrationOpen,
   getMailSettings,
 } from "../services/settings";
 
@@ -290,11 +293,14 @@ async function sendChangeEmailConfirmation({
   url: string;
   token: string;
 }): Promise<void> {
+  // The operator's configured site name, so a renamed panel does not send mail
+  // signed with the product's name instead of theirs.
+  const { siteName } = await getBranding();
   await sendMail({
     to: user.email,
     subject: "Confirm your new email address",
-    text: `A request was made to change the email on your CitadelPanel account to ${newEmail}.\n\nConfirm this change by opening this link:\n\n${url}\n\nIf you did not request this change, ignore this message — your email will not be changed.`,
-    html: `<p>A request was made to change the email on your CitadelPanel account to <strong>${newEmail}</strong>.</p><p>Confirm this change by opening this link:</p><p><a href="${url}">${url}</a></p><p style="color:#666">If you did not request this change, ignore this message — your email will not be changed.</p>`,
+    text: `A request was made to change the email on your ${siteName} account to ${newEmail}.\n\nConfirm this change by opening this link:\n\n${url}\n\nIf you did not request this change, ignore this message — your email will not be changed.`,
+    html: `<p>A request was made to change the email on your ${siteName} account to <strong>${newEmail}</strong>.</p><p>Confirm this change by opening this link:</p><p><a href="${url}">${url}</a></p><p style="color:#666">If you did not request this change, ignore this message — your email will not be changed.</p>`,
   });
 }
 
@@ -312,24 +318,56 @@ async function sendTwoFactorOtp({
   user: { email: string };
   otp: string;
 }): Promise<void> {
+  const { siteName } = await getBranding();
   await sendMail({
     to: user.email,
-    subject: "Your CitadelPanel verification code",
+    subject: `Your ${siteName} verification code`,
     text: `Your verification code is: ${otp}\n\nIf you did not attempt to sign in, you can safely ignore this email.`,
     html: `<p>Your verification code is: <strong>${otp}</strong></p><p style="color:#666">If you did not attempt to sign in, you can safely ignore this email.</p>`,
   });
 }
 
+// --- Registration gate --------------------------------------------------------
+
+/**
+ * Refuse self-service sign-up when the operator has closed registration.
+ *
+ * This hook is the gate, not the hidden tab on the login form. Anything that can
+ * POST to `/sign-up/email` — curl, an old cached page, a script — hits it, which
+ * is the only way "invite-only" means anything.
+ *
+ * `isRegistrationOpen` exempts the bootstrap window (no admin exists yet), so an
+ * operator who disables registration and then wipes the user table can still
+ * claim the first account rather than being locked out of their own panel. The
+ * setup wizard's `auth.api.signUpEmail` call goes through this same hook and is
+ * allowed by that same exemption.
+ */
+const registrationGateHook = async (ctx: { path: string }): Promise<void> => {
+  if (ctx.path !== "/sign-up/email") return;
+  if (await isRegistrationOpen()) return;
+
+  const { disabledMessage } = await getRegistrationSettings();
+  // 403 rather than 400: the request is well-formed and retrying it unchanged
+  // will never succeed. The message is operator-authored, so it can point the
+  // visitor at whatever the actual route to an account is.
+  throw new APIError("FORBIDDEN", {
+    message: disabledMessage,
+    code: "REGISTRATION_DISABLED",
+  });
+};
+
 /**
  * The single `before` hook Better Auth runs on every auth request.
  *
- * `hooks.before` accepts one middleware, so the captcha gate and the email-
- * verification gate are composed here. Each no-ops early when its path or
- * conditions do not match, so they are independent: a sign-up hits only the
- * captcha check; a sign-in hits both (captcha first, then verification).
+ * `hooks.before` accepts one middleware, so the captcha gate, the registration
+ * gate, and the email-verification gate are composed here. Each no-ops early
+ * when its path or conditions do not match, so they are independent: a sign-up
+ * hits the captcha check and the registration gate; a sign-in hits captcha,
+ * verification, and the ban check.
  */
 const beforeHook = createAuthMiddleware(async (ctx) => {
   await captchaHook(ctx);
+  await registrationGateHook(ctx);
   await verificationGateHook(ctx);
   await banCheckHook(ctx);
 });
