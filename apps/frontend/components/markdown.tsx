@@ -212,9 +212,27 @@ function renderBlocks(source: string): React.ReactNode[] {
  * Alternation order matters: `**bold**` is tried before `_italic_` so `**` is
  * not consumed as two emphasis markers, and code spans are matched first so
  * markup inside backticks stays literal.
+ *
+ * The link target allows one level of balanced parentheses, so a URL like
+ * `https://en.wikipedia.org/wiki/GDPR_(EU)` is captured whole. Without that, the
+ * target would stop at the first `)` and the remainder would be left dangling as
+ * stray text after the link.
  */
-const INLINE_PATTERN =
-  /(`[^`]+`)|(\*\*[^*]+\*\*)|(__[^_]+__)|(\*[^*\s][^*]*\*)|(_[^_\s][^_]*_)|(\[[^\]]+\]\([^)\s]+\))/g;
+const LINK_TARGET = String.raw`(?:[^()\s]|\([^()\s]*\))+`;
+
+const INLINE_PATTERN = new RegExp(
+  [
+    "(`[^`]+`)",
+    String.raw`(\*\*[^*]+\*\*)`,
+    "(__[^_]+__)",
+    String.raw`(\*[^*\s][^*]*\*)`,
+    "(_[^_\\s][^_]*_)",
+    String.raw`(\[[^\]]+\]\(${LINK_TARGET}\))`,
+  ].join("|"),
+  "g",
+);
+
+const LINK_PATTERN = new RegExp(String.raw`^\[([^\]]+)\]\((${LINK_TARGET})\)$`);
 
 function renderInline(text: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
@@ -250,7 +268,7 @@ function renderInline(text: string): React.ReactNode[] {
     }
 
     if (token.startsWith("[")) {
-      const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(token)!;
+      const link = LINK_PATTERN.exec(token)!;
       const [, label, href] = link;
       if (isSafeHref(href)) {
         const external = /^https?:/i.test(href);

@@ -103,6 +103,16 @@ describe("links", () => {
     expect(html).not.toContain("javascript:");
     expect(html).not.toContain("<a ");
     expect(html).toContain("click me");
+    // The whole token is consumed, so no stray ")" is left dangling after it.
+    expect(html).not.toContain("click me)");
+  });
+
+  test("a URL containing balanced parentheses is captured whole", () => {
+    // Legal documents cite pages like this; stopping the target at the first ")"
+    // would both break the link and leave "(EU)" as visible junk.
+    const html = render("[GDPR](https://en.wikipedia.org/wiki/GDPR_(EU))");
+    expect(html).toContain('href="https://en.wikipedia.org/wiki/GDPR_(EU)"');
+    expect(html).not.toContain("GDPR</a>)");
   });
 
   test("data: URLs are dropped", () => {
