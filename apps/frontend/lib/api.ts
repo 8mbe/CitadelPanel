@@ -210,10 +210,13 @@ export function completeSetup(): Promise<{
 export async function getPublicSettings(): Promise<{
   captcha: PublicCaptchaSettings;
   uploadMaxBytes: number;
+  /** Whether the AI console helper is configured — the console shows the button only when true. */
+  ai: { enabled: boolean };
 }> {
   return request<{
     captcha: PublicCaptchaSettings;
     uploadMaxBytes: number;
+    ai: { enabled: boolean };
   }>("/api/settings/public");
 }
 
@@ -2335,6 +2338,15 @@ export interface AdminSettings {
   mail: AdminMailSettings;
   verification: { requireVerifiedSignIn: boolean };
   serverLimits: { maxAdditionalPortsPerServer: number; maxDatabasesPerServer: number };
+  ai: AdminAiSettings;
+}
+
+/** AI config as the admin form sees it: no secrets, just "is one stored?". */
+export interface AdminAiSettings {
+  enabled: boolean;
+  apiUrl: string | null;
+  model: string | null;
+  hasApiKey: boolean;
 }
 
 /** GET /api/admin/settings — current general settings (admin only). */
@@ -2362,6 +2374,13 @@ export interface AdminSettingsUpdate {
   };
   verification?: { requireVerifiedSignIn: boolean };
   serverLimits?: { maxAdditionalPortsPerServer?: number; maxDatabasesPerServer?: number };
+  ai?: {
+    enabled: boolean;
+    apiUrl?: string | null;
+    /** Plaintext; omit to keep the stored secret. */
+    apiKey?: string | null;
+    model?: string | null;
+  };
 }
 
 /**
@@ -2382,6 +2401,64 @@ export async function sendTestEmail(to: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>("/api/admin/settings/test-email", {
     method: "POST",
     body: JSON.stringify({ to }),
+  });
+}
+
+// --- AI assistant -------------------------------------------------------------
+
+/**
+ * POST /api/admin/settings/ai/models — fetch the provider's model list.
+ *
+ * Accepts the form's current `apiUrl`/`apiKey` so an admin can probe a provider
+ * before saving it; falls back to the stored config when either is omitted.
+ */
+export async function fetchAiModels(input: {
+  apiUrl?: string;
+  apiKey?: string;
+}): Promise<string[]> {
+  const data = await request<{ models: string[] }>(
+    "/api/admin/settings/ai/models",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+  return data.models;
+}
+
+/**
+ * POST /api/admin/settings/ai/test — ping the provider and wait for the reply.
+ *
+ * Accepts the form's current `apiUrl`/`apiKey`/`model`; falls back to stored
+ * config when any is omitted. Returns the assistant's reply text.
+ */
+export async function testAi(input: {
+  apiUrl?: string;
+  apiKey?: string;
+  model?: string;
+}): Promise<{ ok: boolean; reply: string }> {
+  return request<{ ok: boolean; reply: string }>(
+    "/api/admin/settings/ai/test",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+/**
+ * POST /api/servers/:id/ai-helper — ask the assistant about this server.
+ *
+ * The browser sends only the free-text question; the panel assembles the full
+ * prompt (logs, game, version) server-side. Requires the `console` permission.
+ */
+export async function requestConsoleAiHelper(
+  serverId: string,
+  message: string,
+): Promise<{ reply: string }> {
+  return request<{ reply: string }>(`/api/servers/${serverId}/ai-helper`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
   });
 }
 

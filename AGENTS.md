@@ -67,6 +67,9 @@ Existing docs:
   key-is-its-owner session-synthesis model, the `Authorization: Bearer`
   alias, admin oversight (`/admin/api-keys`), and via-API-key audit
   attribution.
+- `docs/ai-helper.md` — the AI console helper: admin OpenAI-compatible
+  config (write-only key, fetch-models/test buttons), the panel-composed
+  prompt flow, and why the browser only sends the question.
 
 When adding a feature, create `docs/<feature>.md` in the same style and cross-link related docs. Don't duplicate what the code already says — document the *why* and the cross-cutting flow, the way the existing docs do.
 

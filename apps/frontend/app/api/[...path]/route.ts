@@ -121,7 +121,10 @@ import {
   handleSetupStatus,
   handleTestEmail,
   handleUpdateSettings,
+  handleFetchAiModels,
+  handleTestAi,
 } from "@/lib/server/control-plane/routes/setup";
+import { handleServerAiHelper } from "@/lib/server/control-plane/routes/aiHelper";
 import {
   handleInviteSubuser,
   handleListSubusers,
@@ -157,6 +160,8 @@ const exact = new Map<string, Partial<Record<string, Handler>>>([
   ["settings/public", { GET: handlePublicSettings }],
   ["admin/settings", { GET: handleGetSettings, PATCH: handleUpdateSettings }],
   ["admin/settings/test-email", { POST: handleTestEmail }],
+  ["admin/settings/ai/models", { POST: handleFetchAiModels }],
+  ["admin/settings/ai/test", { POST: handleTestAi }],
   ["me", { GET: handleGetMe }],
   ["account/delete", { POST: handleDeleteAccount }],
   ["blueprints", { GET: handleListBlueprints }],
@@ -213,6 +218,9 @@ const patterns: Array<{
   { pattern: /^servers\/([^/]+)\/command$/, methods: { POST: handleConsoleCommand } },
   { pattern: /^servers\/([^/]+)\/console\/session$/, methods: { POST: handleConsoleSession } },
   { pattern: /^servers\/([^/]+)\/console\/revoke$/, methods: { POST: handleConsoleRevoke } },
+  // AI console helper (see routes/aiHelper.ts). Panel-composed prompt; the
+  // browser only supplies the free-text question, never the logs or context.
+  { pattern: /^servers\/([^/]+)\/ai-helper$/, methods: { POST: handleServerAiHelper } },
   { pattern: /^servers\/([^/]+)\/files$/, methods: { GET: handleListFiles } },
   { pattern: /^servers\/([^/]+)\/files\/delete$/, methods: { POST: handleDeleteFiles } },
   { pattern: /^servers\/([^/]+)\/files\/content$/, methods: { GET: handleReadFile, PUT: handleWriteFile } },

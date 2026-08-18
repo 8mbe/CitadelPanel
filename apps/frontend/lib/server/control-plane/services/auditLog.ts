@@ -37,6 +37,7 @@ export type AuditAction =
   | "server.database.explorer.update_row"
   | "server.database.explorer.delete_row"
   | "server.console.command"
+  | "server.ai.helper"
   | "server.file.write"
   | "server.file.delete"
   | "server.file.rename"

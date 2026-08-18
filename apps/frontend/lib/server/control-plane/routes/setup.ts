@@ -36,8 +36,11 @@ import { sendMail } from "../services/mail";
 import {
   countAdmins,
   countUsers,
+  getAiApiKey,
+  getAiSettings,
   getCaptchaSettings,
   getMailSettings,
+  getPublicAiSettings,
   getPublicCaptchaSettings,
   getPublicMailSettings,
   getSetupState,
@@ -49,6 +52,7 @@ import {
   isValidTimezone,
   MAIL_PROVIDERS,
   markSetupComplete,
+  setAiSettings,
   setCaptchaSettings,
   setMailSettings,
   setVerificationPolicy,
@@ -57,6 +61,7 @@ import {
   setServerLimits,
   CAPTCHA_PROVIDERS,
 } from "../services/settings";
+import { chatCompletion, fetchAiModels } from "../services/aiClient";
 
 /**
  * GET /api/setup/status — public.
@@ -398,9 +403,46 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
     changed.push("serverLimits");
   }
 
+  if (body.ai !== undefined) {
+    if (
+      typeof body.ai !== "object" ||
+      body.ai === null ||
+      Array.isArray(body.ai)
+    ) {
+      throw badRequest('"ai" must be an object');
+    }
+
+    const ai = body.ai as Record<string, unknown>;
+    if (typeof ai.enabled !== "boolean") {
+      throw badRequest('"ai.enabled" must be a boolean');
+    }
+
+    try {
+      await setAiSettings(
+        {
+          enabled: ai.enabled,
+          apiUrl: optionalString(ai, "apiUrl", { max: 1024 }) ?? null,
+          // Undefined keeps the stored secret; an empty string clears it.
+          apiKey:
+            ai.apiKey === undefined
+              ? undefined
+              : (optionalString(ai, "apiKey", { max: 1024 }) ?? null),
+          model: optionalString(ai, "model", { max: 256 }) ?? null,
+        },
+        admin.id,
+      );
+    } catch (error) {
+      // setAiSettings enforces "enabled requires a complete config".
+      throw badRequest(
+        error instanceof Error ? error.message : "Invalid AI configuration",
+      );
+    }
+    changed.push("ai");
+  }
+
   if (changed.length === 0) {
     throw badRequest(
-      "Provide at least one of: timezone, captcha, mail, verification, serverLimits",
+      "Provide at least one of: timezone, captcha, mail, verification, serverLimits, ai",
     );
   }
 
@@ -408,7 +450,7 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
     userId: admin.id,
     action: "settings.update",
     targetType: "settings",
-    // Field names only — never a captcha or mail secret.
+    // Field names only — never a captcha, mail, or AI API key.
     metadata: { changed },
   });
 
@@ -418,6 +460,7 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
     mail: await getPublicMailSettings(),
     verification: await getVerificationPolicy(),
     serverLimits: await getServerLimits(),
+    ai: await getPublicAiSettings(),
   });
 }
 
@@ -438,6 +481,7 @@ export async function handleGetSettings(request: Request): Promise<Response> {
     verification: await getVerificationPolicy(),
     serverLimits: await getServerLimits(),
     setup: await getSetupState(),
+    ai: await getPublicAiSettings(),
   });
 }
 
@@ -536,5 +580,107 @@ export async function handlePublicSettings(): Promise<Response> {
     // Surfaced so the file manager can pre-validate uploads client-side and
     // show the limit in the UI before a request is ever made.
     uploadMaxBytes: env.uploadMaxBytes,
+    // Surfaced so the console can show (or hide) the AI helper button without
+    // a separate round-trip per server page. Only the boolean; no URL/key/model.
+    ai: await getPublicAiSettings(),
   });
+}
+
+/**
+ * Resolve an AI provider config from a request body, falling back to the
+ * stored config when a field is omitted.
+ *
+ * The admin "fetch models" and "test" buttons accept the form's current
+ * apiUrl/apiKey/model so an operator can probe a provider *before* saving it
+ * (the most natural flow: type a URL + key, fetch models, pick one, test, then
+ * save). When a field is absent the stored value is used instead, so the
+ * buttons also work against an already-saved config. The decrypted API key
+ * lives only inside this request — it is never returned to the browser.
+ *
+ * Returns null when there is no usable config (no URL or no key from either
+ * source); callers surface their own readable error.
+ */
+async function resolveAiConfigFromBody(
+  body: Record<string, unknown>,
+  requireModel: boolean,
+): Promise<{
+  apiUrl: string;
+  apiKey: string;
+  model?: string;
+} | null> {
+  const stored = await getAiSettings();
+  const apiUrl = optionalString(body, "apiUrl", { max: 1024 }) ?? stored.apiUrl;
+  // An explicit empty apiKey string clears it (matches the write-only secret
+  // convention); omitting it keeps the stored key.
+  const apiKeyRaw =
+    body.apiKey === undefined ? undefined : optionalString(body, "apiKey", { max: 1024 }) ?? null;
+  const apiKey =
+    apiKeyRaw === undefined
+      ? await getAiApiKey()
+      : apiKeyRaw;
+  const model = optionalString(body, "model", { max: 256 }) ?? stored.model;
+
+  if (!apiUrl || !apiKey) return null;
+  if (requireModel && !model) return null;
+  return { apiUrl, apiKey, ...(model ? { model } : {}) };
+}
+
+/**
+ * POST /api/admin/settings/ai/models — list models from the provider.
+ *
+ * Accepts `{ apiUrl?, apiKey? }` so an admin can probe a provider before saving
+ * it; falls back to the stored config when either is omitted. The model list is
+ * returned as the provider gives it (OpenAI's `{ data: [{ id }] }` shape); the
+ * `aiClient` normalizes it to `string[]`.
+ */
+export async function handleFetchAiModels(request: Request): Promise<Response> {
+  await requireAdmin(request);
+  const body = await parseJsonBody(request);
+
+  const config = await resolveAiConfigFromBody(body, false);
+  if (!config) {
+    throw badRequest(
+      "Provide an API URL and API key (or save them first) to fetch models.",
+    );
+  }
+
+  const models = await fetchAiModels(config);
+  return json({ models });
+}
+
+/**
+ * POST /api/admin/settings/ai/test — send a trivial ping and wait for the reply.
+ *
+ * Accepts `{ apiUrl?, apiKey?, model? }` so an admin can test a provider before
+ * saving. Returns the assistant's reply so the operator can confirm the round
+ * trip works end to end (URL reachable, key valid, model answering).
+ */
+export async function handleTestAi(request: Request): Promise<Response> {
+  await requireAdmin(request);
+  const body = await parseJsonBody(request);
+
+  const config = await resolveAiConfigFromBody(body, true);
+  if (!config) {
+    throw badRequest(
+      "Provide an API URL, API key, and model (or save them first) to test.",
+    );
+  }
+
+  const reply = await chatCompletion(
+    {
+      apiUrl: config.apiUrl,
+      apiKey: config.apiKey,
+      model: config.model!,
+    },
+    [
+      {
+        role: "system",
+        content:
+          "You are a connectivity test. Reply with a single short sentence confirming you received this message.",
+      },
+      { role: "user", content: "Hello — is this model reachable?" },
+    ],
+  );
+
+  return json({ ok: true, reply });
 }

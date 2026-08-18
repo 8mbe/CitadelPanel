@@ -1,12 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { Info, Mail, Send } from "lucide-react";
+import { Info, Mail, Send, Sparkles } from "lucide-react";
 
 import {
   ApiError,
+  fetchAiModels,
   getAdminSettings,
   sendTestEmail,
+  testAi,
   updateAdminSettings,
   type AdminSettings,
   type AdminSettingsUpdate,
@@ -100,6 +102,7 @@ export function AdminGeneralSettings() {
       <GeneralCard settings={settings} patch={patch} />
       <CaptchaCard settings={settings} patch={patch} />
       <MailCard settings={settings} patch={patch} />
+      <AiCard settings={settings} patch={patch} />
       <VerificationCard settings={settings} patch={patch} />
       <ServerLimitsCard settings={settings} patch={patch} />
     </div>
@@ -532,6 +535,272 @@ function MailCard({
               <p className="flex items-start gap-1.5 text-sm text-muted-foreground">
                 <Info className="mt-0.5 size-3.5 shrink-0" />
                 {testResult}
+              </p>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// --- AI assistant -------------------------------------------------------------
+
+interface AiFormValue {
+  enabled: boolean;
+  apiUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+function AiCard({
+  settings,
+  patch,
+}: {
+  settings: AdminSettings;
+  patch: (update: AdminSettingsUpdate) => Promise<AdminSettings>;
+}) {
+  const a = settings.ai;
+  const [value, setValue] = React.useState<AiFormValue>({
+    enabled: a.enabled,
+    apiUrl: a.apiUrl ?? "",
+    apiKey: "",
+    model: a.model ?? "",
+  });
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [saved, setSaved] = React.useState(false);
+
+  // Fetched model list + fetch state.
+  const [models, setModels] = React.useState<string[]>([]);
+  const [fetchingModels, setFetchingModels] = React.useState(false);
+  const [modelsError, setModelsError] = React.useState<string | null>(null);
+
+  // Test-connection state.
+  const [testing, setTesting] = React.useState(false);
+  const [testResult, setTestResult] = React.useState<string | null>(null);
+
+  const set = <K extends keyof AiFormValue>(key: K, v: AiFormValue[K]) =>
+    setValue((prev) => ({ ...prev, [key]: v }));
+
+  const save = async () => {
+    setLoading(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await patch({
+        ai: {
+          enabled: value.enabled,
+          apiUrl: value.apiUrl.trim() || null,
+          // Empty field ⇒ keep stored (omit) when one exists, else clear.
+          apiKey: value.apiKey === "" ? undefined : value.apiKey,
+          model: value.model.trim() || null,
+        },
+      });
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save AI settings.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch the provider's model list. Uses the form's current apiUrl/apiKey so
+  // an admin can probe a provider before saving it; falls back to the stored
+  // key when the apiKey field is left blank (the server side resolves that).
+  const fetchModels = async () => {
+    setFetchingModels(true);
+    setModelsError(null);
+    try {
+      const list = await fetchAiModels({
+        apiUrl: value.apiUrl.trim() || undefined,
+        apiKey: value.apiKey === "" ? undefined : value.apiKey,
+      });
+      setModels(list);
+      // Pre-select the first model if none is chosen yet, to smooth the flow.
+      if (!value.model && list.length > 0) set("model", list[0]);
+    } catch (err) {
+      setModelsError(
+        err instanceof ApiError ? err.message : "Could not fetch models.",
+      );
+    } finally {
+      setFetchingModels(false);
+    }
+  };
+
+  const runTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await testAi({
+        apiUrl: value.apiUrl.trim() || undefined,
+        apiKey: value.apiKey === "" ? undefined : value.apiKey,
+        model: value.model.trim() || undefined,
+      });
+      setTestResult(res.reply);
+    } catch (err) {
+      setTestResult(
+        err instanceof ApiError ? err.message : "The test failed.",
+      );
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const canTest = Boolean(
+    (value.apiUrl.trim() || a.apiUrl) &&
+      (a.hasApiKey || value.apiKey !== "") &&
+      (value.model.trim() || a.model),
+  );
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Sparkles className="size-4" />
+          AI assistant
+        </CardTitle>
+        <CardDescription>
+          An OpenAI-compatible chat endpoint the panel calls server-side to help
+          users read their console output. The API key is stored encrypted and
+          never shown again. When off, the console helper is hidden from users.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <FieldGroup>
+          <Field orientation="horizontal">
+            <div className="flex flex-1 flex-col gap-0.5">
+              <FieldLabel htmlFor="ai-enabled">Enable AI assistant</FieldLabel>
+              <FieldDescription>
+                When on, a helper button appears on every server console. The
+                panel composes the prompt (logs, game, version); the browser only
+                sends the user&apos;s question.
+              </FieldDescription>
+            </div>
+            <Switch
+              id="ai-enabled"
+              checked={value.enabled}
+              onCheckedChange={(c) => set("enabled", c)}
+            />
+          </Field>
+
+          {value.enabled && (
+            <>
+              <Field>
+                <FieldLabel htmlFor="ai-api-url">API URL</FieldLabel>
+                <Input
+                  id="ai-api-url"
+                  value={value.apiUrl}
+                  onChange={(e) => set("apiUrl", e.target.value)}
+                  placeholder="https://api.openai.com/v1"
+                  maxLength={1024}
+                  autoComplete="off"
+                />
+                <FieldDescription>
+                  The OpenAI-compatible base URL. The panel appends{" "}
+                  <code>/models</code> and <code>/chat/completions</code>.
+                </FieldDescription>
+              </Field>
+
+              <Field>
+                <FieldLabel htmlFor="ai-api-key">API key</FieldLabel>
+                <Input
+                  id="ai-api-key"
+                  type="password"
+                  value={value.apiKey}
+                  onChange={(e) => set("apiKey", e.target.value)}
+                  placeholder={
+                    a.hasApiKey
+                      ? "Stored — leave blank to keep unchanged"
+                      : "sk-..."
+                  }
+                  autoComplete="off"
+                />
+              </Field>
+
+              <Field>
+                <FieldLabel htmlFor="ai-model">Model</FieldLabel>
+                <div className="flex gap-2">
+                  {models.length > 0 ? (
+                    <Select
+                      value={value.model}
+                      onValueChange={(v) => set("model", v ?? "")}
+                    >
+                      <SelectTrigger id="ai-model" className="w-full">
+                        <SelectValue placeholder="Choose a model" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-72">
+                        {models.map((m) => (
+                          <SelectItem key={m} value={m}>
+                            {m}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      id="ai-model"
+                      value={value.model}
+                      onChange={(e) => set("model", e.target.value)}
+                      placeholder={
+                        a.model ?? "Fetch models or type a model id"
+                      }
+                      autoComplete="off"
+                    />
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={fetchModels}
+                    disabled={
+                      fetchingModels ||
+                      (!value.apiUrl.trim() && !a.apiUrl) ||
+                      (!a.hasApiKey && value.apiKey === "")
+                    }
+                  >
+                    {fetchingModels ? <Spinner /> : <Sparkles />}
+                    Fetch models
+                  </Button>
+                </div>
+                {modelsError && (
+                  <p className="text-sm text-destructive">{modelsError}</p>
+                )}
+              </Field>
+            </>
+          )}
+        </FieldGroup>
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {saved && !error && (
+          <p className="text-sm text-emerald-600 dark:text-emerald-400">Saved.</p>
+        )}
+        <div>
+          <Button onClick={save} disabled={loading}>
+            {loading && <Spinner />}
+            Save AI
+          </Button>
+        </div>
+
+        {value.enabled && (
+          <div className="flex flex-col gap-2 border-t pt-4">
+            <FieldLabel htmlFor="ai-test">Test the connection</FieldLabel>
+            <div className="flex gap-2">
+              <Button
+                id="ai-test"
+                type="button"
+                variant="outline"
+                onClick={runTest}
+                disabled={testing || !canTest}
+                className="w-fit"
+              >
+                {testing ? <Spinner /> : <Send />}
+                {testing ? "Waiting for response…" : "Send test message"}
+              </Button>
+            </div>
+            {testResult && (
+              <p className="flex items-start gap-1.5 text-sm text-muted-foreground">
+                <Info className="mt-0.5 size-3.5 shrink-0" />
+                <span className="whitespace-pre-wrap">{testResult}</span>
               </p>
             )}
           </div>

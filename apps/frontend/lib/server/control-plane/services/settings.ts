@@ -587,6 +587,142 @@ export async function setServerLimits(
   return next;
 }
 
+// --- AI assistant -------------------------------------------------------------
+
+/**
+ * AI assistant configuration — an OpenAI-compatible chat endpoint the panel
+ * calls server-side to help users read their console output.
+ *
+ * Mirrors the captcha/mail pattern deliberately: a provider picked at runtime
+ * and stored here, with the API key encrypted at rest. The panel composes every
+ * prompt (logs, game, version, the user's question) and the browser only sends
+ * the free-text question — so the prompt is never client-controlled, the same
+ * "panel-composed, never browser-supplied" posture the database explorer takes
+ * with SQL. The API key never reaches the browser; the public view reports only
+ * that one is stored.
+ *
+ * When `enabled` is false, the AI helper button is hidden from every console,
+ * so users never see a feature the operator has not configured.
+ */
+/** AI config as stored, with the API key still encrypted. */
+export interface StoredAiSettings {
+  enabled: boolean;
+  /**
+   * Base URL of an OpenAI-compatible endpoint, e.g. "https://api.openai.com/v1".
+   * The panel appends "/models" and "/chat/completions" to this.
+   */
+  apiUrl: string | null;
+  apiKeyEncrypted: string | null;
+  /** The chosen model id, as returned by the provider's /models endpoint. */
+  model: string | null;
+}
+
+/** AI config safe to hand to a browser: no secrets, just "is one stored?". */
+export interface PublicAiSettings {
+  enabled: boolean;
+  apiUrl: string | null;
+  model: string | null;
+  hasApiKey: boolean;
+}
+
+const DEFAULT_AI: StoredAiSettings = {
+  enabled: false,
+  apiUrl: null,
+  apiKeyEncrypted: null,
+  model: null,
+};
+
+export async function getAiSettings(): Promise<StoredAiSettings> {
+  const stored = await readSetting<Partial<StoredAiSettings>>(
+    "ai",
+    DEFAULT_AI,
+  );
+  return { ...DEFAULT_AI, ...stored };
+}
+
+/**
+ * AI config for the browser, reporting only that a key exists (never the
+ * value). `enabled` is reported false unless the config is actually usable — a
+ * half-entered provider must never be treated as "AI is on".
+ */
+export async function getPublicAiSettings(): Promise<PublicAiSettings> {
+  const ai = await getAiSettings();
+  const usable = isAiUsable(ai);
+  return {
+    enabled: usable,
+    apiUrl: usable ? ai.apiUrl : null,
+    model: usable ? ai.model : null,
+    hasApiKey: ai.apiKeyEncrypted !== null,
+  };
+}
+
+/** True when the stored config has everything needed to actually call the AI. */
+export function isAiUsable(ai: StoredAiSettings): boolean {
+  return Boolean(
+    ai.enabled &&
+      ai.apiUrl &&
+      ai.apiKeyEncrypted &&
+      ai.model,
+  );
+}
+
+/** The decrypted API key, or null when AI is not configured. */
+export async function getAiApiKey(): Promise<string | null> {
+  const ai = await getAiSettings();
+  if (!ai.apiKeyEncrypted) return null;
+  return decryptSecret(ai.apiKeyEncrypted);
+}
+
+export interface AiUpdate {
+  enabled: boolean;
+  apiUrl?: string | null;
+  /** Plaintext; encrypted here. Omit to keep the stored secret unchanged. */
+  apiKey?: string | null;
+  model?: string | null;
+}
+
+/**
+ * Update the AI configuration.
+ *
+ * Enabling requires a complete, usable config — checked here so the setup
+ * wizard, admin settings page, and the runtime `isAiUsable` check all agree.
+ * Disabling keeps the stored key so toggling back on does not mean re-entering
+ * it.
+ */
+export async function setAiSettings(
+  update: AiUpdate,
+  updatedBy: string | null,
+): Promise<void> {
+  const current = await getAiSettings();
+
+  const apiUrl = update.apiUrl === undefined ? current.apiUrl : update.apiUrl;
+  const model = update.model === undefined ? current.model : update.model;
+
+  // Omitted secret field keeps the existing ciphertext; an explicit empty
+  // string clears it.
+  const apiKeyEncrypted =
+    update.apiKey === undefined
+      ? current.apiKeyEncrypted
+      : update.apiKey
+        ? encryptSecret(update.apiKey)
+        : null;
+
+  const next: StoredAiSettings = {
+    enabled: update.enabled,
+    apiUrl,
+    apiKeyEncrypted,
+    model,
+  };
+
+  if (next.enabled && !isAiUsable(next)) {
+    throw new Error(
+      "A complete AI configuration is required to enable the assistant: API URL, API key, and a model.",
+    );
+  }
+
+  await writeSetting("ai", next satisfies StoredAiSettings, updatedBy);
+}
+
 // --- Setup state --------------------------------------------------------------
 
 export function getSetupState(): Promise<SetupState> {

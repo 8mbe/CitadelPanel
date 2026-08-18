@@ -5,7 +5,8 @@ import { Send } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { requestConsoleSession, revokeConsoleSession } from "@/lib/api";
+import { getPublicSettings, requestConsoleSession, revokeConsoleSession } from "@/lib/api";
+import { ConsoleHelperDialog } from "@/components/server/console-helper-dialog";
 import { parseAnsi, type AnsiRun } from "@/lib/ansi";
 import { cn } from "@/lib/utils";
 import type { ServerStatus } from "@/lib/types";
@@ -58,6 +59,25 @@ export function ConsolePanel({
   const [command, setCommand] = React.useState("");
   const [connected, setConnected] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  // Whether the AI console helper is configured. Fetched once from public
+  // settings (cached server-side); the helper button is hidden entirely when
+  // false, so users never see a feature the operator has not turned on.
+  const [aiEnabled, setAiEnabled] = React.useState(false);
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const settings = await getPublicSettings();
+        if (!cancelled) setAiEnabled(Boolean(settings.ai?.enabled));
+      } catch {
+        // Non-critical: leave the helper hidden.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const nextId = React.useRef(1);
   // Whether the server's container has a pseudo-TTY. A TTY container's server
@@ -328,6 +348,11 @@ export function ConsolePanel({
 
   return (
     <div className="flex h-[28rem] flex-col overflow-hidden rounded-xl border bg-zinc-950 ring-1 ring-foreground/10">
+      {aiEnabled && (
+        <div className="flex items-center justify-end border-b border-zinc-800 bg-zinc-900/50 px-2 py-1">
+          <ConsoleHelperDialog serverId={serverId} />
+        </div>
+      )}
       <div
         ref={scrollRef}
         onScroll={handleScroll}
