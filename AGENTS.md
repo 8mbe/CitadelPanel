@@ -70,6 +70,13 @@ Existing docs:
 - `docs/ai-helper.md` — the AI console helper: admin OpenAI-compatible
   config (write-only key, fetch-models/test buttons), the panel-composed
   prompt flow, and why the browser only sends the question.
+- `docs/site-settings.md` — branding (the site name is a setting, not a
+  constant), the registration toggle, SEO/`robots.txt`/`sitemap.xml` with
+  indexing off by default, the Plausible/GA analytics toggle, and the error
+  pages.
+- `docs/legal-pages.md` — operator-authored terms and privacy policy: why the
+  panel ships drafts rather than defaults, the "what this codebase stores"
+  privacy inventory, and why Markdown is rendered to React nodes.
 
 When adding a feature, create `docs/<feature>.md` in the same style and cross-link related docs. Don't duplicate what the code already says — document the *why* and the cross-cutting flow, the way the existing docs do.
 
