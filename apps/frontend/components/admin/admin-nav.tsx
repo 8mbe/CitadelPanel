@@ -6,6 +6,7 @@ import {
   Blocks,
   ClipboardList,
   KeyRound,
+  Scale,
   Server,
   Settings,
   ShieldAlert,
@@ -25,6 +26,7 @@ export const ADMIN_SECTIONS = [
   { href: "/admin/api-keys", label: "API keys", icon: KeyRound },
   { href: "/admin/security", label: "Security", icon: ShieldAlert },
   { href: "/admin/audit", label: "Audit log", icon: ClipboardList },
+  { href: "/admin/legal", label: "Legal", icon: Scale },
   { href: "/admin/settings", label: "Settings", icon: Settings },
 ] as const;
 

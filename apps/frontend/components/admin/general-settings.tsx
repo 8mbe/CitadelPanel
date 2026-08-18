@@ -1,7 +1,16 @@
 "use client";
 
 import * as React from "react";
-import { Info, Mail, Send, Sparkles } from "lucide-react";
+import {
+  ChartLine,
+  Globe,
+  Info,
+  Mail,
+  Send,
+  Sparkles,
+  Type,
+  UserPlus,
+} from "lucide-react";
 
 import {
   ApiError,
@@ -12,6 +21,7 @@ import {
   updateAdminSettings,
   type AdminSettings,
   type AdminSettingsUpdate,
+  type AnalyticsProvider,
   type MailProvider,
 } from "@/lib/api";
 import {
@@ -47,9 +57,12 @@ import { Switch } from "@/components/ui/switch";
 import { guessTimezone, listTimezones } from "@/lib/timezones";
 
 /**
- * Admin general settings. Three independent cards, each saving on its own so a
- * captcha change never implies a mail change. Loaded once from
+ * Admin general settings. Independent cards, each saving on its own so a captcha
+ * change never implies a mail change. Loaded once from
  * `GET /api/admin/settings`; updates go to `PATCH /api/admin/settings`.
+ *
+ * The terms of service and privacy policy are deliberately *not* here — they are
+ * documents rather than settings and get their own editor at `/admin/legal`.
  */
 export function AdminGeneralSettings() {
   const [settings, setSettings] = React.useState<AdminSettings | null>(null);
@@ -99,13 +112,217 @@ export function AdminGeneralSettings() {
         </p>
       </div>
 
+      <BrandingCard settings={settings} patch={patch} />
       <GeneralCard settings={settings} patch={patch} />
+      <RegistrationCard settings={settings} patch={patch} />
       <CaptchaCard settings={settings} patch={patch} />
       <MailCard settings={settings} patch={patch} />
       <AiCard settings={settings} patch={patch} />
       <VerificationCard settings={settings} patch={patch} />
       <ServerLimitsCard settings={settings} patch={patch} />
+      <SeoCard settings={settings} patch={patch} />
+      <AnalyticsCard settings={settings} patch={patch} />
     </div>
+  );
+}
+
+// --- Branding -----------------------------------------------------------------
+
+function BrandingCard({
+  settings,
+  patch,
+}: {
+  settings: AdminSettings;
+  patch: (update: AdminSettingsUpdate) => Promise<AdminSettings>;
+}) {
+  const [siteName, setSiteName] = React.useState(settings.branding.siteName);
+  const [tagline, setTagline] = React.useState(settings.branding.tagline);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [saved, setSaved] = React.useState(false);
+
+  const save = async () => {
+    setLoading(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await patch({ branding: { siteName: siteName.trim(), tagline: tagline.trim() } });
+      setSaved(true);
+      // The name is baked into the server-rendered header, the document title,
+      // and outbound email, so a reload is what actually makes the change
+      // visible everywhere rather than just in this form.
+      window.location.reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save the branding.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const unchanged =
+    siteName.trim() === settings.branding.siteName &&
+    tagline.trim() === settings.branding.tagline;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Type className="size-4" />
+          Site identity
+        </CardTitle>
+        <CardDescription>
+          The name shown in the header, on the sign-in page, in every browser tab
+          title, and in outbound email.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <Field>
+          <FieldLabel htmlFor="site-name">Site name</FieldLabel>
+          <Input
+            id="site-name"
+            value={siteName}
+            onChange={(e) => setSiteName(e.target.value)}
+            placeholder="CitadelPanel"
+            maxLength={64}
+          />
+          <FieldDescription>
+            Page titles read &ldquo;Console ·{" "}
+            {siteName.trim() || "CitadelPanel"}&rdquo;.
+          </FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="site-tagline">Tagline</FieldLabel>
+          <Input
+            id="site-tagline"
+            value={tagline}
+            onChange={(e) => setTagline(e.target.value)}
+            placeholder="Self-hosted game server management."
+            maxLength={160}
+          />
+          <FieldDescription>
+            One line under the name on the sign-in page. Also the fallback meta
+            description when the SEO description below is empty.
+          </FieldDescription>
+        </Field>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {saved && !error && (
+          <p className="text-sm text-emerald-600 dark:text-emerald-400">Saved.</p>
+        )}
+        <div>
+          <Button onClick={save} disabled={loading || unchanged || !siteName.trim()}>
+            {loading && <Spinner />}
+            Save site identity
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// --- Registration -------------------------------------------------------------
+
+function RegistrationCard({
+  settings,
+  patch,
+}: {
+  settings: AdminSettings;
+  patch: (update: AdminSettingsUpdate) => Promise<AdminSettings>;
+}) {
+  const [enabled, setEnabled] = React.useState(settings.registration.enabled);
+  const [message, setMessage] = React.useState(
+    settings.registration.disabledMessage,
+  );
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [saved, setSaved] = React.useState(false);
+
+  const save = async () => {
+    setLoading(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await patch({
+        registration: { enabled, disabledMessage: message.trim() },
+      });
+      setSaved(true);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Could not save the setting.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const unchanged =
+    enabled === settings.registration.enabled &&
+    message.trim() === settings.registration.disabledMessage;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <UserPlus className="size-4" />
+          Registration
+        </CardTitle>
+        <CardDescription>
+          Whether visitors may create their own accounts. Turning this off makes
+          the panel invite-only: the sign-up endpoint refuses, not just the form.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <FieldGroup>
+          <Field orientation="horizontal">
+            <div className="flex flex-1 flex-col gap-0.5">
+              <FieldLabel htmlFor="registration-enabled">
+                Allow public sign-up
+              </FieldLabel>
+              <FieldDescription>
+                When off, the &ldquo;Create account&rdquo; tab disappears and{" "}
+                <code>/api/auth/sign-up/email</code> returns 403. Existing users
+                are unaffected, and first-time setup can still claim the initial
+                admin account.
+              </FieldDescription>
+            </div>
+            <Switch
+              id="registration-enabled"
+              checked={enabled}
+              onCheckedChange={setEnabled}
+            />
+          </Field>
+
+          {!enabled && (
+            <Field>
+              <FieldLabel htmlFor="registration-message">
+                Message on the sign-in page
+              </FieldLabel>
+              <Input
+                id="registration-message"
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Registration is closed. Ask an administrator for an account."
+                maxLength={240}
+              />
+              <FieldDescription>
+                Shown where the sign-up tab would be, and returned as the error
+                if someone posts to the endpoint anyway. Use it to point people
+                at however they actually get an account.
+              </FieldDescription>
+            </Field>
+          )}
+        </FieldGroup>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {saved && !error && (
+          <p className="text-sm text-emerald-600 dark:text-emerald-400">Saved.</p>
+        )}
+        <div>
+          <Button onClick={save} disabled={loading || unchanged}>
+            {loading && <Spinner />}
+            Save registration
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -981,6 +1198,350 @@ function ServerLimitsCard({
           <Button onClick={save} disabled={loading || unchanged}>
             {loading && <Spinner />}
             Save server limits
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// --- SEO ----------------------------------------------------------------------
+
+function SeoCard({
+  settings,
+  patch,
+}: {
+  settings: AdminSettings;
+  patch: (update: AdminSettingsUpdate) => Promise<AdminSettings>;
+}) {
+  const s = settings.seo;
+  const [allowIndexing, setAllowIndexing] = React.useState(s.allowIndexing);
+  const [siteUrl, setSiteUrl] = React.useState(s.siteUrl ?? "");
+  const [description, setDescription] = React.useState(s.description);
+  const [keywords, setKeywords] = React.useState(s.keywords.join(", "));
+  const [ogImageUrl, setOgImageUrl] = React.useState(s.ogImageUrl ?? "");
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [saved, setSaved] = React.useState(false);
+
+  const parsedKeywords = keywords
+    .split(",")
+    .map((k) => k.trim())
+    .filter(Boolean);
+
+  const save = async () => {
+    setLoading(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await patch({
+        seo: {
+          allowIndexing,
+          siteUrl: siteUrl.trim() || null,
+          description: description.trim(),
+          keywords: parsedKeywords,
+          ogImageUrl: ogImageUrl.trim() || null,
+        },
+      });
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save SEO settings.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const unchanged =
+    allowIndexing === s.allowIndexing &&
+    (siteUrl.trim() || null) === s.siteUrl &&
+    description.trim() === s.description &&
+    parsedKeywords.join(",") === s.keywords.join(",") &&
+    (ogImageUrl.trim() || null) === s.ogImageUrl;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Globe className="size-4" />
+          Search engines &amp; sharing
+        </CardTitle>
+        <CardDescription>
+          What crawlers and link previews see. The page title comes from the site
+          name above; these fields fill in the rest.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <FieldGroup>
+          <Field orientation="horizontal">
+            <div className="flex flex-1 flex-col gap-0.5">
+              <FieldLabel htmlFor="seo-indexing">
+                Allow search engines to index this panel
+              </FieldLabel>
+              <FieldDescription>
+                Off by default. A control panel is an authenticated surface with
+                nothing to rank, and indexed URLs advertise that this host runs
+                one. When off, <code>robots.txt</code> is <code>Disallow: /</code>{" "}
+                and every page carries <code>noindex</code>. Turn it on only if
+                you want the sign-in page and your legal documents listed.
+              </FieldDescription>
+            </div>
+            <Switch
+              id="seo-indexing"
+              checked={allowIndexing}
+              onCheckedChange={setAllowIndexing}
+            />
+          </Field>
+
+          <Field>
+            <FieldLabel htmlFor="seo-site-url">Public site URL</FieldLabel>
+            <Input
+              id="seo-site-url"
+              value={siteUrl}
+              onChange={(e) => setSiteUrl(e.target.value)}
+              placeholder="https://panel.example.com"
+              maxLength={512}
+              autoComplete="off"
+            />
+            <FieldDescription>
+              The origin visitors actually reach. Used for canonical and preview
+              URLs and in <code>sitemap.xml</code>. Falls back to{" "}
+              <code>FRONTEND_URL</code> when blank.
+            </FieldDescription>
+          </Field>
+
+          <Field>
+            <FieldLabel htmlFor="seo-description">Description</FieldLabel>
+            <Input
+              id="seo-description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder={settings.branding.tagline || "A short description of your service."}
+              maxLength={300}
+            />
+            <FieldDescription>
+              The meta and link-preview description. Defaults to the tagline.
+            </FieldDescription>
+          </Field>
+
+          <Field>
+            <FieldLabel htmlFor="seo-keywords">Keywords</FieldLabel>
+            <Input
+              id="seo-keywords"
+              value={keywords}
+              onChange={(e) => setKeywords(e.target.value)}
+              placeholder="game hosting, minecraft, server panel"
+            />
+            <FieldDescription>
+              Comma-separated, up to 20. Most search engines ignore these; they
+              are here for the ones that do not.
+            </FieldDescription>
+          </Field>
+
+          <Field>
+            <FieldLabel htmlFor="seo-og-image">Social preview image</FieldLabel>
+            <Input
+              id="seo-og-image"
+              value={ogImageUrl}
+              onChange={(e) => setOgImageUrl(e.target.value)}
+              placeholder="/og.png or https://cdn.example.com/og.png"
+              maxLength={512}
+              autoComplete="off"
+            />
+            <FieldDescription>
+              Shown when a link to the panel is shared. A relative path resolves
+              against the site URL above; 1200×630 is the usual size.
+            </FieldDescription>
+          </Field>
+        </FieldGroup>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {saved && !error && (
+          <p className="text-sm text-emerald-600 dark:text-emerald-400">Saved.</p>
+        )}
+        <div>
+          <Button onClick={save} disabled={loading || unchanged}>
+            {loading && <Spinner />}
+            Save SEO settings
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// --- Analytics ----------------------------------------------------------------
+
+function AnalyticsCard({
+  settings,
+  patch,
+}: {
+  settings: AdminSettings;
+  patch: (update: AdminSettingsUpdate) => Promise<AdminSettings>;
+}) {
+  const a = settings.analytics;
+  const [enabled, setEnabled] = React.useState(a.enabled);
+  const [provider, setProvider] = React.useState<AnalyticsProvider | null>(
+    a.provider,
+  );
+  const [plausibleDomain, setPlausibleDomain] = React.useState(
+    a.plausibleDomain ?? "",
+  );
+  const [plausibleScriptUrl, setPlausibleScriptUrl] = React.useState(
+    a.plausibleScriptUrl ?? "",
+  );
+  const [googleMeasurementId, setGoogleMeasurementId] = React.useState(
+    a.googleMeasurementId ?? "",
+  );
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [saved, setSaved] = React.useState(false);
+
+  const save = async () => {
+    setLoading(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await patch({
+        analytics: {
+          enabled,
+          provider,
+          plausibleDomain: plausibleDomain.trim() || null,
+          plausibleScriptUrl: plausibleScriptUrl.trim() || null,
+          googleMeasurementId: googleMeasurementId.trim() || null,
+        },
+      });
+      setSaved(true);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Could not save analytics settings.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ChartLine className="size-4" />
+          Analytics
+        </CardTitle>
+        <CardDescription>
+          Optional page-view analytics. When off, the panel loads no third-party
+          script at all — not a disabled one.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <FieldGroup>
+          <Field orientation="horizontal">
+            <div className="flex flex-1 flex-col gap-0.5">
+              <FieldLabel htmlFor="analytics-enabled">Enable analytics</FieldLabel>
+              <FieldDescription>
+                Injects the provider&apos;s script into every page, including the
+                sign-in page.
+              </FieldDescription>
+            </div>
+            <Switch
+              id="analytics-enabled"
+              checked={enabled}
+              onCheckedChange={setEnabled}
+            />
+          </Field>
+
+          {enabled && (
+            <>
+              <Field>
+                <FieldLabel htmlFor="analytics-provider">Provider</FieldLabel>
+                <Select
+                  value={provider ?? ""}
+                  onValueChange={(v) => setProvider((v as AnalyticsProvider) || null)}
+                >
+                  <SelectTrigger id="analytics-provider" className="w-full">
+                    <SelectValue placeholder="Choose a provider" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="plausible">Plausible</SelectItem>
+                    <SelectItem value="google">Google Analytics 4</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+
+              {provider === "plausible" && (
+                <>
+                  <Field>
+                    <FieldLabel htmlFor="analytics-plausible-domain">
+                      Site domain
+                    </FieldLabel>
+                    <Input
+                      id="analytics-plausible-domain"
+                      value={plausibleDomain}
+                      onChange={(e) => setPlausibleDomain(e.target.value)}
+                      placeholder="panel.example.com"
+                      maxLength={253}
+                      autoComplete="off"
+                    />
+                    <FieldDescription>
+                      Exactly as registered in Plausible — this becomes the
+                      script&apos;s <code>data-domain</code>.
+                    </FieldDescription>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="analytics-plausible-script">
+                      Script URL
+                    </FieldLabel>
+                    <Input
+                      id="analytics-plausible-script"
+                      value={plausibleScriptUrl}
+                      onChange={(e) => setPlausibleScriptUrl(e.target.value)}
+                      placeholder="https://plausible.io/js/script.js"
+                      maxLength={512}
+                      autoComplete="off"
+                    />
+                    <FieldDescription>
+                      Point this at your own instance if you self-host Plausible.
+                      Blank uses plausible.io.
+                    </FieldDescription>
+                  </Field>
+                </>
+              )}
+
+              {provider === "google" && (
+                <Field>
+                  <FieldLabel htmlFor="analytics-ga-id">Measurement ID</FieldLabel>
+                  <Input
+                    id="analytics-ga-id"
+                    value={googleMeasurementId}
+                    onChange={(e) => setGoogleMeasurementId(e.target.value)}
+                    placeholder="G-XXXXXXXXXX"
+                    maxLength={64}
+                    autoComplete="off"
+                  />
+                  <FieldDescription>
+                    A GA4 measurement id. Container (<code>GTM-</code>) and legacy
+                    (<code>UA-</code>) ids are not supported. Google Analytics
+                    sets cookies and shares data with Google — in many
+                    jurisdictions that needs consent, and needs saying in your{" "}
+                    <a
+                      href="/admin/legal"
+                      className="underline underline-offset-4 hover:text-primary"
+                    >
+                      privacy policy
+                    </a>
+                    .
+                  </FieldDescription>
+                </Field>
+              )}
+            </>
+          )}
+        </FieldGroup>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {saved && !error && (
+          <p className="text-sm text-emerald-600 dark:text-emerald-400">Saved.</p>
+        )}
+        <div>
+          <Button onClick={save} disabled={loading}>
+            {loading && <Spinner />}
+            {enabled ? "Save analytics" : "Save (analytics off)"}
           </Button>
         </div>
       </CardContent>
