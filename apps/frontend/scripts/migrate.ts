@@ -9,6 +9,7 @@ import { loadRepositoryEnv } from "../lib/server/control-plane/config/load-repos
 // in the db client (a connect-on-import side effect) before env is loaded here.
 import { minecraftBedrock } from "../lib/server/control-plane/blueprints/definitions/minecraft-bedrock";
 import { minecraftJava } from "../lib/server/control-plane/blueprints/definitions/minecraft-java";
+import { velocity } from "../lib/server/control-plane/blueprints/definitions/velocity";
 
 loadRepositoryEnv();
 
@@ -54,7 +55,7 @@ for (const file of files) {
   });
 }
 
-for (const bp of [minecraftJava, minecraftBedrock]) {
+for (const bp of [minecraftJava, minecraftBedrock, velocity]) {
   await sql`
     INSERT INTO blueprints (
       key, name, description, docker_image, default_ports, env_schema,

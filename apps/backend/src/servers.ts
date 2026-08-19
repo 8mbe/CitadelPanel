@@ -74,14 +74,12 @@ export interface CreateContainerRequest {
 }
 
 /**
- * Resolve a server's container id from its deterministic name.
+ * Resolve a container id from an exact name.
  *
- * Returns null when the container does not exist, which is a normal state
- * (never created, or already removed) rather than an error.
+ * Returns null when no such container exists, which is a normal state (never
+ * created, or already removed) rather than an error.
  */
-export async function findContainerId(serverId: string): Promise<string | null> {
-  const name = serverContainerName(serverId);
-
+async function findContainerIdByName(name: string): Promise<string | null> {
   // Docker's name filter is a substring match, so the exact name is re-checked
   // below; `/name` is how the daemon reports it.
   const matches = await docker.listContainers({
@@ -95,11 +93,31 @@ export async function findContainerId(serverId: string): Promise<string | null> 
   return exact?.Id ?? null;
 }
 
-/** Resolve a container id, throwing 404 when the server has no container. */
+/**
+ * Resolve a server's container id from its deterministic name.
+ *
+ * Returns null when the container does not exist, which is a normal state
+ * (never created, or already removed) rather than an error.
+ */
+export async function findContainerId(serverId: string): Promise<string | null> {
+  return findContainerIdByName(serverContainerName(serverId));
+}
+
+/**
+ * Resolve a container id, throwing 404 when the server has no container.
+ *
+ * Tagged `no_container` because this 404 is the one callers act on rather than
+ * just show: the panel rebuilds the container from its stored spec, and the
+ * console tells the viewer a rebuild is coming instead of printing a Docker
+ * fact at them.
+ */
 async function requireContainerId(serverId: string): Promise<string> {
   const containerId = await findContainerId(serverId);
   if (!containerId) {
-    throw notFound(`No container exists on this node for server ${serverId}.`);
+    throw notFound(
+      `No container exists on this node for server ${serverId}.`,
+      "no_container",
+    );
   }
   return containerId;
 }
@@ -207,6 +225,48 @@ export async function installServer(
   }
 
   return { exitCode, logs };
+}
+
+/**
+ * Read the install container's output while the script is still running.
+ *
+ * {@link installServer} only returns once the script has exited, and it removes
+ * the container afterwards — so its return value is the *post-mortem*. This is
+ * the live view: the panel polls it while a provision is in flight so an admin
+ * can watch a slow download instead of staring at a spinner.
+ *
+ * `running: false` with empty logs is the normal answer both before the
+ * container exists (the install image is still being pulled) and after it has
+ * been cleaned up. Neither is an error — the panel holds the durable copy of
+ * the output, and this endpoint only ever adds the tail that has not been
+ * captured yet.
+ */
+export async function getServerInstallLogs(
+  serverId: string,
+  tail = 200,
+): Promise<{ logs: string; running: boolean }> {
+  const containerId = await findContainerIdByName(
+    serverInstallContainerName(serverId),
+  );
+  if (!containerId) return { logs: "", running: false };
+
+  const state = await inspectContainerState(docker, containerId);
+  if (state === "missing") return { logs: "", running: false };
+
+  try {
+    return {
+      logs: await getContainerLogs(docker, containerId, tail),
+      running: state === "running",
+    };
+  } catch (error) {
+    // The install finished and the container was removed between the inspect
+    // and the log read. An empty tail is the honest answer: the panel already
+    // holds every line the finished run produced.
+    if ((error as { statusCode?: number }).statusCode === 404) {
+      return { logs: "", running: false };
+    }
+    throw error;
+  }
 }
 
 export async function startServerContainer(serverId: string): Promise<void> {

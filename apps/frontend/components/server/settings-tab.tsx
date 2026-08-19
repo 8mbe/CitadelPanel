@@ -22,6 +22,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ConnectedServersCard } from "@/components/server/connected-servers-card";
+import { ReinstallServerCard } from "@/components/server/reinstall-server-card";
 import { useServerData } from "@/components/server/server-data-context";
 import {
   ApiError,
@@ -51,6 +52,12 @@ function Allocation({ label, value }: { label: string; value: string }) {
  * blueprint marks `editable` are the one exception: the owner (and subusers with
  * `settings`) may override those after creation.
  *
+ * Reinstalling is the one destructive action on this page, and it sits at the
+ * bottom of General rather than in a tab of its own — a tab would be a place to
+ * arrive at, and this is a thing to scroll past. It renders for owners and
+ * admins only, so a subuser with `settings` can retune the game without being
+ * able to erase it.
+ *
  * Panels stay mounted (Base UI default), so the env and links fetches fire on
  * mount exactly as they did when everything was on one page.
  */
@@ -64,7 +71,7 @@ export function SettingsTab() {
         <TabsTrigger value="environment">Environment</TabsTrigger>
         <TabsTrigger value="connections">Connections</TabsTrigger>
       </TabsList>
-      <TabsContent value="general" className="mt-4">
+      <TabsContent value="general" className="mt-4 flex flex-col gap-4">
         <Card>
           <CardHeader>
             <CardTitle>General</CardTitle>
@@ -79,6 +86,8 @@ export function SettingsTab() {
             />
           </CardContent>
         </Card>
+        {/* Last on the page, and owner-only: it hides itself for subusers. */}
+        <ReinstallServerCard />
       </TabsContent>
       <TabsContent value="environment" className="mt-4">
         <EnvironmentCard serverId={server.id} />

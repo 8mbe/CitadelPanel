@@ -154,7 +154,7 @@ export function CreateServerDialog({
       setError(
         err instanceof ApiError
           ? err.message
-          : "Provisioning failed. Check the backend logs and try again.",
+          : "The server could not be created. Check the backend logs and try again.",
       );
     } finally {
       setSubmitting(false);
@@ -171,8 +171,10 @@ export function CreateServerDialog({
         <DialogHeader>
           <DialogTitle>Provision a server</DialogTitle>
           <DialogDescription>
-            Create a game server on behalf of a user. The server appears on their
-            &quot;Your servers&quot; page once provisioning completes.
+            Create a game server on behalf of a user. The server is created
+            right away and then installs on its node in the background — open it
+            to follow the install log. The owner sees an &quot;installing&quot;
+            notice until it is ready to start.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="flex flex-col gap-4">

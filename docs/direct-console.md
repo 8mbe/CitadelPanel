@@ -36,6 +36,23 @@ The agent stays **stateless**: it pulls validation per-connection rather than
 holding a session map. Postgres (`console_sessions`) is the source of truth,
 which gives instant revocation and survives agent restarts.
 
+## When the attach fails
+
+An attach that never gets off the ground is reported to the browser as
+`{type:"error", message, code?}` and then the socket closes — a console that
+silently shows nothing is worse than one that says why. The optional `code` is
+the machine-readable half of the agent's `HttpError`: the message is written
+for a human, the code is what the browser branches on, so its handling does not
+depend on matching an English sentence (and an older agent that sends no code
+just falls back to printing the message).
+
+The one code so far is **`no_container`**: the node has no container for this
+server. The console renders that as *"Please wait, rebuilding container…"*
+rather than the agent's Docker fact, because it is a state the panel repairs —
+the next power action rebuilds the container from the stored spec (see
+[server-lifecycle.md](server-lifecycle.md)) — and the console's own reconnect
+loop attaches to the new container when it comes up, with no page reload.
+
 ## Requirements
 
 - **The agent must be browser-reachable** at a `wss://` (or `ws://`) URL. In the
