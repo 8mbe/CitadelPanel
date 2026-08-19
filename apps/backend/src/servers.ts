@@ -95,11 +95,21 @@ export async function findContainerId(serverId: string): Promise<string | null> 
   return exact?.Id ?? null;
 }
 
-/** Resolve a container id, throwing 404 when the server has no container. */
+/**
+ * Resolve a container id, throwing 404 when the server has no container.
+ *
+ * Tagged `no_container` because this 404 is the one callers act on rather than
+ * just show: the panel rebuilds the container from its stored spec, and the
+ * console tells the viewer a rebuild is coming instead of printing a Docker
+ * fact at them.
+ */
 async function requireContainerId(serverId: string): Promise<string> {
   const containerId = await findContainerId(serverId);
   if (!containerId) {
-    throw notFound(`No container exists on this node for server ${serverId}.`);
+    throw notFound(
+      `No container exists on this node for server ${serverId}.`,
+      "no_container",
+    );
   }
   return containerId;
 }

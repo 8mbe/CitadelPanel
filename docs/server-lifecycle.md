@@ -81,10 +81,11 @@ exists.
   409 telling the owner it may be provisioning or have failed to create.
   Provisioning failures deserve the operator's eyes, not an automatic retry
   loop.
-- **The console and log streams.** They 404 with the same message when the
-  container is missing; the console shows it as a terminal event rather than
-  rebuilding a container behind a viewer's back
-  ([direct-console.md](direct-console.md)).
+- **The console and log streams.** Opening a console does not rebuild anything
+  behind a viewer's back. The agent tags that failure `no_container`, so the
+  console prints *"Please wait, rebuilding container…"* instead of the raw
+  404 and keeps reconnecting until the container the operator's next start
+  rebuilds comes up ([direct-console.md](direct-console.md)).
 - **Status polling.** `reconcileServerStatus` maps a missing container to
   `error` and stops there. Reads never create infrastructure — the rebuild
   happens on the power action the operator deliberately took.

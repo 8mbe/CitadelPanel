@@ -702,7 +702,10 @@ const server = Bun.serve<ConsoleSocket, never>({
             error instanceof HttpError
               ? error.message
               : "Internal agent error";
-          const body = sseFromEvents([{ type: "console", message }]);
+          // Same tagging as the WebSocket error frame: a `no_container` failure
+          // is one the reader can act on, not just read.
+          const code = error instanceof HttpError ? error.code : undefined;
+          const body = sseFromEvents([{ type: "console", message, code }]);
           return new Response(body, { headers: SSE_HEADERS });
         }
       }),
@@ -1080,7 +1083,11 @@ const server = Bun.serve<ConsoleSocket, never>({
         ws.send(JSON.stringify({ type: "ready" }));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        ws.send(JSON.stringify({ type: "error", message }));
+        // The code travels with the message so the browser can say something
+        // useful about a known failure (a missing container is about to be
+        // rebuilt) instead of echoing the agent's wording.
+        const code = error instanceof HttpError ? error.code : undefined;
+        ws.send(JSON.stringify({ type: "error", message, code }));
         ws.close();
       }
     },

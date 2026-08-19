@@ -8,6 +8,13 @@ export class HttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /**
+     * Machine-readable tag for the failures a caller reacts to rather than just
+     * displays (`no_container` so far). The message stays the human's version;
+     * this is what the panel and the browser branch on, so their handling does
+     * not depend on matching an English sentence.
+     */
+    readonly code?: string,
   ) {
     super(message);
     this.name = "HttpError";
@@ -18,7 +25,8 @@ export const badRequest = (message: string) => new HttpError(400, message);
 export const unauthorized = (message = "Authentication required") =>
   new HttpError(401, message);
 export const forbidden = (message = "Forbidden") => new HttpError(403, message);
-export const notFound = (message = "Not found") => new HttpError(404, message);
+export const notFound = (message = "Not found", code?: string) =>
+  new HttpError(404, message, code);
 export const conflict = (message: string) => new HttpError(409, message);
 export const payloadTooLarge = (message: string) => new HttpError(413, message);
 /**
@@ -187,7 +195,10 @@ export function noContent(): Response {
  */
 export function toErrorResponse(error: unknown): Response {
   if (error instanceof HttpError) {
-    return json({ error: error.message }, error.status);
+    return json(
+      error.code ? { error: error.message, code: error.code } : { error: error.message },
+      error.status,
+    );
   }
 
   console.error("[agent] unhandled error:", error);
