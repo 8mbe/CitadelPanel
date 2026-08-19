@@ -20,6 +20,7 @@ import { join } from "node:path";
 process.env.AGENT_TOKEN ??= "test-agent-token-that-is-long-enough-0123456789";
 
 const {
+  directoryOwner,
   ensureDirectory,
   explainDataRootError,
   probeDirectoryWritable,
@@ -108,5 +109,23 @@ describe("explainDataRootError", () => {
 
   test("falls back to the supplied path when the error carries none", () => {
     expect(explainDataRootError(new Error("boom"), root)).toContain(root);
+  });
+});
+
+describe("directoryOwner", () => {
+  test("reports the owner of the directory, not the agent's assumption", async () => {
+    const path = join(root, "owned");
+    await ensureDirectory(path, "a data directory");
+    const info = await stat(path);
+
+    expect(await directoryOwner(path)).toBe(`${info.uid}:${info.gid}`);
+  });
+
+  test("falls back to the agent's own ids when the path cannot be read", async () => {
+    // The install container has to be given *some* user; refusing to answer here
+    // would turn an unstattable directory into a provision that never starts.
+    expect(await directoryOwner(join(root, "does-not-exist"))).toBe(
+      `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`,
+    );
   });
 });

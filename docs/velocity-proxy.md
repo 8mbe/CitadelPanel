@@ -88,14 +88,14 @@ mounted) writes:
   as an unexplained kick.
 - **the bind patch**, unconditionally, so a re-provision repairs it.
 
-The script runs as root, and — like every container the agent creates — under
-`CapDrop: ALL`. Without `CAP_CHOWN` it cannot hand its files to the uid that
-runs the proxy, so it sets `umask 0000` instead: root-owned, but writable by
-uid 1000 and therefore by the container, the file editor and SFTP. The runtime
-container is pinned to `1000:1000` with `SKIP_PRIVILEGE_DROP` /
-`SKIP_CHOWN_DATA` set, for the same reason the Minecraft blueprints set
-`SKIP_SUDO` — the image's own `runuser`/`chown` dance needs capabilities the
-panel drops.
+The script does not run as root: the agent pins the install container to the uid
+that owns the server's data directory (see
+[server-lifecycle.md](server-lifecycle.md#who-the-install-container-runs-as)).
+That is why it contains no `chown` and no `umask` — what it writes is already
+owned by the account that has to keep using it. The runtime container is pinned
+to `1000:1000` with `SKIP_PRIVILEGE_DROP` / `SKIP_CHOWN_DATA` set, for the same
+reason the Minecraft blueprints set `SKIP_SUDO` — the image's own
+`runuser`/`chown` dance needs capabilities the panel drops.
 
 ## Connecting backends
 

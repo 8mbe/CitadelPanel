@@ -76,10 +76,13 @@ describe("install script", () => {
     expect(script).toContain("head -c 32 > forwarding.secret");
   });
 
-  test("leaves what it creates writable by the runtime uid", () => {
-    // The install container runs as root under CapDrop: ALL, so it cannot chown
-    // to the uid the proxy and the panel's file tools use.
-    expect(script).toContain("umask 0000");
+  test("does not try to fix up ownership itself", () => {
+    // The agent runs the install container as the data directory's owner, so
+    // what the script writes is already owned by the uid the proxy and the
+    // panel's file tools use. Working around that here — a chown it has no
+    // CAP_CHOWN for, or a world-writable umask — would only widen the mode.
+    expect(script).not.toContain("umask");
+    expect(script).not.toContain("chown");
     expect(velocity.user).toBe("1000:1000");
   });
 });

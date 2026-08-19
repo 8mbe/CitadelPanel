@@ -76,6 +76,30 @@ there and still provisioning (`deleteServer` writes `deleting` before it touches
 the node, so an in-flight delete is caught too). A provision that finds otherwise
 stops without writing `error` — it did not fail, it was abandoned.
 
+### Who the install container runs as
+
+Not root — the agent pins it to the `uid:gid` that owns the server's data
+directory, read off the directory itself rather than assumed.
+
+An install container is hardened like every other one the agent creates, and
+`CapDrop: ALL` takes `CAP_DAC_OVERRIDE` with it. That is the capability that
+makes uid 0 the root which ignores permission bits, so without it a nominally
+root install container gets plain "other" access to a data directory the agent
+created as itself — and mode 0755 means its very first write fails with
+`Permission denied`. It has no `CAP_CHOWN` either, so it cannot give away
+what it does manage to write.
+
+Both problems disappear if it simply starts as the owner. Blueprints then have
+no ownership work to do at all: no `chown` they lack the capability for, and no
+permissive `umask` widening the mode of every file to buy write access the
+right uid already has.
+
+The owner is read at install time rather than fixed at 1000 because it is a
+per-node fact — whatever uid that node's agent runs as. This is the same
+reasoning as a blueprint's `run_as` (`docs/` on blueprints, and migration
+`007_blueprint_run_as.sql`), applied to the one container a blueprint does not
+get to configure.
+
 ## The install log, and who reads it
 
 The install container is removed the moment its script exits, so its output has

@@ -45,15 +45,16 @@ const PORT_ENV = "CFG_PROXY_PORT";
 /**
  * First-launch provisioning.
  *
- * Runs as root in a throwaway alpine container with the server's data dir
- * mounted at `/server`. It cannot `chown` what it creates — the install
- * container is hardened like every other one (`CapDrop: ALL`, so no
- * `CAP_CHOWN`) — hence the permissive umask: root-owned files that the proxy
- * (uid 1000) and the panel's own file tools must still be able to rewrite.
+ * Runs in a throwaway alpine container with the server's data dir mounted at
+ * `/server`, as the uid that owns that directory rather than as root — the
+ * agent pins it there, because a hardened container's uid 0 has no
+ * `CAP_DAC_OVERRIDE` to write into someone else's directory and no `CAP_CHOWN`
+ * to give the result away afterwards. So the files this writes are already
+ * owned by the account the proxy, the file editor and SFTP use: no `chown`, no
+ * permissive umask, nothing to clean up.
  */
 const installScript = `set -eu
 cd /server
-umask 0000
 
 # Velocity's modern forwarding needs a shared secret, and a well-known default
 # would let anyone spoof a backend connection — so each server gets its own.
