@@ -77,6 +77,10 @@ Existing docs:
 - `docs/server-links.md` — connecting a server to another of the owner's
   servers: the pairwise ICC-enabled link networks, stable container-name
   addresses (never container IPs), and cross-node public addresses.
+- `docs/velocity-proxy.md` — the built-in Velocity proxy blueprint: why its
+  listen port is patched into `velocity.toml` instead of injected as env, what
+  the install step seeds (and which two keys stop Velocity booting into its own
+  examples), and how backends are wired to it.
 - `docs/plugins.md` — blueprint-declared plugin/mod support: the provider
   fetch spec (data, never code), the fetch engine's host pinning, and the
   pre-start auto-updater.

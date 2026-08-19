@@ -15,7 +15,10 @@ Everything lives in the blueprint's `plugins` section, as pure JSON data:
   game version. Profiles can be **static** (one `default`) or **env-driven**
   (`envField` + `variants`): minecraft-java keys off `TYPE`, so a Paper server
   gets "Plugins" into `plugins/`, a Fabric server gets "Mods" into `mods/`,
-  and a vanilla server gets no tab at all (VANILLA has no variant).
+  and a vanilla server gets no tab at all (VANILLA has no variant). The
+  `velocity` blueprint is the static case — a proxy only ever loads Velocity
+  plugins from `plugins/`, so there is nothing to switch on
+  (`velocity-proxy.md`).
 - **Provider fetch spec** — how to talk to the catalog: the https API origin,
   endpoint path/query **templates** (`{query}`, `{projectId}`, `{loaders}`,
   `{facets}`, …), response field mappings as dot-paths, facet composition

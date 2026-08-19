@@ -15,6 +15,7 @@
 import { sql } from "../db/client";
 import { minecraftBedrock } from "./definitions/minecraft-bedrock";
 import { minecraftJava } from "./definitions/minecraft-java";
+import { velocity } from "./definitions/velocity";
 import type {
   Blueprint,
   BlueprintEnvField,
@@ -28,6 +29,7 @@ import type { BlueprintPluginSupport } from "./plugins";
 export const BUILT_IN_BLUEPRINTS: readonly Blueprint[] = [
   minecraftJava,
   minecraftBedrock,
+  velocity,
 ];
 
 /** The row shape of the `blueprints` table. */

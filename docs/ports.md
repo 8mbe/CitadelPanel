@@ -20,6 +20,9 @@ which env var carries the primary port to the game process
   `server.properties`' `server-port` from it)
 - `minecraft-bedrock` → `SERVER_PORT` (the itzg image rewrites
   `server.properties` from it, overriding manual edits — by design of the image)
+- `velocity` → `CFG_PROXY_PORT` (Velocity's listen address lives in
+  `velocity.toml`, not in any env var, so the proxy blueprint routes the number
+  through the image's start-time config patcher — see `velocity-proxy.md`)
 
 The panel sets that env var to the allocated primary port at create time and
 **re-syncs it on every container recreate** (`recreateServerContainer` in
