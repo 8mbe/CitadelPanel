@@ -60,6 +60,17 @@ export function viewerAllows(
 }
 
 /**
+ * Whether the viewer is the owner or an admin — the gate on the actions that are
+ * never delegable to a subuser, however many flags they hold: deleting a server,
+ * reinstalling it, and managing who else may reach it. Fails open on an
+ * undefined viewer, like {@link viewerAllows}.
+ */
+export function viewerIsOwner(viewer: ServerViewerAccess | undefined): boolean {
+  if (!viewer) return true;
+  return viewer.kind === "owner" || viewer.kind === "admin";
+}
+
+/**
  * Whether the viewer may open a server-page section. Like
  * {@link viewerAllows}, an undefined viewer means no access information came
  * with the record: the UI fails open and the API's 403 is the limit. When the
@@ -72,8 +83,6 @@ export function sectionAllowed(
   if (!viewer) return true;
   const required = SECTION_PERMISSIONS[section];
   if (required === null) return true;
-  if (required === "owner") {
-    return viewer.kind === "owner" || viewer.kind === "admin";
-  }
+  if (required === "owner") return viewerIsOwner(viewer);
   return viewerAllows(viewer, required);
 }

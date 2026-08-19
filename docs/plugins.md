@@ -123,6 +123,12 @@ outage or a single failed download logs a warning and the start proceeds. One
 summary audit row (`server.plugin.auto-update`) is written when anything
 changed.
 
+This is also why reinstalling a server deletes its `server_plugins` rows rather
+than leaving them: the jars are wiped with everything else, and rows pointing at
+files that no longer exist would have this pass re-download every one of them on
+the next start — a fresh install that quietly restores the plugins it was asked
+to remove. See [server-lifecycle.md](server-lifecycle.md).
+
 ## Permissions & auditing
 
 The tab and all plugin routes ride the `files` subuser permission (installing

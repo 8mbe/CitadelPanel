@@ -201,6 +201,20 @@ export interface ServerView {
   } | null;
 }
 
+/**
+ * A server's provisioning output, as the console shows it while a server is
+ * being built. Admin-only — see the install-log route.
+ */
+export interface ServerInstallLogView {
+  /** Panel phase lines plus the install script's own output, oldest first. */
+  log: string;
+  /** Whether the panel is still building this server. */
+  provisioning: boolean;
+  status: ServerStatus;
+  /** ISO timestamp of when the current (or last) provision started. */
+  startedAt: string | null;
+}
+
 // --- Plugins --------------------------------------------------------------------
 
 /** One installed plugin, as the plugins tab displays it. */

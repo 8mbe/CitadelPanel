@@ -17,6 +17,7 @@ import {
   Power,
   Puzzle,
   RefreshCw,
+  RotateCcw,
   Server,
   Settings,
   ShieldAlert,
@@ -80,6 +81,8 @@ export function actionMeta(action: string): ActionMeta {
       return { label: "Server restarted", category: "lifecycle", icon: RefreshCw };
     case "server.kill":
       return { label: "Server killed", category: "lifecycle", icon: Zap };
+    case "server.reinstall":
+      return { label: "Server reinstalled", category: "lifecycle", icon: RotateCcw };
     case "server.delete":
       return { label: "Server deleted", category: "lifecycle", icon: Trash2 };
     case "server.suspend":
@@ -425,6 +428,14 @@ function describeActionMetadata(
     }
     case "server.delete": {
       return meta.dataDeleted === true ? "data directory removed" : "data retained";
+    }
+    case "server.reinstall": {
+      // Worth spelling out on the row rather than leaving to the label: this is
+      // the entry someone reads when asking where a world went.
+      const key = str(meta.blueprintKey);
+      return key
+        ? `all files deleted · reinstalled from ${key}`
+        : "all files deleted";
     }
     case "server.suspend": {
       const reason = str(meta.reason);

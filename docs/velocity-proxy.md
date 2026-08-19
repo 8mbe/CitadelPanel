@@ -60,10 +60,18 @@ reject the file on the next start.
 
 ## What the install step seeds
 
+This blueprint is also why provisioning is asynchronous: it is the first one
+with both an install step and a large runtime image (`itzg/mc-proxy`), so a
+fresh node spends minutes pulling and installing before the container exists.
+Creating one returns immediately with the server `installing`, and the install
+log is where that time is visible — see
+[server-lifecycle.md](server-lifecycle.md).
+
 The patcher can only rewrite a `bind` that already exists, so the config cannot
 be left to Velocity's own first-boot generation — the first bind has to be
 right. The install step (a throwaway `alpine:3` container with the data dir
 mounted) writes:
+
 
 - **`velocity.toml`**, if absent: `config-version`, the allocated `bind`,
   `motd`, `show-max-players`, `online-mode`, `player-info-forwarding-mode =

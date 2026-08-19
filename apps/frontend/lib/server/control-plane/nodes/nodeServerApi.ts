@@ -132,6 +132,29 @@ export async function runServerInstall(
   });
 }
 
+/**
+ * The install container's output while its script is still running.
+ *
+ * {@link runServerInstall} returns the whole log, but only once the script has
+ * exited — which is the wrong shape for a console watching a provision happen.
+ * Short timeout: this is polled, and a slow node must not hold the poll open
+ * longer than the interval between polls.
+ *
+ * `running: false` with an empty log is normal, not an error: before the
+ * container exists the node is still pulling the install image, and after the
+ * script exits the container has already been removed.
+ */
+export async function getServerInstallLogs(
+  nodeId: string,
+  serverId: string,
+  tail = 500,
+): Promise<{ logs: string; running: boolean }> {
+  return nodeRequest(nodeId, `/v1/servers/${serverId}/install/logs`, {
+    query: { tail },
+    timeoutMs: 5000,
+  });
+}
+
 /** Stop a container, giving the game time to save before Docker sends SIGKILL. */
 export async function stopServerContainer(
   nodeId: string,

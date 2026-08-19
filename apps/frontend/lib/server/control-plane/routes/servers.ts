@@ -12,12 +12,16 @@
  *                        containers, so both must be the actor's)
  *   - databases       -> "database"
  *   - delete          -> owner or admin only (never delegable)
+ *   - reinstall       -> owner or admin only (never delegable), and the caller
+ *                        must name the server in the body
  *
  * Read endpoints gate on the same permission as their mutations — a subuser
  * granted only `console` sees the console (and the activity feed) and nothing
  * else. The detail view returns the caller's access (`viewer`) so the UI can
  * hide sections the caller cannot use; the API remains the enforcement point.
  */
+
+import { after } from "next/server";
 
 import {
   requireAuth,
@@ -59,6 +63,9 @@ import {
   removeServerDatabase,
   resetServerDatabasePassword,
   listServerDatabases,
+  readInstallLog,
+  reinstallServer,
+  waitForProvisioning,
 } from "../services/serverManager";
 import {
   createServerLink,
@@ -204,6 +211,55 @@ export async function handleDeleteServer(
   return noContent();
 }
 
+/**
+ * POST /api/servers/:id/reinstall — delete every file and build the server
+ * again from its blueprint.
+ *
+ * Owner-or-admin only, like delete: this destroys more of the owner's work than
+ * any other action in the panel and is not something a subuser with `settings`
+ * should be able to do on their behalf.
+ *
+ * The body must carry `confirmName`, matching the server's name exactly. That is
+ * not belt-and-braces on top of the UI's confirmation — it is the rule the UI's
+ * type-the-name box implements. Every other destructive endpoint here can be hit
+ * with an empty body, so a mis-routed retry, a stale tab replaying a request, or
+ * a script iterating the wrong list can fire one; this one cannot be reached
+ * without naming the exact server whose files are about to go.
+ */
+export async function handleReinstallServer(
+  request: Request,
+  serverId: string,
+): Promise<Response> {
+  const id = requireUuidParam(serverId, "serverId");
+  const { user } = await requireServerOwner(request, id);
+
+  const body = await parseJsonBody(request);
+  const confirmName = body.confirmName;
+  if (typeof confirmName !== "string") {
+    throw badRequest(
+      '"confirmName" must be the server\'s name, to confirm the reinstall.',
+    );
+  }
+
+  // Read the name before anything is touched, and compare it as typed (trimmed
+  // only for stray whitespace). A mismatch changes nothing.
+  const current = await getServer(id);
+  if (confirmName.trim() !== current.name) {
+    throw badRequest(
+      "That is not this server's name, so nothing was changed. Type the name " +
+        "exactly as it is shown to confirm the reinstall.",
+    );
+  }
+
+  const server = await reinstallServer(id, user.id);
+
+  // The rebuild outlives this response (see serverManager.reinstallServer), so
+  // the runtime is told to keep it alive — exactly as the create path does.
+  after(() => waitForProvisioning(id));
+
+  return json({ server });
+}
+
 /** GET /api/servers/:id/env — masked environment variables the owner may edit. */
 export async function handleGetServerEnv(
   request: Request,
@@ -238,6 +294,35 @@ export async function handleGetServerLogs(
   const logs = await getServerLogs(server.node_id, id, tail);
 
   return json({ logs });
+}
+
+/**
+ * GET /api/servers/:id/install-log — the provisioning output.
+ *
+ * Admin-only, and not because the log is secret in the usual sense: it is the
+ * install script's stdout, and a blueprint's script is written by whoever
+ * registered the blueprint. It can name internal image registries, echo an env
+ * value, or print a node-side path — operator detail, not owner detail. The
+ * owner does not need it either. What they need to know is "this is still
+ * installing", which the status already says; *why* an install failed is an
+ * operator's problem to read and act on.
+ *
+ * `requireServerPermission` first so a non-admin with no relationship to the
+ * server still gets the 404 that hides its existence, rather than a 403 that
+ * confirms it.
+ */
+export async function handleGetServerInstallLog(
+  request: Request,
+  serverId: string,
+): Promise<Response> {
+  const id = requireUuidParam(serverId, "serverId");
+  const { access } = await requireServerPermission(request, id, "console");
+  if (access.kind !== "admin") {
+    throw forbidden("Only an administrator can read a server's install log.");
+  }
+
+  const view = await readInstallLog(id);
+  return json({ installLog: view });
 }
 
 /** GET /api/servers/:id/stats — a live resource sample. */

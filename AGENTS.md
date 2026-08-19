@@ -67,10 +67,11 @@ Existing docs:
   what each gates (API and UI), and the reads-gate-with-writes rule.
 - `docs/file-editor.md` — the in-panel code editor: CodeMirror 6, CSS-var
   theming, the client-side binary sniff, and dirty/save semantics.
-- `docs/server-lifecycle.md` — the power actions and the stored status: why
-  status is a record and the node is the truth, and how a container that
-  vanished from its node is rebuilt on the next start instead of 404ing
-  forever.
+- `docs/server-lifecycle.md` — provisioning, the power actions and the stored
+  status: why status is a record and the node is the truth, why a server is
+  built *after* the create request answers (and what the `installing` gate and
+  the admin-only install log are for), and how a container that vanished from
+  its node is rebuilt on the next start instead of 404ing forever.
 - `docs/ports.md` — published ports as identity mappings (host N → container
   N): per-node port pools, the `SERVER_PORT` env sync, and the owner's
   publish-a-port flow.

@@ -58,6 +58,7 @@ import {
   attachToServer,
   createServerContainer,
   deleteServerContainer,
+  getServerInstallLogs,
   getServerLogs,
   getServerState,
   getServerStats,
@@ -623,6 +624,23 @@ const server = Bun.serve<ConsoleSocket, never>({
         const spec = parseInstallRequest(await parseJsonBody(request));
         const result = await installServer(serverId, spec);
         return json(result);
+      }),
+    },
+
+    /**
+     * The install container's output *while it is still running*.
+     *
+     * The POST above only answers once the script has exited, which for a
+     * blueprint that downloads a server jar can be minutes. The panel polls
+     * this so an admin watching the console sees the install as it happens
+     * rather than all at once at the end.
+     */
+    "/v1/servers/:id/install/logs": {
+      GET: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const raw = Number(queryOf(request).get("tail"));
+        const tail = Math.min(Math.max(Number.isFinite(raw) ? raw : 200, 1), 2000);
+        return json(await getServerInstallLogs(serverId, tail));
       }),
     },
     "/v1/servers/:id/stop": {
