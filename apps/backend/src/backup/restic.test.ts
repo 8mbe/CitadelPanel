@@ -433,6 +433,29 @@ describe("failure explanation", () => {
     expect(message).toContain("garage");
   });
 
+  test("reads Garage's bare 400 as a region mismatch", () => {
+    // This is what a wrong region actually looks like against Garage: a 400 that
+    // names nothing. Left unexplained it reaches the operator as a timeout,
+    // because restic retries it with backoff rather than failing.
+    const message = explainResticFailure(
+      -1,
+      "Stat(<config/>) returned error, retrying after 1m6s: Stat: 400 Bad Request",
+    );
+    expect(message).toContain("region");
+    expect(message).toContain("garage");
+  });
+
+  test("a TLS mismatch is still read as TLS, not as a malformed request", () => {
+    // Ordering matters: both branches could plausibly match a failed handshake,
+    // and pointing at the region would send the operator to the wrong field.
+    const message = explainResticFailure(
+      -1,
+      'Head "https://192.168.1.120:3900/b/config": http: server gave HTTP response to HTTPS client',
+    );
+    expect(message).toContain("Connect over TLS");
+    expect(message).not.toContain("garage");
+  });
+
   test("says a missing bucket has to be created by hand", () => {
     expect(explainResticFailure(1, "NoSuchBucket")).toContain("Create the bucket");
   });

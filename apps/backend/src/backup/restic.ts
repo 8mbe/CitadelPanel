@@ -504,14 +504,19 @@ export function explainResticFailure(exitCode: number, output: string): string {
       `necessarily reachable from every node. Details: ${tail}`
     );
   }
-  // Garage validates the region in the request signature and defaults to
-  // "garage", so a copied-in "us-east-1" fails signature verification in a way
-  // that reads as a credential problem.
-  if (/region/i.test(tail)) {
+  // The region is part of the SigV4 signature, not a label, so a self-hosted
+  // server that validates it rejects the whole request as malformed. Garage
+  // answers a wrong region with a bare `400 Bad Request` that names nothing —
+  // and since restic retries it, the operator sees a hang rather than an error.
+  // This is the single most common way a working Garage or MinIO still fails,
+  // so it is worth naming even though a 400 has other possible causes.
+  if (/400 Bad Request|AuthorizationHeaderMalformed|InvalidRegion|\bregion\b/i.test(tail)) {
     return (
-      "The S3 endpoint rejected the region. Self-hosted servers often use their own " +
-      'value — Garage defaults to "garage" rather than an AWS region name. ' +
-      `Details: ${tail}`
+      "The storage server rejected the request as malformed. For a self-hosted S3 " +
+      "this nearly always means the region is wrong: it is part of the request " +
+      'signature, not a label, so it has to match exactly. Garage uses "garage" by ' +
+      'default and MinIO accepts anything, but neither ignores it. Check the bucket ' +
+      `exists and is spelled correctly too. Details: ${tail}`
     );
   }
   return `restic exited with code ${exitCode}: ${tail}`;

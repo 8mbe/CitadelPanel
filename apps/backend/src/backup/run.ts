@@ -110,6 +110,29 @@ const LONG_TIMEOUT_MS = 6 * 60 * 60_000;
 const QUICK_TIMEOUT_MS = 5 * 60_000;
 
 /**
+ * Ceiling on a *metadata* operation — probe, snapshot list, size measurement.
+ * Deliberately short.
+ *
+ * restic retries backend errors with exponential backoff (roughly 1s, 3s, 8s, 24s,
+ * 33s, 1m…) and does not give up for many minutes. That is the right behaviour
+ * mid-upload, where a transient S3 blip should not cost an hour of transfer — but
+ * it is exactly wrong for a metadata read, where the failure is almost always a
+ * *configuration* error that will not fix itself. Retrying a wrong region ten
+ * times turns a clear "400 Bad Request" into a hang, and a hang reaches the
+ * operator as "unreachable: timeout", which tells them nothing about which field
+ * to change.
+ *
+ * So these are capped at a few retries' worth of time and the captured output —
+ * which does name the real error — is what gets explained. Any reachable
+ * repository answers all three in well under a second.
+ *
+ * This must also stay comfortably below the panel's own HTTP timeout for these
+ * calls, or the panel gives up first and reports a timeout no matter how good the
+ * agent's explanation was.
+ */
+const METADATA_TIMEOUT_MS = 20_000;
+
+/**
  * restic's chunk cache, kept per repository between runs.
  *
  * Without a persistent cache every incremental backup re-downloads the
@@ -192,7 +215,7 @@ async function ensureRepository(
 ): Promise<void> {
   reporter.phase("preparing_repository");
 
-  const probe = await runRestic(target, probeArgs(), { timeoutMs: QUICK_TIMEOUT_MS });
+  const probe = await runRestic(target, probeArgs(), { timeoutMs: METADATA_TIMEOUT_MS });
   if (probe.exitCode === 0) return;
 
   if (!looksUninitialised(probe.output)) {
@@ -209,7 +232,7 @@ async function ensureRepository(
 
 /** List a repository's snapshots. An uninitialised repository has none. */
 async function readSnapshots(target: RepoTarget): Promise<SnapshotInfo[]> {
-  const result = await runRestic(target, snapshotsArgs(), { timeoutMs: QUICK_TIMEOUT_MS });
+  const result = await runRestic(target, snapshotsArgs(), { timeoutMs: METADATA_TIMEOUT_MS });
   if (result.exitCode !== 0) {
     if (looksUninitialised(result.output)) return [];
     throw new Error(explainResticFailure(result.exitCode, result.output));
@@ -279,7 +302,7 @@ async function measureRepository(
 ): Promise<number | null> {
   reporter.phase("measuring");
   try {
-    const result = await runRestic(target, statsArgs(), { timeoutMs: QUICK_TIMEOUT_MS });
+    const result = await runRestic(target, statsArgs(), { timeoutMs: METADATA_TIMEOUT_MS });
     if (result.exitCode !== 0) return null;
     const size = parseRepositorySize(result.output);
     if (size !== null) {
@@ -644,7 +667,7 @@ export async function deleteSnapshot(
  * a subject that has never been backed up occupies nothing.
  */
 export async function repositorySize(target: RepoTarget): Promise<number | null> {
-  const result = await runRestic(target, statsArgs(), { timeoutMs: QUICK_TIMEOUT_MS });
+  const result = await runRestic(target, statsArgs(), { timeoutMs: METADATA_TIMEOUT_MS });
   if (result.exitCode !== 0) {
     if (looksUninitialised(result.output)) return 0;
     return null;
@@ -665,7 +688,7 @@ export async function repositorySize(target: RepoTarget): Promise<number | null>
 export async function checkRepository(
   target: RepoTarget,
 ): Promise<{ reachable: boolean; initialised: boolean; detail: string }> {
-  const result = await runRestic(target, probeArgs(), { timeoutMs: QUICK_TIMEOUT_MS });
+  const result = await runRestic(target, probeArgs(), { timeoutMs: METADATA_TIMEOUT_MS });
 
   if (result.exitCode === 0) {
     return {
@@ -683,10 +706,17 @@ export async function checkRepository(
         "the first backup will create one.",
     };
   }
+
+  // A probe that hit the wall clock was almost certainly stuck in restic's retry
+  // backoff against an error that will not fix itself. The captured output names
+  // the real cause, so it is explained rather than reported as a timeout — the
+  // whole reason the probe is capped short is to be able to say this.
   return {
     reachable: false,
     initialised: false,
-    detail: explainResticFailure(result.exitCode, result.output),
+    detail: result.timedOut
+      ? explainResticFailure(-1, result.output)
+      : explainResticFailure(result.exitCode, result.output),
   };
 }
 
