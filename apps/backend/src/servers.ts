@@ -46,7 +46,7 @@ import {
   type PortBinding,
 } from "./docker/hardening";
 import { sampleContainerStats, type ContainerStats } from "./docker/stats";
-import { ensureServerDataDir } from "./dataRoot";
+import { directoryOwner, ensureServerDataDir } from "./dataRoot";
 import { conflict, notFound } from "./http";
 import { serverDataPath } from "./paths";
 
@@ -191,6 +191,14 @@ export interface InstallRequest {
  * will later use. A non-zero exit is surfaced as a 409 with the tail of the
  * install log, so a failed provision is visible rather than a silently empty
  * data directory.
+ *
+ * It runs as the data directory's *owner*, not as root. Under `CapDrop: ALL`
+ * uid 0 has no `CAP_DAC_OVERRIDE`, so a root install container is denied its
+ * first write into a directory the agent created as itself — and it has no
+ * `CAP_CHOWN` to hand what it does write to the uid the runtime container is
+ * pinned to. Running as the owner from the start solves both: the writes are
+ * permitted, and the files come out owned by the account that has to keep
+ * using them (the game container, the file editor, SFTP).
  */
 export async function installServer(
   serverId: string,
@@ -201,6 +209,7 @@ export async function installServer(
   const hostDataPath = await ensureServerDataDir(serverId);
 
   const { exitCode, logs } = await runContainerToCompletion(docker, {
+    user: await directoryOwner(hostDataPath),
     name: serverInstallContainerName(serverId),
     image: request.image,
     hostDataPath,

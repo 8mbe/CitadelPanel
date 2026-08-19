@@ -19,7 +19,7 @@
  * filesystems are others), and a write is the operation that actually matters.
  */
 
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { config } from "./config";
 import { serviceUnavailable } from "./http";
@@ -136,6 +136,33 @@ export async function ensureServerDataDir(serverId: string): Promise<string> {
     serverDataPath(serverId),
     `the data directory for server ${serverId}`,
   );
+}
+
+/**
+ * The `uid:gid` that owns a directory, for Docker's `--user`.
+ *
+ * A container the agent creates has `CapDrop: ALL`, which takes
+ * `CAP_DAC_OVERRIDE` with it — so uid 0 inside that container is *not* the root
+ * that ignores permission bits. Against a data directory the agent created as
+ * itself (uid 1000, mode 0755) a nominally-root container gets plain "other"
+ * access, and the first write into `/server` fails with EACCES.
+ *
+ * Hence: don't guess a uid, read the one that actually owns the bytes. The panel
+ * cannot supply this — the owner is whatever uid the node's agent runs as, which
+ * is a per-node fact — and hardcoding 1000 would break the equally common
+ * root-owned root. It is the same reasoning as a blueprint's `run_as`, applied
+ * to the container the blueprint doesn't get to configure.
+ *
+ * Falls back to the agent's own uid: it created the directory, so on the odd
+ * filesystem that cannot report an owner it remains the best guess available.
+ */
+export async function directoryOwner(path: string): Promise<string> {
+  try {
+    const info = await stat(path);
+    return `${info.uid}:${info.gid}`;
+  } catch {
+    return `${agentUid()}:${agentGid()}`;
+  }
 }
 
 /**
