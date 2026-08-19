@@ -3,6 +3,7 @@
 import * as React from "react";
 
 import { getServer, getServerStats } from "@/lib/api";
+import { isProvisioning } from "@/lib/server-status";
 import type { ServerStatus, ServerView } from "@/lib/types";
 
 /**
@@ -41,6 +42,26 @@ export function ServerDataProvider({
       setStatus(fresh.status);
     }
   }, [initial.id]);
+
+  // While the server is still being built, re-read the record itself rather
+  // than a resource sample: there is no container to sample, and the thing worth
+  // knowing is when the provision ends. This is what lets the shell's installing
+  // gate fall away on its own — an owner who opened the page mid-install gets
+  // their server without reloading, and an admin watching the install log sees
+  // the console take over. Provisioning is minutes long, so 5s is plenty.
+  React.useEffect(() => {
+    if (!isProvisioning(status)) return;
+
+    let cancelled = false;
+    const interval = setInterval(() => {
+      if (!cancelled) void refresh().catch(() => undefined);
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [status, refresh]);
 
   // Poll a live resource sample so the stats cards and status stay current
   // without a manual refresh.

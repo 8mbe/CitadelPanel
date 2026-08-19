@@ -20,6 +20,7 @@ import type {
   BlueprintView,
   PluginSearchResult,
   PluginVersionView,
+  ServerInstallLogView,
   ServerPluginList,
   ServerStatus,
   ServerView,
@@ -426,6 +427,20 @@ export async function getServerLogs(id: string, tail = 200): Promise<string> {
     `/api/servers/${id}/logs?tail=${tail}`,
   );
   return data.logs;
+}
+
+/**
+ * GET /api/servers/:id/install-log — provisioning output. Admin-only; throws
+ * `ApiError` 403 for anyone else, so callers must gate on the viewer's kind
+ * before polling rather than relying on the error.
+ */
+export async function getServerInstallLog(
+  id: string,
+): Promise<ServerInstallLogView> {
+  const data = await request<{ installLog: ServerInstallLogView }>(
+    `/api/servers/${id}/install-log`,
+  );
+  return data.installLog;
 }
 
 /**
@@ -1411,6 +1426,25 @@ export function restartServer(id: string): Promise<ApiServerSummary> {
 export function killServer(id: string): Promise<ApiServerSummary> {
   return request<{ server: ApiServerSummary }>(`/api/servers/${id}/kill`, {
     method: "POST",
+  }).then((d) => d.server);
+}
+
+/**
+ * POST /api/servers/:id/reinstall — delete every file and build the server
+ * again from its blueprint.
+ *
+ * `confirmName` must be the server's name exactly; the backend refuses anything
+ * else without touching the server. Returns the summary in `installing` — the
+ * rebuild runs on the node afterwards, and the server page's status poll is what
+ * follows it to `stopped`.
+ */
+export function reinstallServer(
+  id: string,
+  confirmName: string,
+): Promise<ApiServerSummary> {
+  return request<{ server: ApiServerSummary }>(`/api/servers/${id}/reinstall`, {
+    method: "POST",
+    body: JSON.stringify({ confirmName }),
   }).then((d) => d.server);
 }
 

@@ -8,7 +8,9 @@ a stable name and never an IP, and how links survive container recreation.
 
 A link is an explicit, owner-initiated connection between exactly two servers —
 what a proxy (Velocity/BungeeCord) needs to reach its backends, or a plugin to
-reach another server. The Settings tab's "Connected servers" card lists the
+reach another server. The built-in Velocity blueprint is the worked example:
+`velocity-proxy.md` covers the other half, turning a link's address into a
+`servers` entry the proxy will use. The Settings tab's "Connected servers" card lists the
 links and shows a copyable address for each; the "Connect servers" dialog picks
 one of the caller's other servers and the published port to use.
 

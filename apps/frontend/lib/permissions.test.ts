@@ -12,6 +12,7 @@ import {
   SECTION_PERMISSIONS,
   sectionAllowed,
   viewerAllows,
+  viewerIsOwner,
 } from "./permissions";
 import type { ServerViewerAccess } from "./types";
 
@@ -98,4 +99,14 @@ test("a subuser needs the exact flag, explicitly true", () => {
 test("a missing viewer fails open — the API's 403 remains the limit", () => {
   expect(sectionAllowed("files", undefined)).toBe(true);
   expect(sectionAllowed("subusers", undefined)).toBe(true);
+});
+
+test("owner-only actions are closed to a subuser holding every flag", () => {
+  // What gates the reinstall card: `settings` is enough to retune the game and
+  // never enough to erase it.
+  expect(viewerIsOwner(fullSubuser)).toBe(false);
+  expect(viewerIsOwner(consoleOnly)).toBe(false);
+  expect(viewerIsOwner(owner)).toBe(true);
+  expect(viewerIsOwner(admin)).toBe(true);
+  expect(viewerIsOwner(undefined)).toBe(true);
 });

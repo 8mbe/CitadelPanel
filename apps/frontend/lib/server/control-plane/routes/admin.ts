@@ -5,6 +5,8 @@
  * subuser permissions can never reach these endpoints.
  */
 
+import { after } from "next/server";
+
 import { requireAdmin } from "../auth/middleware";
 import { auth, isRole } from "../auth/betterAuth";
 import {
@@ -34,6 +36,7 @@ import {
   listServersForOwner,
   suspendServer,
   unsuspendServer,
+  waitForProvisioning,
 } from "../services/serverManager";
 import { sampleNodeServers } from "../nodes/nodeServerApi";
 import { getBlueprintByKey } from "../blueprints/registry";
@@ -255,6 +258,13 @@ export async function handleUpdateServerResources(
  * are validated; the audit trail records the admin as the acting user
  * (createServer writes the `server.create` entry with the admin's identity
  * and an `onBehalfOf` marker).
+ *
+ * Answers 202, not 201: the row exists and is valid, but the server does not
+ * exist on its node yet. Building it — pulling images, running the blueprint's
+ * install script — happens after this response, and its progress is the
+ * returned server's status (`installing`) plus its install log. Waiting for it
+ * here is what used to make a create fail on a slow node: any timeout in the
+ * chain aborted a provision that was working fine.
  */
 export async function handleAdminCreateServer(request: Request): Promise<Response> {
   const admin = await requireAdmin(request);
@@ -309,7 +319,13 @@ export async function handleAdminCreateServer(request: Request): Promise<Respons
     nodeId,
   });
 
-  return json({ server }, 201);
+  // The provisioning task is already running; this tells the Next runtime not
+  // to treat the request's work as finished when the response goes out, so a
+  // long install is not torn down mid-pull. It never rejects — provisionServer
+  // records its own failures on the row.
+  after(() => waitForProvisioning(server.id));
+
+  return json({ server }, 202);
 }
 
 /** GET /api/admin/users — every account on the panel, with optional search. */

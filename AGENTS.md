@@ -67,12 +67,21 @@ Existing docs:
   what each gates (API and UI), and the reads-gate-with-writes rule.
 - `docs/file-editor.md` — the in-panel code editor: CodeMirror 6, CSS-var
   theming, the client-side binary sniff, and dirty/save semantics.
+- `docs/server-lifecycle.md` — provisioning, the power actions and the stored
+  status: why status is a record and the node is the truth, why a server is
+  built *after* the create request answers (and what the `installing` gate and
+  the admin-only install log are for), and how a container that vanished from
+  its node is rebuilt on the next start instead of 404ing forever.
 - `docs/ports.md` — published ports as identity mappings (host N → container
   N): per-node port pools, the `SERVER_PORT` env sync, and the owner's
   publish-a-port flow.
 - `docs/server-links.md` — connecting a server to another of the owner's
   servers: the pairwise ICC-enabled link networks, stable container-name
   addresses (never container IPs), and cross-node public addresses.
+- `docs/velocity-proxy.md` — the built-in Velocity proxy blueprint: why its
+  listen port is patched into `velocity.toml` instead of injected as env, what
+  the install step seeds (and which two keys stop Velocity booting into its own
+  examples), and how backends are wired to it.
 - `docs/plugins.md` — blueprint-declared plugin/mod support: the provider
   fetch spec (data, never code), the fetch engine's host pinning, and the
   pre-start auto-updater.

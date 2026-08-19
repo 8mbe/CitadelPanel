@@ -15,7 +15,10 @@ Everything lives in the blueprint's `plugins` section, as pure JSON data:
   game version. Profiles can be **static** (one `default`) or **env-driven**
   (`envField` + `variants`): minecraft-java keys off `TYPE`, so a Paper server
   gets "Plugins" into `plugins/`, a Fabric server gets "Mods" into `mods/`,
-  and a vanilla server gets no tab at all (VANILLA has no variant).
+  and a vanilla server gets no tab at all (VANILLA has no variant). The
+  `velocity` blueprint is the static case — a proxy only ever loads Velocity
+  plugins from `plugins/`, so there is nothing to switch on
+  (`velocity-proxy.md`).
 - **Provider fetch spec** — how to talk to the catalog: the https API origin,
   endpoint path/query **templates** (`{query}`, `{projectId}`, `{loaders}`,
   `{facets}`, …), response field mappings as dot-paths, facet composition
@@ -119,6 +122,12 @@ the user-set game version above. The whole pass is best-effort — a catalog
 outage or a single failed download logs a warning and the start proceeds. One
 summary audit row (`server.plugin.auto-update`) is written when anything
 changed.
+
+This is also why reinstalling a server deletes its `server_plugins` rows rather
+than leaving them: the jars are wiped with everything else, and rows pointing at
+files that no longer exist would have this pass re-download every one of them on
+the next start — a fresh install that quietly restores the plugins it was asked
+to remove. See [server-lifecycle.md](server-lifecycle.md).
 
 ## Permissions & auditing
 

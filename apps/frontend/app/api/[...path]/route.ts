@@ -101,6 +101,7 @@ import {
   handleDeleteServer,
   handleGetServer,
   handleGetServerEnv,
+  handleGetServerInstallLog,
   handleGetServerLogs,
   handleGetServerStats,
   handleKillServer,
@@ -117,6 +118,7 @@ import {
   handleAddServerDatabase,
   handleRemoveServerDatabase,
   handleResetServerDatabasePassword,
+  handleReinstallServer,
   handleRestartServer,
   handleStartServer,
   handleStopServer,
@@ -229,7 +231,11 @@ const patterns: Array<{
   { pattern: /^servers\/([^/]+)\/stop$/, methods: { POST: handleStopServer } },
   { pattern: /^servers\/([^/]+)\/restart$/, methods: { POST: handleRestartServer } },
   { pattern: /^servers\/([^/]+)\/kill$/, methods: { POST: handleKillServer } },
+  // Destructive: wipes the data directory and re-runs the blueprint's install.
+  { pattern: /^servers\/([^/]+)\/reinstall$/, methods: { POST: handleReinstallServer } },
   { pattern: /^servers\/([^/]+)\/logs$/, methods: { GET: handleGetServerLogs } },
+  // Provisioning output, admin-only (see routes/servers.ts).
+  { pattern: /^servers\/([^/]+)\/install-log$/, methods: { GET: handleGetServerInstallLog } },
   { pattern: /^servers\/([^/]+)\/stats$/, methods: { GET: handleGetServerStats } },
   { pattern: /^servers\/([^/]+)\/env$/, methods: { GET: handleGetServerEnv, PATCH: handleUpdateServerEnv } },
   { pattern: /^servers\/([^/]+)\/ports$/, methods: { GET: handleListServerPorts, POST: handleAddServerPort, DELETE: handleRemoveServerPort } },

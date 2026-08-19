@@ -15,7 +15,7 @@
 
 import { randomBytes } from "node:crypto";
 import { sql } from "../db/client";
-import { badRequest, conflict, notFound } from "../lib/http";
+import { badRequest, conflict, notFound, HttpError } from "../lib/http";
 import { decryptSecret, encryptSecret, generateStrongPassword } from "../lib/crypto";
 import {
   getBlueprintByKey,
@@ -38,6 +38,7 @@ import {
 import {
   createServerContainer,
   deleteServerContainer,
+  getServerInstallLogs,
   getServerState,
   killServerContainer,
   restartServerContainer,
@@ -366,8 +367,399 @@ function deriveJvmMemory(memoryLimitMb: number): string {
   return `${heap}M`;
 }
 
+// --- Provisioning -------------------------------------------------------------
+
 /**
- * Create a server: reserve DB state, then provision on the node.
+ * The statuses that mean "the panel is still building this server".
+ *
+ * `creating` covers everything before the blueprint's install step (the row,
+ * its ports, its env); `installing` covers the install script and the container
+ * build that follows it. Both are one phase as far as a viewer is concerned:
+ * there is nothing to operate yet.
+ */
+export function isProvisioning(status: ServerStatus): boolean {
+  return status === "creating" || status === "installing";
+}
+
+/**
+ * In-flight provisioning tasks, keyed by server id.
+ *
+ * Provisioning outlives the request that started it, so the promise has to be
+ * reachable from somewhere other than the closure that created it: the route
+ * hands it to Next's `after()` so the runtime does not consider the work
+ * finished when the response goes out. The map is also what makes a second
+ * provision of the same server impossible while the first is running.
+ *
+ * Deliberately in-process and deliberately not durable. A panel restart mid
+ * install loses the task, which is why {@link failInterruptedProvisions} runs
+ * at boot — a row stuck in `installing` with nobody working on it is worse than
+ * an honest `error`.
+ */
+const inFlightProvisions = new Map<string, Promise<void>>();
+
+/**
+ * Await a server's provisioning task, if one is running in this process.
+ *
+ * Resolves immediately when there is nothing in flight (already finished, or
+ * started by a process that has since been replaced). Never rejects: failures
+ * are recorded on the row, not thrown at whoever happened to be waiting.
+ */
+export async function waitForProvisioning(serverId: string): Promise<void> {
+  await inFlightProvisions.get(serverId);
+}
+
+/** Cap on the stored install log, so a chatty installer cannot bloat the row. */
+const MAX_INSTALL_LOG_CHARS = 256_000;
+
+/**
+ * Append a line to a server's install log.
+ *
+ * Written straight to the row rather than buffered in memory: the reader is a
+ * different request (an admin's console poll), and a provision that dies with
+ * the process should still leave behind everything it had managed to say.
+ *
+ * The append happens in SQL, not read-modify-write, so the install script's
+ * captured output and the panel's own phase lines cannot clobber each other.
+ * Failures are swallowed — a log line must never be the reason a provision
+ * fails, exactly like an audit write.
+ */
+async function appendInstallLog(serverId: string, text: string): Promise<void> {
+  try {
+    await sql`
+      UPDATE servers
+      SET install_log = right(install_log || ${text}, ${MAX_INSTALL_LOG_CHARS})
+      WHERE id = ${serverId}
+    `;
+  } catch (error) {
+    console.error(`[serverManager] install log append failed for ${serverId}:`, error);
+  }
+}
+
+/** A panel-authored progress line, marked so it reads apart from script output. */
+async function logPhase(serverId: string, message: string): Promise<void> {
+  await appendInstallLog(serverId, `[panel] ${message}\n`);
+}
+
+/**
+ * Fail every server this panel left mid-provision.
+ *
+ * Provisioning lives in this process (see {@link inFlightProvisions}), so a
+ * restart — a deploy, a crash, a dev-server reload — abandons whatever was in
+ * flight. Nothing would ever move those rows again: they are not reconciled
+ * (no container to ask about) and the owner is locked out of a server that
+ * claims to be installing. Marking them `error` at boot is the recovery: an
+ * admin can read how far the install got in the log and delete or re-create.
+ *
+ * Called from `instrumentation.ts`, before the panel serves its first request.
+ */
+export async function failInterruptedProvisions(): Promise<void> {
+  const rows = (await sql`
+    UPDATE servers
+    SET status = 'error', updated_at = now()
+    WHERE status IN ('creating', 'installing')
+    RETURNING id, name
+  `) as { id: string; name: string }[];
+
+  for (const row of rows) {
+    await logPhase(
+      row.id,
+      "Provisioning was interrupted — the panel restarted while this server " +
+        "was still being built. Reinstall it from its settings to build it " +
+        "again, or delete it and create it fresh.",
+    );
+  }
+
+  if (rows.length > 0) {
+    console.warn(
+      `[serverManager] marked ${rows.length} interrupted provision(s) as error: ` +
+        rows.map((row) => row.name).join(", "),
+    );
+  }
+}
+
+/** A server's provisioning output, as the console renders it. */
+export interface InstallLogView {
+  /** Everything recorded so far: panel phase lines plus install-script output. */
+  log: string;
+  /** Whether the panel is still building this server. */
+  provisioning: boolean;
+  status: ServerStatus;
+  /** When the current (or last) provision started. Null for older servers. */
+  startedAt: Date | null;
+}
+
+/**
+ * Read a server's provisioning output.
+ *
+ * Two sources, because the install container is gone by the time the panel has
+ * anything durable to show: the row holds every line already recorded, and the
+ * node holds the tail of a script that is running *right now*. The live tail is
+ * only asked for (and only appended) while the row still says the server is
+ * being provisioned — once the install has finished, its full output is in the
+ * row and asking the node again would either duplicate those lines or, more
+ * likely, answer with nothing at all.
+ *
+ * An unreachable node is not an error here: the stored log is the answer, and a
+ * note is appended to the view (not the row) so the reader knows the live tail
+ * is missing rather than empty.
+ */
+export async function readInstallLog(serverId: string): Promise<InstallLogView> {
+  const rows = (await sql`
+    SELECT status, install_log, install_started_at, node_id
+    FROM servers WHERE id = ${serverId}
+  `) as {
+    status: ServerStatus;
+    install_log: string;
+    install_started_at: Date | null;
+    node_id: string;
+  }[];
+
+  const row = rows[0];
+  if (!row) throw notFound("Server not found");
+
+  const view: InstallLogView = {
+    log: row.install_log,
+    provisioning: isProvisioning(row.status),
+    status: row.status,
+    startedAt: row.install_started_at,
+  };
+  if (!view.provisioning) return view;
+
+  try {
+    const live = await getServerInstallLogs(row.node_id, serverId);
+    if (live.logs.trim().length > 0) {
+      view.log = `${view.log}${live.logs.trimEnd()}\n`;
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    view.log = `${view.log}[panel] Could not read live install output: ${reason}\n`;
+  }
+
+  return view;
+}
+
+/** Raised when a provision finds its own server no longer wants building. */
+class ProvisionAbandoned extends Error {}
+
+/**
+ * Stop a provision whose server has been deleted (or is being deleted) under it.
+ *
+ * A provision runs for minutes and an admin can delete the server during any of
+ * them. Without this check the task would go on to create a container for a row
+ * that no longer exists — the orphan this module's ordering principle exists to
+ * avoid, and the worst kind, because nothing in the panel can see it to clean it
+ * up. Checked before each step that creates something on the node.
+ *
+ * `deleteServer` writes `deleting` before it touches the node, so that status is
+ * caught here too, not just an already-vanished row.
+ */
+async function assertStillProvisioning(serverId: string): Promise<void> {
+  const rows = (await sql`
+    SELECT status FROM servers WHERE id = ${serverId}
+  `) as { status: ServerStatus }[];
+
+  const row = rows[0];
+  if (!row) throw new ProvisionAbandoned("the server was deleted");
+  if (!isProvisioning(row.status)) {
+    throw new ProvisionAbandoned(`the server moved to "${row.status}"`);
+  }
+}
+
+/**
+ * Everything the background task needs, resolved while the request is still
+ * around to be told about a bad input.
+ */
+interface ProvisionPlan {
+  blueprint: Blueprint;
+  nodeId: string;
+  env: Record<string, string>;
+  secretKeys: string[];
+  // No disk limit: it is a scheduling number, enforced by the node's own quota
+  // on the data directory rather than by anything the container spec carries.
+  cpuLimit: number;
+  memoryLimitMb: number;
+  preferredPort?: number;
+}
+
+/**
+ * Build a server on its node: ports, env, install script, container.
+ *
+ * Runs detached from the request that asked for the server (see
+ * {@link createServer}). That is not an optimisation — it is what makes a
+ * blueprint with an install step possible at all. Every step here talks to the
+ * node, and the node's answers are slow in ways that have nothing to do with
+ * whether the create was valid: a cold node pulls a few hundred megabytes of
+ * image before the install container can start, and the install script itself
+ * downloads a server jar. Holding an HTTP request open across all of that means
+ * any timeout anywhere in the chain — the panel's own, a reverse proxy's, the
+ * browser's — turns a working create into a 502 and a row stuck in `error`.
+ *
+ * So the request reserves the row and returns; this runs afterwards and the row
+ * is how it reports. Each phase is announced into the install log first, so an
+ * admin reading the console sees where a stall is happening rather than a
+ * spinner. A failure lands in the log too, next to the output that explains it.
+ */
+async function provisionServer(
+  serverId: string,
+  plan: ProvisionPlan,
+): Promise<void> {
+  const { blueprint, nodeId } = plan;
+
+  try {
+    // Reserve ports. The UNIQUE constraint on server_ports is what makes
+    // concurrent creation safe; allocateHostPort just picks a likely candidate.
+    const bindings: PortBinding[] = [];
+    const mainPort = primaryPort(blueprint);
+    let primaryHostPort: number | undefined;
+
+    await logPhase(serverId, "Allocating ports…");
+
+    for (const port of blueprint.defaultPorts) {
+      const isPrimary = port === mainPort;
+      // Best-effort preference: the admin's explicit choice for the primary
+      // port, otherwise the blueprint's preferred number (e.g. 25565) when it
+      // happens to be in the node's pool and free.
+      const hostPort = await allocateHostPort(
+        nodeId,
+        port.protocol,
+        isPrimary ? plan.preferredPort ?? port.container : port.container,
+      );
+
+      // Identity mapping: the same number is published on the host and bound
+      // inside the container (host N → container N), so a port is one number,
+      // not a pair.
+      await sql`
+        INSERT INTO server_ports (
+          server_id, node_id, host_port, container_port, protocol, is_primary
+        ) VALUES (
+          ${serverId}, ${nodeId}, ${hostPort}, ${hostPort},
+          ${port.protocol}, ${isPrimary}
+        )
+      `;
+
+      if (isPrimary) primaryHostPort = hostPort;
+
+      bindings.push({
+        hostPort,
+        containerPort: hostPort,
+        protocol: port.protocol,
+      });
+    }
+
+    // The game must listen on the number that was actually published, so the
+    // primary port's number is injected into the env (SERVER_PORT for the itzg
+    // images) before anything is persisted or interpolated.
+    if (blueprint.primaryPortEnv && primaryHostPort !== undefined) {
+      plan.env[blueprint.primaryPortEnv] = String(primaryHostPort);
+    }
+
+    await storeEnv(serverId, plan.env, plan.secretKeys);
+
+    // A blueprint's startup command is interpolated with the resolved env once,
+    // here, so the agent receives a concrete argv rather than a template. This
+    // runs after the primary-port env is set, so {{SERVER_PORT}}-style
+    // placeholders see the allocated port.
+    const command = blueprint.startupCommand
+      ? ["/bin/sh", "-c", interpolateCommand(blueprint.startupCommand, plan.env)]
+      : undefined;
+
+    // First-launch provisioning, when the blueprint defines it: run the install
+    // script against the (agent-owned) data directory before the runtime
+    // container exists, so a failure leaves no half-built container behind.
+    if (blueprint.install) {
+      await assertStillProvisioning(serverId);
+      await setStatus(serverId, "installing");
+      await logPhase(
+        serverId,
+        `Running the install script in ${blueprint.install.image}. ` +
+          "The image is pulled first, so there may be no output for a while.",
+      );
+
+      const { logs } = await runServerInstall(nodeId, serverId, {
+        image: blueprint.install.image,
+        script: blueprint.install.script,
+        entrypoint: blueprint.install.entrypoint,
+        containerDataPath: blueprint.dataPath,
+        env: plan.env,
+        cpuLimit: plan.cpuLimit,
+        memoryLimitMb: plan.memoryLimitMb,
+      });
+
+      // The install container is removed the moment its script exits, so this
+      // is the only durable copy of what it printed. Storing it whole cannot
+      // duplicate the tail an admin was watching: that tail came from the
+      // container, and by now there is no container left to read it from.
+      await appendInstallLog(serverId, `${logs.trimEnd()}\n`);
+      await logPhase(serverId, "Install script finished.");
+    } else {
+      await setStatus(serverId, "installing");
+    }
+
+    // Last check before anything exists on the node: past this point a delete
+    // has a container to find, so a create that races it is recoverable rather
+    // than an invisible orphan.
+    await assertStillProvisioning(serverId);
+    await logPhase(
+      serverId,
+      `Creating the container from ${blueprint.dockerImage}. ` +
+        "A node that has not run this image before pulls it now, which can " +
+        "take several minutes.",
+    );
+
+    // The agent creates the data directory on the node's own disk and derives
+    // the bind mount from it — the panel never names a host path.
+    const { containerId } = await createServerContainer(nodeId, serverId, {
+      image: blueprint.dockerImage,
+      containerDataPath: blueprint.dataPath,
+      env: plan.env,
+      ports: bindings,
+      cpuLimit: plan.cpuLimit,
+      memoryLimitMb: plan.memoryLimitMb,
+      readOnlyRootFilesystem: blueprint.supportsReadOnlyRoot === true,
+      command,
+      user: blueprint.user,
+      tty: blueprint.tty === true,
+      // A newly created server has no databases yet, but the call is kept for
+      // symmetry with recreateServerContainer.
+      extraNetworks: await extraNetworksForServer(serverId),
+    });
+
+    await sql`
+      UPDATE servers
+      SET container_id = ${containerId}, status = 'stopped', updated_at = now()
+      WHERE id = ${serverId}
+    `;
+
+    await logPhase(serverId, "Done — the server is ready to start.");
+  } catch (error) {
+    // A provision that stopped because its server was deleted did not fail.
+    // Writing `error` here would resurrect a row mid-delete, or log a failure
+    // against a server nobody asked for any more.
+    if (error instanceof ProvisionAbandoned) {
+      console.warn(
+        `[serverManager] provisioning abandoned for ${serverId}: ${error.message}`,
+      );
+      return;
+    }
+
+    // Leave a visible, recoverable record instead of a silent orphan.
+    await setStatus(serverId, "error");
+    const reason = error instanceof Error ? error.message : String(error);
+    await logPhase(serverId, `Provisioning failed: ${reason}`);
+    console.error(`[serverManager] provisioning failed for ${serverId}:`, error);
+  }
+}
+
+/**
+ * Create a server: reserve DB state, then provision on the node in the
+ * background.
+ *
+ * Everything that can reject the request outright — an unknown blueprint,
+ * resources below its minimums, bad env, a node with no capacity or an
+ * unwritable data root — happens here, synchronously, so a bad create still
+ * fails as a 4xx/5xx with nothing left behind. Once the row exists the caller
+ * gets it back immediately in `creating`, and {@link provisionServer} takes
+ * over; the row's status and install log are how it reports from there.
  *
  * On any provisioning failure the server is left in `error` (not deleted) so the
  * owner or an admin can inspect and retry rather than silently losing the record.
@@ -419,137 +811,60 @@ export async function createServer(
   const inserted = (await sql`
     INSERT INTO servers (
       name, owner_id, node_id, blueprint_id, status,
-      cpu_limit, memory_limit_mb, disk_limit_mb
+      cpu_limit, memory_limit_mb, disk_limit_mb, install_started_at
     ) VALUES (
       ${input.name}, ${input.ownerId}, ${node.nodeId}, ${blueprintId}, 'creating',
-      ${input.cpuLimit}, ${input.memoryLimitMb}, ${input.diskLimitMb}
+      ${input.cpuLimit}, ${input.memoryLimitMb}, ${input.diskLimitMb}, now()
     )
     RETURNING *
   `) as ServerRow[];
 
   const server = inserted[0]!;
 
-  try {
-    // Reserve ports. The UNIQUE constraint on server_ports is what makes
-    // concurrent creation safe; allocateHostPort just picks a likely candidate.
-    const bindings: PortBinding[] = [];
-    const mainPort = primaryPort(blueprint);
-    let primaryHostPort: number | undefined;
+  await logPhase(
+    server.id,
+    `Provisioning "${server.name}" from blueprint ${blueprint.key} on node ` +
+      `${node.nodeId}.`,
+  );
 
-    for (const port of blueprint.defaultPorts) {
-      const isPrimary = port === mainPort;
-      // Best-effort preference: the admin's explicit choice for the primary
-      // port, otherwise the blueprint's preferred number (e.g. 25565) when it
-      // happens to be in the node's pool and free.
-      const hostPort = await allocateHostPort(
-        node.nodeId,
-        port.protocol,
-        isPrimary ? input.preferredPort ?? port.container : port.container,
-      );
-
-      // Identity mapping: the same number is published on the host and bound
-      // inside the container (host N → container N), so a port is one number,
-      // not a pair.
-      await sql`
-        INSERT INTO server_ports (
-          server_id, node_id, host_port, container_port, protocol, is_primary
-        ) VALUES (
-          ${server.id}, ${node.nodeId}, ${hostPort}, ${hostPort},
-          ${port.protocol}, ${isPrimary}
-        )
-      `;
-
-      if (isPrimary) primaryHostPort = hostPort;
-
-      bindings.push({
-        hostPort,
-        containerPort: hostPort,
-        protocol: port.protocol,
-      });
-    }
-
-    // The game must listen on the number that was actually published, so the
-    // primary port's number is injected into the env (SERVER_PORT for the itzg
-    // images) before anything is persisted or interpolated.
-    if (blueprint.primaryPortEnv && primaryHostPort !== undefined) {
-      resolved.values[blueprint.primaryPortEnv] = String(primaryHostPort);
-    }
-
-    await storeEnv(server.id, resolved.values, resolved.secretKeys);
-
-    // A blueprint's startup command is interpolated with the resolved env once,
-    // here, so the agent receives a concrete argv rather than a template. This
-    // runs after the primary-port env is set, so {{SERVER_PORT}}-style
-    // placeholders see the allocated port.
-    const command = blueprint.startupCommand
-      ? ["/bin/sh", "-c", interpolateCommand(blueprint.startupCommand, resolved.values)]
-      : undefined;
-
-    // First-launch provisioning, when the blueprint defines it: run the install
-    // script against the (agent-owned) data directory before the runtime
-    // container exists, so a failure leaves no half-built container behind.
-    if (blueprint.install) {
-      await setStatus(server.id, "installing");
-      await runServerInstall(node.nodeId, server.id, {
-        image: blueprint.install.image,
-        script: blueprint.install.script,
-        entrypoint: blueprint.install.entrypoint,
-        containerDataPath: blueprint.dataPath,
-        env: resolved.values,
-        cpuLimit: input.cpuLimit,
-        memoryLimitMb: input.memoryLimitMb,
-      });
-    }
-
-    // The agent creates the data directory on the node's own disk and derives
-    // the bind mount from it — the panel never names a host path.
-    const { containerId } = await createServerContainer(node.nodeId, server.id, {
-      image: blueprint.dockerImage,
-      containerDataPath: blueprint.dataPath,
-      env: resolved.values,
-      ports: bindings,
+  // Audited on reservation, not on completion: the create is the admin's
+  // action, and it has happened — whether the node then builds the container
+  // successfully is the provision's story, told by the status and install log.
+  await recordAudit({
+    userId: input.actorId ?? input.ownerId,
+    action: "server.create",
+    targetType: "server",
+    targetId: server.id,
+    metadata: {
+      ownerId: input.ownerId,
+      // Only recorded when someone else created the server for the owner.
+      ...(input.actorId && input.actorId !== input.ownerId
+        ? { onBehalfOf: input.ownerId }
+        : {}),
+      blueprintKey: blueprint.key,
+      nodeId: node.nodeId,
       cpuLimit: input.cpuLimit,
       memoryLimitMb: input.memoryLimitMb,
-      readOnlyRootFilesystem: blueprint.supportsReadOnlyRoot === true,
-      command,
-      user: blueprint.user,
-      tty: blueprint.tty === true,
-      // A newly created server has no databases yet, but the call is kept for
-      // symmetry with recreateServerContainer.
-      extraNetworks: await extraNetworksForServer(server.id),
-    });
+    },
+  });
 
-    await sql`
-      UPDATE servers
-      SET container_id = ${containerId}, status = 'stopped', updated_at = now()
-      WHERE id = ${server.id}
-    `;
+  // Detached on purpose — see provisionServer. It records its own failures on
+  // the row, so the promise never rejects and nothing here needs to await it;
+  // the route hands it to `after()` so the runtime keeps it alive.
+  const task = provisionServer(server.id, {
+    blueprint,
+    nodeId: node.nodeId,
+    env: resolved.values,
+    secretKeys: resolved.secretKeys,
+    cpuLimit: input.cpuLimit,
+    memoryLimitMb: input.memoryLimitMb,
+    preferredPort: input.preferredPort,
+  }).finally(() => {
+    inFlightProvisions.delete(server.id);
+  });
+  inFlightProvisions.set(server.id, task);
 
-    await recordAudit({
-      userId: input.actorId ?? input.ownerId,
-      action: "server.create",
-      targetType: "server",
-      targetId: server.id,
-      metadata: {
-        ownerId: input.ownerId,
-        // Only recorded when someone else created the server for the owner.
-        ...(input.actorId && input.actorId !== input.ownerId
-          ? { onBehalfOf: input.ownerId }
-          : {}),
-        blueprintKey: blueprint.key,
-        nodeId: node.nodeId,
-        cpuLimit: input.cpuLimit,
-        memoryLimitMb: input.memoryLimitMb,
-      },
-    });
-
-    return getServer(server.id);
-  } catch (error) {
-    // Leave a visible, recoverable record instead of a silent orphan.
-    await setStatus(server.id, "error");
-    console.error(`[serverManager] provisioning failed for ${server.id}:`, error);
-    throw error;
-  }
+  return getServer(server.id);
 }
 
 // --- Lifecycle ----------------------------------------------------------------
@@ -571,9 +886,74 @@ function assertNotSuspended(server: ServerRow): void {
  */
 function assertHasContainer(server: ServerRow): void {
   if (!server.container_id) {
+    // Distinguish the two cases the owner can act on differently: an install
+    // that is still running will finish on its own, while a failed one needs
+    // an admin (who can read the install log to find out why).
     throw conflict(
-      "This server has no container yet. It may still be provisioning or have failed to create.",
+      isProvisioning(server.status)
+        ? "This server is still installing. It can be started once the install finishes."
+        : "This server has no container yet. It may still be provisioning or have failed to create.",
     );
+  }
+}
+
+/**
+ * Rebuild a container the node no longer has.
+ *
+ * Panel/node drift is a real state, not a corrupted one: a container can be
+ * removed out of band — a manual `docker rm`, a prune, a rebuilt node — while
+ * the server row still points at its id. Every lifecycle call then comes back
+ * as the agent's "no container exists on this node" 404, and nothing in the UI
+ * can clear it, because the only path that creates a container is provisioning
+ * and that already ran.
+ *
+ * Rebuilding from the stored spec is the way out, and it is non-destructive:
+ * the data directory belongs to the agent and outlives any container, so the
+ * new container comes up on the world, config and logs the old one left.
+ *
+ * Returns false when the node does have the container after all — the 404 came
+ * from something else and the caller must re-throw it.
+ */
+async function healMissingContainer(server: ServerRow): Promise<boolean> {
+  const state = await getServerState(server.node_id, server.id);
+  if (state !== "missing") return false;
+
+  console.warn(
+    `[serverManager] container for ${server.id} is gone from node ${server.node_id}; rebuilding it`,
+  );
+
+  // Drop the stale id first: it names a container that no longer exists, so
+  // recreating would otherwise spend a stop + remove round trip on it and log
+  // two failures that mean nothing.
+  await sql`
+    UPDATE servers SET container_id = NULL, updated_at = now() WHERE id = ${server.id}
+  `;
+  await recreateServerContainer(server.id);
+  return true;
+}
+
+/**
+ * Run a container operation, rebuilding the container once if the node reports
+ * it is missing.
+ *
+ * Every power action goes through here, so drift is repaired by the action the
+ * operator already took rather than by a support ticket. The retry is safe for
+ * all four: start on a fresh container is the normal case, and stop/kill are
+ * idempotent against a container that is not running.
+ */
+async function withMissingContainerRecovery<T>(
+  server: ServerRow,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!(error instanceof HttpError) || error.status !== 404) throw error;
+    // A rebuild that fails carries the more useful message (an unreachable
+    // node, a blueprint that is gone), so it replaces the 404 rather than
+    // being swallowed in favour of it.
+    if (!(await healMissingContainer(server))) throw error;
+    return await operation();
   }
 }
 
@@ -591,7 +971,9 @@ export async function startServer(
     // auto-updater runs inside the "starting" phase. Best-effort by contract —
     // a catalog outage never blocks a start.
     await autoUpdateServerPlugins(serverId);
-    await startServerContainer(server.node_id, serverId);
+    await withMissingContainerRecovery(server, () =>
+      startServerContainer(server.node_id, serverId),
+    );
     await setStatus(serverId, "running");
   } catch (error) {
     await setStatus(serverId, "error");
@@ -617,7 +999,9 @@ export async function stopServer(
 
   await setStatus(serverId, "stopping");
   try {
-    await stopServerContainer(server.node_id, serverId);
+    await withMissingContainerRecovery(server, () =>
+      stopServerContainer(server.node_id, serverId),
+    );
     await setStatus(serverId, "stopped");
   } catch (error) {
     await setStatus(serverId, "error");
@@ -652,7 +1036,9 @@ export async function killServer(
 
   await setStatus(serverId, "stopping");
   try {
-    await killServerContainer(server.node_id, serverId);
+    await withMissingContainerRecovery(server, () =>
+      killServerContainer(server.node_id, serverId),
+    );
     await setStatus(serverId, "stopped");
   } catch (error) {
     await setStatus(serverId, "error");
@@ -681,7 +1067,9 @@ export async function restartServer(
     // A restart re-reads the plugins directory at boot, so the auto-updater
     // runs before the agent restarts the container.
     await autoUpdateServerPlugins(serverId);
-    await restartServerContainer(server.node_id, serverId);
+    await withMissingContainerRecovery(server, () =>
+      restartServerContainer(server.node_id, serverId),
+    );
     await setStatus(serverId, "running");
   } catch (error) {
     await setStatus(serverId, "error");
@@ -867,6 +1255,221 @@ export async function reconcileServerStatus(serverId: string): Promise<ServerSta
   return mapped;
 }
 
+// --- Reinstall ------------------------------------------------------------------
+
+/**
+ * Wipe a server's files and build it again from its blueprint.
+ *
+ * The destructive counterpart to {@link healMissingContainer}: that one rebuilds
+ * a container *around* the data directory, this one deletes the directory and
+ * runs the blueprint's install step over the empty space. Worlds, configs,
+ * plugin jars, and anything the owner uploaded are gone; there is no backup and
+ * no undo. Everything the panel records about the server — its ports, env,
+ * databases, subusers, SFTP credentials and links — survives, because none of it
+ * lives in the data directory. That is the whole distinction between this and
+ * delete-and-create-again: the server keeps its identity and its address.
+ *
+ * Every reason to refuse is checked here, synchronously, so a rejected reinstall
+ * leaves the files intact. That includes asking the node whether it is ready:
+ * an agent that is down fails every step below, and discovering it after the
+ * wipe would leave the owner with neither their files nor a server.
+ *
+ * The rebuild itself is detached, for the same reason provisioning is (see
+ * {@link provisionServer}) — an image pull and an install script are minutes of
+ * work that no HTTP request should be holding open — and it reports the same
+ * way, through the row's status and a freshly emptied install log.
+ */
+export async function reinstallServer(
+  serverId: string,
+  actorId: string,
+): Promise<ServerSummary> {
+  const server = await loadServerRow(serverId);
+
+  if (server.status === "suspended") {
+    throw conflict(
+      "This server is suspended pending administrator review and cannot be reinstalled.",
+    );
+  }
+  if (server.status === "deleting") {
+    throw conflict("This server is being deleted.");
+  }
+  // Two ways to already be building: the row says so, or this process holds the
+  // task. The second catches the window where a reinstall has been accepted but
+  // has not written its status yet.
+  if (isProvisioning(server.status) || inFlightProvisions.has(serverId)) {
+    throw conflict(
+      "This server is already being built. Wait for that to finish before reinstalling it.",
+    );
+  }
+
+  const blueprintKey = await getBlueprintKeyById(server.blueprint_id);
+  const blueprint = blueprintKey ? await getBlueprintByKey(blueprintKey) : null;
+  if (!blueprint) {
+    throw conflict(
+      "This server's blueprint is no longer registered, so there is nothing to reinstall it from.",
+    );
+  }
+
+  // The rebuild republishes the ports already reserved for this server rather
+  // than allocating new ones — an address that moved under the players would
+  // make a reinstall a migration. A server with no ports never got far enough
+  // through its first provision to have anything to rebuild onto.
+  const ports = (await sql`
+    SELECT 1 FROM server_ports WHERE server_id = ${serverId} LIMIT 1
+  `) as { 1: number }[];
+  if (ports.length === 0) {
+    throw conflict(
+      "This server has no published ports, so its first install never finished. " +
+        "Delete it and create it again instead.",
+    );
+  }
+
+  await assertNodeReadyToProvision(server.node_id);
+
+  // The install log starts empty: the previous build's output describes files
+  // that are about to stop existing, and the reinstall's own progress is what a
+  // reader wants from here on.
+  await sql`
+    UPDATE servers
+    SET status = 'installing', install_log = '', install_started_at = now(),
+        updated_at = now()
+    WHERE id = ${serverId}
+  `;
+  await logPhase(
+    serverId,
+    `Reinstalling "${server.name}" from blueprint ${blueprint.key}. ` +
+      "Everything in the server's data directory is deleted first.",
+  );
+
+  // Audited on acceptance, like `server.create`: the destructive decision has
+  // been made and taken, whether or not the node then rebuilds successfully.
+  await recordAudit({
+    userId: actorId,
+    action: "server.reinstall",
+    targetType: "server",
+    targetId: serverId,
+    metadata: { blueprintKey: blueprint.key, nodeId: server.node_id },
+  });
+
+  // Detached on purpose — see provisionServer. Shares `inFlightProvisions` with
+  // the create path so the two can never run against the same server at once.
+  const task = rebuildServerFromBlueprint(serverId, blueprint).finally(() => {
+    inFlightProvisions.delete(serverId);
+  });
+  inFlightProvisions.set(serverId, task);
+
+  return getServer(serverId);
+}
+
+/**
+ * The reinstall's background half: stop, wipe, install, rebuild.
+ *
+ * Ordered so that nothing is destroyed while the game may still be writing, and
+ * so that a failure at any step leaves a row an operator can read rather than a
+ * container pointing at files that are gone. Like {@link provisionServer} it
+ * never rejects — the row's status and install log are how it reports.
+ */
+async function rebuildServerFromBlueprint(
+  serverId: string,
+  blueprint: Blueprint,
+): Promise<void> {
+  try {
+    const server = await loadServerRow(serverId);
+
+    // Stop before deleting, so the world is not half-written when it goes.
+    // Best-effort: a container that is already stopped — or already gone — is
+    // the state this is trying to reach.
+    if (server.container_id) {
+      await logPhase(serverId, "Stopping the server…");
+      try {
+        await stopServerContainer(server.node_id, serverId, 30);
+      } catch (error) {
+        console.error(
+          `[serverManager] stop before reinstall failed for ${serverId} (continuing):`,
+          error,
+        );
+      }
+    }
+
+    await assertStillProvisioning(serverId);
+    await logPhase(serverId, "Deleting the server's files…");
+
+    // The wipe, and the one step here that is *not* best-effort: reinstalling on
+    // top of the old files is not what was asked for, so a failure has to stop
+    // the rebuild rather than quietly become a reinstall-in-place.
+    await deleteServerContainer(server.node_id, serverId, true);
+
+    // The id named a container that no longer exists. Dropped before anything
+    // can fail below, so a rebuild that dies mid-way leaves the drift
+    // healMissingContainer expects rather than a row pointing at nothing.
+    await sql`
+      UPDATE servers SET container_id = NULL, updated_at = now() WHERE id = ${serverId}
+    `;
+
+    // The installed-plugin rows described jars that have just been deleted.
+    // Left behind, they would read as "missing" in the plugins tab and be
+    // re-downloaded by the pre-start auto-updater — a fresh install that
+    // quietly restores the plugins it was asked to remove.
+    await sql`DELETE FROM server_plugins WHERE server_id = ${serverId}`;
+
+    if (blueprint.install) {
+      await assertStillProvisioning(serverId);
+      await logPhase(
+        serverId,
+        `Running the install script in ${blueprint.install.image}. ` +
+          "The image is pulled first, so there may be no output for a while.",
+      );
+
+      // The server's stored env, not the blueprint's defaults: the install
+      // script must see the same values the container will boot with, including
+      // the published port and any key the owner has edited since creation.
+      const { logs } = await runServerInstall(server.node_id, serverId, {
+        image: blueprint.install.image,
+        script: blueprint.install.script,
+        entrypoint: blueprint.install.entrypoint,
+        containerDataPath: blueprint.dataPath,
+        env: await loadEnvForContainer(serverId),
+        cpuLimit: Number(server.cpu_limit),
+        memoryLimitMb: server.memory_limit_mb,
+      });
+
+      await appendInstallLog(serverId, `${logs.trimEnd()}\n`);
+      await logPhase(serverId, "Install script finished.");
+    }
+
+    await assertStillProvisioning(serverId);
+    await logPhase(
+      serverId,
+      `Creating the container from ${blueprint.dockerImage}. ` +
+        "A node that has not run this image before pulls it now, which can " +
+        "take several minutes.",
+    );
+
+    // Republishes the server's existing ports, env, limits and networks. It
+    // leaves the server stopped, which is what the row's `installing` status
+    // buys: there is no "was running" to restore, because a freshly installed
+    // server is one the owner starts when they are ready for players on it.
+    await recreateServerContainer(serverId);
+
+    await logPhase(
+      serverId,
+      "Done — the server has been reinstalled and is ready to start.",
+    );
+  } catch (error) {
+    if (error instanceof ProvisionAbandoned) {
+      console.warn(
+        `[serverManager] reinstall abandoned for ${serverId}: ${error.message}`,
+      );
+      return;
+    }
+
+    await setStatus(serverId, "error");
+    const reason = error instanceof Error ? error.message : String(error);
+    await logPhase(serverId, `Reinstall failed: ${reason}`);
+    console.error(`[serverManager] reinstall failed for ${serverId}:`, error);
+  }
+}
+
 // --- Additional port assignment ------------------------------------------------
 
 /**
@@ -967,6 +1570,13 @@ async function recreateServerContainer(serverId: string): Promise<void> {
         error,
       );
     }
+
+    // The old id must not survive the removal: if the create below fails, a row
+    // still pointing at a container the node no longer has is exactly the drift
+    // healMissingContainer would have to repair later.
+    await sql`
+      UPDATE servers SET container_id = NULL, updated_at = now() WHERE id = ${serverId}
+    `;
   }
 
   // Rebuild the same startup command the create path produced, so a recreated

@@ -49,6 +49,19 @@ test("a subuser row with neither email nor flags renders no detail", () => {
   expect(describeMetadata("subuser.remove", {})).toBeNull();
 });
 
+test("server.reinstall says the files went, and what replaced them", () => {
+  expect(
+    describeMetadata("server.reinstall", {
+      blueprintKey: "minecraft-java",
+      nodeId: "11111111-2222-3333-4444-555555555555",
+    }),
+  ).toBe("all files deleted · reinstalled from minecraft-java");
+});
+
+test("server.reinstall without a blueprint still records the deletion", () => {
+  expect(describeMetadata("server.reinstall", {})).toBe("all files deleted");
+});
+
 test("server.file.delete renders a batch as a comma-separated path list", () => {
   expect(
     describeMetadata("server.file.delete", {

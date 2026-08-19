@@ -237,7 +237,12 @@ export function ConsolePanel({
       tokenRef.current = session.token;
 
       ws.onmessage = (event) => {
-        let parsed: { type?: string; data?: unknown; message?: string };
+        let parsed: {
+          type?: string;
+          data?: unknown;
+          message?: string;
+          code?: string;
+        };
         try {
           parsed = JSON.parse(event.data);
         } catch {
@@ -262,10 +267,19 @@ export function ConsolePanel({
             // restart), so this case just updates the UI.
             setConnected(false);
             break;
-          case "error":
-            if (parsed.message) append(`[console] ${parsed.message}\n`);
+          case "error": {
+            // A container the node no longer has is not the viewer's problem to
+            // decode: the panel rebuilds it from the stored spec on the next
+            // power action, and the reconnect loop below attaches on its own
+            // once it is back. So say that, not the agent's Docker fact.
+            const text =
+              parsed.code === "no_container"
+                ? "Please wait, rebuilding container…"
+                : parsed.message;
+            if (text) append(`[console] ${text}\n`);
             setConnected(false);
             break;
+          }
         }
       };
 

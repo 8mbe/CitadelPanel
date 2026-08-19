@@ -16,6 +16,7 @@ export type AuditAction =
   | "server.stop"
   | "server.restart"
   | "server.kill"
+  | "server.reinstall"
   | "server.delete"
   | "server.suspend"
   | "server.unsuspend"
