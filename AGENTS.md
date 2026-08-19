@@ -25,6 +25,22 @@ TypeScript path alias: `@/*` → repo root (`@/components`, `@/lib`, `@/app`).
 
 Only start a dev server if **none** is running for that app. If you started it, you own it: stop every dev server you started before finishing the task. A dev server you started must not outlive your work.
 
+## Committing
+
+**Always commit when a task is done.** Finishing work without a commit leaves the
+repo dirty for the next agent — don't do it. Never leave changes uncommitted
+because the task "seems small".
+
+Use the **`file-commit` skill** to write the commit. If that skill isn't
+installed in this environment, fall back to your own judgement: stage only the
+files your task touched, and write a conventional-commit message
+(`feat(scope):`, `fix(scope):`, `docs:`, `test:`, …) matching the existing log.
+
+- Commit only. Don't push unless the user asks.
+- Never stage `.env`, secrets, or unrelated files that were already dirty when
+  you started.
+- If you're on `main` and the change is more than a small fix, branch first.
+
 ## Design system (frontend)
 
 Follow the existing visual language exactly. Match the surrounding code — do not introduce new patterns, color literals, or component primitives.
