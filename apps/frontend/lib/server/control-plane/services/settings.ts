@@ -14,6 +14,11 @@
 
 import { sql } from "../db/client";
 import { decryptSecret, encryptSecret } from "../lib/crypto";
+import {
+  DEFAULT_SITE_THEME,
+  normalizeSiteTheme,
+  type SiteThemeSettings,
+} from "@/lib/site-theme";
 
 /** Captcha providers the panel knows how to verify server-side. */
 export const CAPTCHA_PROVIDERS = [
@@ -778,6 +783,45 @@ export async function setBranding(
     throw new Error("The tagline must be 160 characters or fewer.");
   }
   await writeSetting("branding", next satisfies BrandingSettings, updatedBy);
+  return next;
+}
+
+// --- Site theme ---------------------------------------------------------------
+
+/**
+ * The operator's palette — the third option in the theme switcher, next to the
+ * fixed light and dark ones.
+ *
+ * Stored as a base plus a sparse set of token overrides rather than a complete
+ * palette. That is what makes it survive a redesign: an operator who only ever
+ * set `--primary` keeps following the shipped values for everything else, so a
+ * future tweak to, say, the muted surface reaches their panel too.
+ *
+ * `normalizeSiteTheme` runs on the way out as well as on the way in. The value
+ * ends up inside a `<style>` element, and a row written by an older version of
+ * the panel — or by hand — has never been through this validator, so the read
+ * path cannot assume the write path cleaned it. See `lib/site-theme.ts`.
+ */
+export async function getThemeSettings(): Promise<SiteThemeSettings> {
+  return normalizeSiteTheme(
+    await readSetting<Partial<SiteThemeSettings>>("theme", DEFAULT_SITE_THEME),
+  );
+}
+
+export async function setThemeSettings(
+  update: Partial<SiteThemeSettings>,
+  updatedBy: string | null,
+): Promise<SiteThemeSettings> {
+  const current = await getThemeSettings();
+  const next = normalizeSiteTheme({
+    base: update.base ?? current.base,
+    // Colours are replaced wholesale, not merged: clearing a token back to the
+    // base palette has to be expressible, and a merge would make an omitted key
+    // and a cleared key indistinguishable.
+    colors: update.colors ?? current.colors,
+    radius: update.radius === undefined ? current.radius : update.radius,
+  });
+  await writeSetting("theme", next satisfies SiteThemeSettings, updatedBy);
   return next;
 }
 

@@ -187,6 +187,8 @@ for a case already handled.
 
 ## Related
 
+- `docs/theming.md` — the site theme, the fourth thing on this admin page: the
+  operator's own palette, offered next to light and dark.
 - `docs/legal-pages.md` — the terms and privacy documents these settings link to.
 - `docs/first-time-setup.md` — the wizard that writes the first settings.
 - `docs/api-keys.md` — the other consumer of `GET /api/settings/public`.

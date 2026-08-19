@@ -49,6 +49,7 @@ import {
   getPublicMailSettings,
   getRegistrationSettings,
   getSeoSettings,
+  getThemeSettings,
   isRegistrationOpen,
   getSetupState,
   getVerificationPolicy,
@@ -67,6 +68,7 @@ import {
   setMailSettings,
   setRegistrationSettings,
   setSeoSettings,
+  setThemeSettings,
   setVerificationPolicy,
   setTimezone,
   getServerLimits,
@@ -74,6 +76,14 @@ import {
   CAPTCHA_PROVIDERS,
 } from "../services/settings";
 import { chatCompletion, fetchAiModels } from "../services/aiClient";
+import { parseColor } from "@/lib/color";
+import {
+  isSiteThemeToken,
+  MAX_SITE_RADIUS,
+  MIN_SITE_RADIUS,
+  SITE_THEME_BASES,
+  type SiteThemeBase,
+} from "@/lib/site-theme";
 
 /**
  * GET /api/setup/status — public.
@@ -490,6 +500,63 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
     changed.push("branding");
   }
 
+  if (body.theme !== undefined) {
+    const theme = requireObject(body, "theme");
+
+    let base: SiteThemeBase | undefined;
+    if (theme.base !== undefined) {
+      if (!(SITE_THEME_BASES as readonly unknown[]).includes(theme.base)) {
+        throw badRequest(`"theme.base" must be one of: ${SITE_THEME_BASES.join(", ")}`);
+      }
+      base = theme.base as SiteThemeBase;
+    }
+
+    // Colours are validated here rather than left to the normaliser so a typo
+    // comes back as an error naming the token. The normaliser drops what it
+    // cannot parse, which is right for a stored row but would silently discard
+    // half of an admin's form submission.
+    let colors: Record<string, string> | undefined;
+    if (theme.colors !== undefined) {
+      if (
+        typeof theme.colors !== "object" ||
+        theme.colors === null ||
+        Array.isArray(theme.colors)
+      ) {
+        throw badRequest('"theme.colors" must be an object');
+      }
+      colors = {};
+      for (const [key, value] of Object.entries(theme.colors)) {
+        if (!isSiteThemeToken(key)) throw badRequest(`Unknown theme colour "${key}"`);
+        if (typeof value !== "string") {
+          throw badRequest(`"theme.colors.${key}" must be a string`);
+        }
+        // An empty value clears the override and falls back to the base palette.
+        if (!value.trim()) continue;
+        if (!parseColor(value)) {
+          throw badRequest(
+            `"${value}" is not a colour the panel can use for "${key}". Give a hex value like #7c3aed or an oklch() triple.`,
+          );
+        }
+        colors[key] = value;
+      }
+    }
+
+    let radius: number | null | undefined;
+    if (theme.radius !== undefined) {
+      if (theme.radius === null) {
+        radius = null;
+      } else {
+        radius = requireNumber(theme, "radius", {
+          min: MIN_SITE_RADIUS,
+          max: MAX_SITE_RADIUS,
+        });
+      }
+    }
+
+    await setThemeSettings({ base, colors, radius }, admin.id);
+    changed.push("theme");
+  }
+
   if (body.registration !== undefined) {
     const registration = requireObject(body, "registration");
     if (registration.enabled !== undefined && typeof registration.enabled !== "boolean") {
@@ -602,7 +669,7 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
 
   if (changed.length === 0) {
     throw badRequest(
-      "Provide at least one of: timezone, captcha, mail, verification, serverLimits, ai, branding, registration, seo, analytics",
+      "Provide at least one of: timezone, captcha, mail, verification, serverLimits, ai, branding, theme, registration, seo, analytics",
     );
   }
 
@@ -646,6 +713,7 @@ async function adminSettingsView() {
     serverLimits: await getServerLimits(),
     ai: await getPublicAiSettings(),
     branding: await getBranding(),
+    theme: await getThemeSettings(),
     registration: await getRegistrationSettings(),
     seo: await getSeoSettings(),
     analytics: await getAnalyticsSettings(),

@@ -25,7 +25,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { ModeToggle } from "@/components/mode-toggle";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { ADMIN_SECTIONS, AdminNav } from "@/components/admin/admin-nav";
 import { useBranding } from "@/components/branding-provider";
 import { SiteFooter, type LegalAvailability } from "@/components/site-footer";
@@ -133,7 +133,7 @@ export function PanelShell({
           )}
 
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            <ModeToggle />
+            <ThemeToggle />
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={

@@ -24,6 +24,7 @@ import {
   type AnalyticsProvider,
   type MailProvider,
 } from "@/lib/api";
+import { ThemeCard } from "@/components/admin/theme-card";
 import {
   CaptchaSettingsForm,
   toCaptchaPayload,
@@ -113,6 +114,7 @@ export function AdminGeneralSettings() {
       </div>
 
       <BrandingCard settings={settings} patch={patch} />
+      <ThemeCard settings={settings} patch={patch} />
       <GeneralCard settings={settings} patch={patch} />
       <RegistrationCard settings={settings} patch={patch} />
       <CaptchaCard settings={settings} patch={patch} />

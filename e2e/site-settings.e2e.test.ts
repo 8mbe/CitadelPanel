@@ -11,7 +11,9 @@
  *   - robots.txt, sitemap.xml, /terms and /privacy agree with those flags. A
  *     crawler must get the same answer whichever of them it reads first.
  *   - The new settings groups validate their input, and the legal routes are
- *     admin-only.
+ *     admin-only. The site theme's colour validation gets particular attention:
+ *     it is the one settings value that reaches the browser as CSS rather than
+ *     as text content.
  *
  * Like `setup.e2e.test.ts`, this suite asserts refusal and validation paths
  * rather than success paths: a passing run must not rename the operator's panel,
@@ -236,6 +238,60 @@ describe("PATCH /api/admin/settings validates the new groups", () => {
     );
   });
 
+  e2e("a colour the panel cannot re-emit is rejected", async () => {
+    // The theme ends up inside a <style> element, and the parser is what keeps
+    // that string numeric — so anything it cannot turn back into an oklch()
+    // triple has to fail at the API, not get quietly dropped on write.
+    for (const value of [
+      "red",
+      "rgb(255 0 0)",
+      "var(--primary)",
+      "#fff;} html { display: none } .x {",
+      "</style><script>alert(1)</script>",
+    ]) {
+      expectStatus(
+        await api("/api/admin/settings", {
+          method: "PATCH",
+          key: config.adminKey,
+          body: { theme: { colors: { primary: value } } },
+        }),
+        400,
+      );
+    }
+  });
+
+  e2e("a token the panel does not expose is rejected", async () => {
+    expectStatus(
+      await api("/api/admin/settings", {
+        method: "PATCH",
+        key: config.adminKey,
+        body: { theme: { colors: { "chart-1": "#ffffff" } } },
+      }),
+      400,
+    );
+  });
+
+  e2e("an unknown theme base and an out-of-range radius are rejected", async () => {
+    // "system" is the interesting one: it was a theme before this switcher had
+    // three fixed options, and it is not a palette anything can fall back to.
+    expectStatus(
+      await api("/api/admin/settings", {
+        method: "PATCH",
+        key: config.adminKey,
+        body: { theme: { base: "system" } },
+      }),
+      400,
+    );
+    expectStatus(
+      await api("/api/admin/settings", {
+        method: "PATCH",
+        key: config.adminKey,
+        body: { theme: { radius: 99 } },
+      }),
+      400,
+    );
+  });
+
   e2e("an empty patch is rejected", async () => {
     expectStatus(
       await api("/api/admin/settings", { method: "PATCH", key: config.adminKey, body: {} }),
@@ -257,6 +313,7 @@ describe("PATCH /api/admin/settings validates the new groups", () => {
       "serverLimits",
       "ai",
       "branding",
+      "theme",
       "registration",
       "seo",
       "analytics",

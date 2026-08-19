@@ -6,6 +6,7 @@ import { Analytics } from "@/components/analytics";
 import { BrandingProvider } from "@/components/branding-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { buildSiteMetadata, getSiteSettings } from "@/lib/server/site-settings";
+import { buildSiteThemeCss } from "@/lib/site-theme";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
@@ -29,7 +30,11 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const { branding, analytics } = await getSiteSettings();
+  const { branding, analytics, theme } = await getSiteSettings();
+  // The operator's palette is server-rendered rather than fetched: it has to be
+  // in the same response as the `site-*` class next-themes puts on <html>, or a
+  // visitor whose theme is the site theme gets a frame of the base palette.
+  const siteThemeCss = buildSiteThemeCss(theme);
 
   return (
     <html
@@ -38,12 +43,17 @@ export default async function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="system"
-          enableSystem
-          disableTransitionOnChange
-        >
+        {siteThemeCss && (
+          // React hoists this into <head>. The rules outrank both `:root` and
+          // `.dark` on specificity (see `buildSiteThemeCss`), so they win
+          // wherever the hoist lands relative to the app stylesheet.
+          <style
+            href="site-theme"
+            precedence="high"
+            dangerouslySetInnerHTML={{ __html: siteThemeCss }}
+          />
+        )}
+        <ThemeProvider siteThemeBase={theme.base}>
           <BrandingProvider branding={branding}>{children}</BrandingProvider>
         </ThemeProvider>
         <Analytics settings={analytics} />

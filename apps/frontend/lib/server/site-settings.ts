@@ -9,12 +9,14 @@ import {
   getBranding,
   getLegalSettings,
   getSeoSettings,
+  getThemeSettings,
   isAnalyticsUsable,
   type AnalyticsSettings,
   type BrandingSettings,
   type SeoSettings,
 } from "@/lib/server/control-plane/services/settings";
 import type { LegalAvailability } from "@/components/site-footer";
+import { DEFAULT_SITE_THEME, type SiteThemeSettings } from "@/lib/site-theme";
 
 /**
  * Site identity for server components: the branding, SEO, and analytics settings
@@ -43,6 +45,8 @@ export interface SiteSettings {
    * `FRONTEND_URL`. Used as `metadataBase` and by `robots.txt`/`sitemap.xml`.
    */
   siteUrl: string;
+  /** The operator's palette — the third theme. See `docs/theming.md`. */
+  theme: SiteThemeSettings;
 }
 
 const FALLBACK_BRANDING: BrandingSettings = {
@@ -59,10 +63,11 @@ const FALLBACK_SEO: SeoSettings = {
 };
 
 export const getSiteSettings = cache(async (): Promise<SiteSettings> => {
-  const [branding, seo, analytics] = await Promise.all([
+  const [branding, seo, analytics, theme] = await Promise.all([
     getBranding().catch(() => FALLBACK_BRANDING),
     getSeoSettings().catch(() => FALLBACK_SEO),
     getAnalyticsSettings().catch(() => null),
+    getThemeSettings().catch(() => DEFAULT_SITE_THEME),
   ]);
 
   return {
@@ -70,6 +75,7 @@ export const getSiteSettings = cache(async (): Promise<SiteSettings> => {
     seo,
     analytics: analytics && isAnalyticsUsable(analytics) ? analytics : null,
     siteUrl: (seo.siteUrl ?? env.frontendUrl).replace(/\/+$/, ""),
+    theme,
   };
 });
 

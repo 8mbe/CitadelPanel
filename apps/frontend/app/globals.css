@@ -2,7 +2,19 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/* The panel has three themes: light, dark, and the operator's own (see
+   docs/theming.md). The site theme carries its base in its class name —
+   `.site-dark` is matched by `dark:` exactly like `.dark` is — because half the
+   component library reaches for `dark:` utilities, and a dark-based site theme
+   that did not match them would render light text on light chrome. */
+@custom-variant dark (&:is(.dark *, .site-dark *));
+
+/* Which of the three is active, for the theme switcher's icon. Driven by CSS
+   rather than `useTheme()` so the trigger is right on the first paint instead
+   of after hydration. */
+@custom-variant theme-light (&:is(.light *));
+@custom-variant theme-dark (&:is(.dark *));
+@custom-variant theme-site (&:is(.site-light *, .site-dark *));
 
 @theme inline {
   --color-background: var(--background);
@@ -93,7 +105,11 @@
   --sidebar-ring: oklch(0.709 0.01 56.259);
 }
 
-.dark {
+/* `.site-dark` shares the whole dark palette; the operator's overrides are
+   layered on top at `html.site-dark` specificity by the <style> the root layout
+   emits from `lib/site-theme.ts`. */
+.dark,
+.site-dark {
   --background: oklch(0.147 0.004 49.25);
   --foreground: oklch(0.985 0.001 106.423);
   --card: oklch(0.216 0.006 56.043);
@@ -133,6 +149,17 @@
   --sidebar-accent-foreground: oklch(0.985 0.001 106.423);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.553 0.013 58.071);
+}
+
+/* next-themes only sets `color-scheme` for themes it knows are light or dark,
+   which the site theme is not. Stating it here keeps native scrollbars, date
+   pickers, and autofill in step with the palette. */
+.site-light {
+  color-scheme: light;
+}
+
+.site-dark {
+  color-scheme: dark;
 }
 
 @layer base {

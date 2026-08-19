@@ -70,6 +70,9 @@ Existing docs:
 - `docs/ai-helper.md` — the AI console helper: admin OpenAI-compatible
   config (write-only key, fetch-models/test buttons), the panel-composed
   prompt flow, and why the browser only sends the question.
+- `docs/theming.md` — the three-theme switcher (site/light/dark, no "system"),
+  why the site theme's base is baked into its `<html>` class, and why an
+  operator's colour is parsed to numbers before it becomes CSS.
 - `docs/site-settings.md` — branding (the site name is a setting, not a
   constant), the registration toggle, SEO/`robots.txt`/`sitemap.xml` with
   indexing off by default, the Plausible/GA analytics toggle, and the error

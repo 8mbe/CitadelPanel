@@ -6,6 +6,7 @@ import { AlertOctagon, RotateCw } from "lucide-react";
 import { ErrorPage } from "@/components/error-page";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
+import { DEFAULT_SITE_THEME } from "@/lib/site-theme";
 
 /**
  * The last-resort error page: it replaces the root layout, so it fires only when
@@ -20,6 +21,10 @@ import { Button } from "@/components/ui/button";
  * that could resolve it is exactly what has already failed by the time this
  * renders; a second attempt would only fail again, and the point of this page is
  * to render unconditionally.
+ *
+ * The site theme falls back to its default base for the same reason, and the
+ * operator's colour overrides are simply absent — a reader who prefers the site
+ * theme sees the shipped palette here rather than their own.
  */
 export default function GlobalError({
   error,
@@ -32,12 +37,7 @@ export default function GlobalError({
     <html lang="en" className="h-full antialiased" suppressHydrationWarning>
       <body className="min-h-full">
         <title>Something went wrong</title>
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="system"
-          enableSystem
-          disableTransitionOnChange
-        >
+        <ThemeProvider siteThemeBase={DEFAULT_SITE_THEME.base}>
           <div className="flex min-h-dvh flex-col items-center justify-center bg-background p-4">
             <ErrorPage
               code="500"

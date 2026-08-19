@@ -7,6 +7,7 @@
  */
 
 import { initials } from "./format";
+import type { SiteThemeSettings } from "@/lib/site-theme";
 import type {
   DirectoryListing,
   NodeAbuseSummary,
@@ -2344,6 +2345,7 @@ export interface AdminSettings {
   serverLimits: { maxAdditionalPortsPerServer: number; maxDatabasesPerServer: number };
   ai: AdminAiSettings;
   branding: BrandingSettings;
+  theme: SiteThemeSettings;
   registration: RegistrationSettings;
   seo: SeoSettings;
   analytics: AnalyticsSettings;
@@ -2354,6 +2356,13 @@ export interface BrandingSettings {
   siteName: string;
   tagline: string;
 }
+
+/**
+ * The operator-configurable third theme. Defined in `@/lib/site-theme`, which is
+ * also where the token list and the CSS builder live — re-exported here so the
+ * settings forms have one import for the whole admin surface.
+ */
+export type { SiteThemeSettings };
 
 /** Whether strangers may create their own accounts. */
 export interface RegistrationSettings {
@@ -2427,6 +2436,7 @@ export interface AdminSettingsUpdate {
     model?: string | null;
   };
   branding?: Partial<BrandingSettings>;
+  theme?: Partial<SiteThemeSettings>;
   registration?: Partial<RegistrationSettings>;
   seo?: Partial<SeoSettings>;
   analytics?: Partial<AnalyticsSettings>;
