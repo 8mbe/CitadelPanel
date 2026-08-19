@@ -29,6 +29,28 @@ import {
   handleAdminSetApiKeyEnabled,
 } from "@/lib/server/control-plane/routes/apiKeys";
 import {
+  handleCreateNodeDatabaseBackup,
+  handleCreateServerBackup,
+  handleDeleteNodeDatabaseBackup,
+  handleDeleteServerBackup,
+  handleGetBackupStorage,
+  handleGetNodeDatabaseBackupLogs,
+  handleGetServerBackup,
+  handleGetServerBackupLogs,
+  handleListDatabaseBackupNodes,
+  handleListNodeDatabaseBackups,
+  handleListNodeRepositorySnapshots,
+  handleListRepositorySnapshots,
+  handleListServerBackups,
+  handlePreviewBackupSchedule,
+  handleRestoreNodeDatabaseBackup,
+  handleRestoreServerBackup,
+  handleStartServerAfterRestore,
+  handleTestBackupDestination,
+  handleUpdateNodeDatabaseBackupSettings,
+  handleUpdateServerBackupSettings,
+} from "@/lib/server/control-plane/routes/backups";
+import {
   handleAdminCreateBlueprint,
   handleAdminDeleteBlueprint,
   handleAdminGetBlueprint,
@@ -168,6 +190,15 @@ const exact = new Map<string, Partial<Record<string, Handler>>>([
   ["admin/settings/test-email", { POST: handleTestEmail }],
   ["admin/settings/ai/models", { POST: handleFetchAiModels }],
   ["admin/settings/ai/test", { POST: handleTestAi }],
+  // Backup destination + schedule tooling (see routes/backups.ts). The S3 config
+  // itself is part of admin/settings; these two are the "does it work?" and
+  // "when would it run?" helpers the form needs.
+  ["admin/backups/test", { POST: handleTestBackupDestination }],
+  ["admin/backups/preview-schedule", { POST: handlePreviewBackupSchedule }],
+  // Storage accounting for the admin page's used/allowed/total line.
+  ["admin/backups/storage", { GET: handleGetBackupStorage }],
+  // Node database backups: the admin-owned scope (see routes/backups.ts).
+  ["admin/backups/databases", { GET: handleListDatabaseBackupNodes }],
   ["admin/legal", { GET: handleGetLegal }],
   ["me", { GET: handleGetMe }],
   ["account/delete", { POST: handleDeleteAccount }],
@@ -250,6 +281,17 @@ const patterns: Array<{
   { pattern: /^servers\/([^/]+)\/plugins\/versions\/([^/]+)$/, methods: { GET: handleListPluginVersions } },
   { pattern: /^servers\/([^/]+)\/plugins\/([^/]+)\/toggle$/, methods: { POST: handleTogglePlugin } },
   { pattern: /^servers\/([^/]+)\/plugins\/([^/]+)$/, methods: { DELETE: handleRemovePlugin } },
+  // Backups (see routes/backups.ts). The literal sub-paths (`settings`,
+  // `snapshots`, `start-server`) must come before the bare `:backupId` pattern,
+  // otherwise e.g. PATCH /backups/settings is captured as a backup id and
+  // returns 405 instead of reaching the handler.
+  { pattern: /^servers\/([^/]+)\/backups$/, methods: { GET: handleListServerBackups, POST: handleCreateServerBackup } },
+  { pattern: /^servers\/([^/]+)\/backups\/settings$/, methods: { PATCH: handleUpdateServerBackupSettings } },
+  { pattern: /^servers\/([^/]+)\/backups\/snapshots$/, methods: { GET: handleListRepositorySnapshots } },
+  { pattern: /^servers\/([^/]+)\/backups\/start-server$/, methods: { POST: handleStartServerAfterRestore } },
+  { pattern: /^servers\/([^/]+)\/backups\/([^/]+)\/logs$/, methods: { GET: handleGetServerBackupLogs } },
+  { pattern: /^servers\/([^/]+)\/backups\/([^/]+)\/restore$/, methods: { POST: handleRestoreServerBackup } },
+  { pattern: /^servers\/([^/]+)\/backups\/([^/]+)$/, methods: { GET: handleGetServerBackup, DELETE: handleDeleteServerBackup } },
   { pattern: /^servers\/([^/]+)\/subusers$/, methods: { GET: handleListSubusers, POST: handleInviteSubuser } },
   { pattern: /^servers\/([^/]+)\/subusers\/([^/]+)$/, methods: { PATCH: handleUpdateSubuser, DELETE: handleRemoveSubuser } },
   { pattern: /^servers\/([^/]+)\/sftp\/connection$/, methods: { GET: handleGetSftpConnection } },
@@ -259,6 +301,14 @@ const patterns: Array<{
   // and returns 405 instead of reaching the regenerate handler.
   { pattern: /^servers\/([^/]+)\/sftp\/credentials\/regenerate$/, methods: { POST: handleRegenerateSftpCredential } },
   { pattern: /^servers\/([^/]+)\/sftp\/credentials\/([^/]+)$/, methods: { DELETE: handleDeleteSftpCredential } },
+  // Node database backups. Literal sub-paths before the bare :runId pattern, and
+  // all of them before the `admin/nodes/:id` routes, which they do not share a
+  // prefix with but are easy to confuse when reading.
+  { pattern: /^admin\/backups\/databases\/([^/]+)$/, methods: { GET: handleListNodeDatabaseBackups, POST: handleCreateNodeDatabaseBackup, PATCH: handleUpdateNodeDatabaseBackupSettings } },
+  { pattern: /^admin\/backups\/databases\/([^/]+)\/snapshots$/, methods: { GET: handleListNodeRepositorySnapshots } },
+  { pattern: /^admin\/backups\/databases\/([^/]+)\/runs\/([^/]+)\/logs$/, methods: { GET: handleGetNodeDatabaseBackupLogs } },
+  { pattern: /^admin\/backups\/databases\/([^/]+)\/runs\/([^/]+)\/restore$/, methods: { POST: handleRestoreNodeDatabaseBackup } },
+  { pattern: /^admin\/backups\/databases\/([^/]+)\/runs\/([^/]+)$/, methods: { DELETE: handleDeleteNodeDatabaseBackup } },
   { pattern: /^admin\/nodes\/([^/]+)$/, methods: { GET: handleGetNode, PATCH: handleUpdateNode, DELETE: handleDeleteNode } },
   { pattern: /^admin\/nodes\/([^/]+)\/health$/, methods: { GET: handleNodeHealth } },
   { pattern: /^admin\/nodes\/([^/]+)\/ports$/, methods: { GET: handleListNodePortPool, POST: handleAddNodePortPoolEntry } },

@@ -45,6 +45,7 @@ import {
   getLegalSettings,
   getMailSettings,
   getPublicAiSettings,
+  getPublicBackupSettings,
   getPublicCaptchaSettings,
   getPublicMailSettings,
   getRegistrationSettings,
@@ -63,6 +64,8 @@ import {
   markSetupComplete,
   setAiSettings,
   setAnalyticsSettings,
+  setBackupSettings,
+  type BackupSettingsUpdate,
   setBranding,
   setCaptchaSettings,
   setMailSettings,
@@ -77,6 +80,7 @@ import {
 } from "../services/settings";
 import { chatCompletion, fetchAiModels } from "../services/aiClient";
 import { parseColor } from "@/lib/color";
+import { parseCron } from "@/lib/cron";
 import {
   isSiteThemeToken,
   MAX_SITE_RADIUS,
@@ -667,9 +671,142 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
     changed.push("analytics");
   }
 
+  if (body.backups !== undefined) {
+    const backups = requireObject(body, "backups");
+    if (typeof backups.enabled !== "boolean") {
+      throw badRequest('"backups.enabled" must be a boolean');
+    }
+
+    // Cron is validated here rather than in the service layer so the operator gets
+    // the parser's own message about the field they typed, and so an unparseable
+    // expression can never be stored — the scheduler would then silently never fire.
+    const readSchedule = (group: Record<string, unknown>, label: string): string | undefined => {
+      if (group.schedule === undefined) return undefined;
+      const raw = optionalString(group, "schedule", { max: 256 }) ?? "";
+      if (raw.trim().length > 0) {
+        try {
+          parseCron(raw);
+        } catch (error) {
+          throw badRequest(
+            error instanceof Error ? `${label}: ${error.message}` : `Invalid ${label}`,
+          );
+        }
+      }
+      return raw.trim();
+    };
+
+    let servers: BackupSettingsUpdate["servers"];
+    if (backups.servers !== undefined) {
+      const group = requireObject(backups, "servers");
+      servers = {};
+      const schedule = readSchedule(group, "server backup schedule");
+      if (schedule !== undefined) servers.schedule = schedule;
+      if (group.maxPerServer !== undefined) {
+        servers.maxPerServer = requireNumber(group, "maxPerServer", { min: 0, max: 1000 });
+      }
+      if (group.concurrency !== undefined) {
+        servers.concurrency = requireNumber(group, "concurrency", { min: 1, max: 32 });
+      }
+      if (group.exclude !== undefined) {
+        if (!Array.isArray(group.exclude)) {
+          throw badRequest('"backups.servers.exclude" must be an array of glob patterns');
+        }
+        if (group.exclude.length > 64) {
+          throw badRequest('"backups.servers.exclude" must contain at most 64 patterns');
+        }
+        servers.exclude = group.exclude.map((entry, index) => {
+          if (typeof entry !== "string" || entry.trim().length === 0 || entry.length > 256) {
+            throw badRequest(
+              `"backups.servers.exclude[${index}]" must be a non-empty string of at most 256 characters`,
+            );
+          }
+          return entry.trim();
+        });
+      }
+    }
+
+    let databases: BackupSettingsUpdate["databases"];
+    if (backups.databases !== undefined) {
+      const group = requireObject(backups, "databases");
+      databases = {};
+      const schedule = readSchedule(group, "database backup schedule");
+      if (schedule !== undefined) databases.schedule = schedule;
+      if (group.maxPerNode !== undefined) {
+        databases.maxPerNode = requireNumber(group, "maxPerNode", { min: 0, max: 1000 });
+      }
+    }
+
+    let storage: BackupSettingsUpdate["storage"];
+    if (backups.storage !== undefined) {
+      const group = requireObject(backups, "storage");
+      storage = {};
+      // A petabyte ceiling: high enough for any real operator, low enough that a
+      // typo cannot produce a number that overflows the display or the BIGINT.
+      const MAX_BYTES = 1024 ** 5;
+      if (group.quotaBytes !== undefined) {
+        storage.quotaBytes = requireNumber(group, "quotaBytes", { min: 0, max: MAX_BYTES });
+      }
+      if (group.capacityBytes !== undefined) {
+        storage.capacityBytes = requireNumber(group, "capacityBytes", { min: 0, max: MAX_BYTES });
+      }
+    }
+
+    try {
+      await setBackupSettings(
+        {
+          enabled: backups.enabled,
+          endpoint:
+            backups.endpoint === undefined
+              ? undefined
+              : (optionalString(backups, "endpoint", { max: 253 }) ?? null),
+          // Absent leaves the stored value alone; it defaults to true on a fresh
+          // install so an upgrade never quietly starts sending credentials in clear.
+          useTls:
+            backups.useTls === undefined
+              ? undefined
+              : (() => {
+                  if (typeof backups.useTls !== "boolean") {
+                    throw badRequest('"backups.useTls" must be a boolean');
+                  }
+                  return backups.useTls;
+                })(),
+          region: optionalString(backups, "region", { max: 64 }) ?? undefined,
+          bucket:
+            backups.bucket === undefined
+              ? undefined
+              : (optionalString(backups, "bucket", { max: 255 }) ?? null),
+          prefix:
+            backups.prefix === undefined
+              ? undefined
+              : (optionalString(backups, "prefix", { max: 255 }) ?? ""),
+          accessKeyId:
+            backups.accessKeyId === undefined
+              ? undefined
+              : (optionalString(backups, "accessKeyId", { max: 256 }) ?? null),
+          // Undefined keeps the stored secret; an empty string clears it.
+          secretAccessKey:
+            backups.secretAccessKey === undefined
+              ? undefined
+              : (optionalString(backups, "secretAccessKey", { max: 512 }) ?? null),
+          storage,
+          servers,
+          databases,
+        },
+        admin.id,
+      );
+    } catch (error) {
+      // setBackupSettings enforces "enabled requires a complete destination" and the
+      // quota-within-capacity rule.
+      throw badRequest(
+        error instanceof Error ? error.message : "Invalid backup configuration",
+      );
+    }
+    changed.push("backups");
+  }
+
   if (changed.length === 0) {
     throw badRequest(
-      "Provide at least one of: timezone, captcha, mail, verification, serverLimits, ai, branding, theme, registration, seo, analytics",
+      "Provide at least one of: timezone, captcha, mail, verification, serverLimits, ai, branding, theme, registration, seo, analytics, backups",
     );
   }
 
@@ -712,6 +849,7 @@ async function adminSettingsView() {
     verification: await getVerificationPolicy(),
     serverLimits: await getServerLimits(),
     ai: await getPublicAiSettings(),
+    backups: await getPublicBackupSettings(),
     branding: await getBranding(),
     theme: await getThemeSettings(),
     registration: await getRegistrationSettings(),

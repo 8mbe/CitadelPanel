@@ -28,6 +28,32 @@ import {
   dropServerDatabase,
   runServerDatabaseSql,
 } from "./docker/database";
+import {
+  hasRunningJob,
+  NODE_DATABASES_SUBJECT,
+  readJob,
+  serverSubject,
+} from "./backup/jobs";
+import {
+  checkRepository,
+  deleteSnapshot,
+  listSnapshots,
+  repositorySize,
+  startDatabaseBackup,
+  startDatabaseRestore,
+  startServerBackup,
+  startServerRestore,
+} from "./backup/run";
+import {
+  parseDatabaseNames,
+  parseDbAdmin,
+  parseExclude,
+  parseKeepMax,
+  parseReason,
+  parseRepoTarget,
+  parseSnapshotId,
+  parseSubject,
+} from "./backup/wire";
 import { createSftpServer } from "./sftp";
 import {
   copyPath,
@@ -44,6 +70,7 @@ import {
 } from "./files";
 import {
   badRequest,
+  conflict,
   json,
   noContent,
   parseJsonBody,
@@ -987,6 +1014,227 @@ const server = Bun.serve<ConsoleSocket, never>({
             "cache-control": "no-store",
           },
         });
+      }),
+    },
+
+    // --- Backups --------------------------------------------------------------
+    //
+    // restic-to-S3 backups, run by the agent in throwaway containers. The panel
+    // supplies the S3 credentials and the repository password on every call and
+    // the agent persists neither — the same posture the database routes take with
+    // the MariaDB admin credential.
+    //
+    // Two scopes, deliberately separate (see `docs/backups.md`):
+    //   - `servers/:id` — that server's data directory. Owner-triggered.
+    //   - `databases`   — every database on THIS node. Admin-triggered, and the
+    //                     only backup route that accepts the root-equivalent
+    //                     MariaDB admin credential.
+    //
+    // Backup and restore are *asynchronous*: they take minutes to hours, so the
+    // route registers a job and returns its id, and the panel polls for status
+    // and drains the job's log. The snapshot quota is enforced inside the job,
+    // before the new snapshot is written. Listing, deleting and measuring are
+    // synchronous metadata operations.
+
+    /**
+     * POST /v1/backups/servers/:id — back up a server's files. 202 with a job id.
+     *
+     * Body: { repo: { s3, password }, keepMax, reason, exclude[] }
+     *
+     * Files only. Databases are backed up at node scope — see below.
+     */
+    "/v1/backups/servers/:id": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+
+        // One job per subject at a time: two restics on one repository contend on
+        // its lock, and a backup racing a restore would snapshot half-restored data.
+        if (hasRunningJob(serverSubject(serverId))) {
+          throw conflict(
+            "A backup or restore is already running for this server on this node.",
+          );
+        }
+
+        const jobId = startServerBackup(serverId, {
+          repo: parseRepoTarget(body, "server", serverId),
+          keepMax: parseKeepMax(body),
+          reason: parseReason(body),
+          exclude: parseExclude(body),
+        });
+
+        return json({ jobId }, 202);
+      }),
+    },
+
+    /**
+     * POST /v1/backups/servers/:id/restore — restore a server's files.
+     *
+     * The panel stops the server before calling and starts it again afterwards:
+     * it owns the container lifecycle and the status the owner sees.
+     */
+    "/v1/backups/servers/:id/restore": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+
+        if (hasRunningJob(serverSubject(serverId))) {
+          throw conflict(
+            "A backup or restore is already running for this server on this node.",
+          );
+        }
+
+        const jobId = startServerRestore(serverId, {
+          repo: parseRepoTarget(body, "server", serverId),
+          snapshotId: parseSnapshotId(body.snapshotId),
+        });
+
+        return json({ jobId }, 202);
+      }),
+    },
+
+    /**
+     * POST /v1/backups/databases — back up every database on this node.
+     *
+     * Body: { repo, nodeId, databases[], admin: { user, password }, keepMax, reason }
+     *
+     * Admin-scoped: dumping every tenant's database needs the node's MariaDB
+     * admin credential, so this is the one backup route that takes one. `nodeId`
+     * addresses the repository; the agent does not know its own node id, since
+     * that identity belongs to the panel's registry.
+     */
+    "/v1/backups/databases": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+
+        if (hasRunningJob(NODE_DATABASES_SUBJECT)) {
+          throw conflict(
+            "A database backup or restore is already running on this node.",
+          );
+        }
+
+        const nodeId = requireServerId(
+          typeof body.nodeId === "string" ? body.nodeId : undefined,
+        );
+
+        const jobId = startDatabaseBackup({
+          repo: parseRepoTarget(body, "node", nodeId),
+          databases: parseDatabaseNames(body),
+          admin: parseDbAdmin(body),
+          keepMax: parseKeepMax(body),
+          reason: parseReason(body),
+        });
+
+        return json({ jobId }, 202);
+      }),
+    },
+
+    /**
+     * POST /v1/backups/databases/restore — restore this node's databases.
+     *
+     * Each dump is imported with `CREATE DATABASE IF NOT EXISTS` first, because
+     * the reason to run this is usually that the databases are gone. The panel
+     * re-provisions the scoped users and grants from its own encrypted records.
+     */
+    "/v1/backups/databases/restore": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+
+        if (hasRunningJob(NODE_DATABASES_SUBJECT)) {
+          throw conflict(
+            "A database backup or restore is already running on this node.",
+          );
+        }
+
+        const nodeId = requireServerId(
+          typeof body.nodeId === "string" ? body.nodeId : undefined,
+        );
+
+        const jobId = startDatabaseRestore({
+          repo: parseRepoTarget(body, "node", nodeId),
+          snapshotId: parseSnapshotId(body.snapshotId),
+          databases: parseDatabaseNames(body),
+          admin: parseDbAdmin(body),
+        });
+
+        return json({ jobId }, 202);
+      }),
+    },
+
+    /**
+     * GET /v1/backups/jobs/:jobId — poll a job of either scope.
+     *
+     * `?afterSeq=N` returns only log lines newer than N, so the panel drains the
+     * log incrementally instead of re-reading it on every poll.
+     */
+    "/v1/backups/jobs/:jobId": {
+      GET: route(async (request) => {
+        const jobId = (request as ParamRequest<"jobId">).params.jobId;
+        const afterSeq = Number(queryOf(request).get("afterSeq") ?? "0");
+        return json(readJob(jobId, Number.isFinite(afterSeq) ? afterSeq : 0));
+      }),
+    },
+
+    /**
+     * POST /v1/backups/snapshots — list a repository's snapshots.
+     *
+     * Body: { scope, id, repo }
+     *
+     * POST rather than GET because the S3 credentials and repository password
+     * travel in the body; putting them in a query string would put them in every
+     * access log between the panel and the node.
+     */
+    "/v1/backups/snapshots": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+        const { scope, id } = parseSubject(body);
+        const snapshots = await listSnapshots(parseRepoTarget(body, scope, id));
+        return json({ snapshots });
+      }),
+    },
+
+    /** POST /v1/backups/forget — delete one snapshot and reclaim its space. */
+    "/v1/backups/forget": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+        const { scope, id } = parseSubject(body);
+        await deleteSnapshot(
+          parseRepoTarget(body, scope, id),
+          parseSnapshotId(body.snapshotId),
+        );
+        return noContent();
+      }),
+    },
+
+    /**
+     * POST /v1/backups/size — deduplicated bytes a repository occupies.
+     *
+     * Backs the admin page's storage line. `null` means the size could not be
+     * read, which is deliberately distinct from `0` (a repository that genuinely
+     * holds nothing) — reporting an unreadable repository as empty would
+     * understate the fleet's usage, the one number this exists to get right.
+     */
+    "/v1/backups/size": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+        const { scope, id } = parseSubject(body);
+        return json({ sizeBytes: await repositorySize(parseRepoTarget(body, scope, id)) });
+      }),
+    },
+
+    /**
+     * POST /v1/backups/check — verify S3 from this node.
+     *
+     * Backs the admin settings page's "test connection" button. A repository that
+     * does not exist yet is a success: that is the expected state before the first
+     * backup, and initialising one to prove connectivity would leave debris in the
+     * operator's bucket.
+     */
+    "/v1/backups/check": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+        const { scope, id } = parseSubject(body);
+        return json(await checkRepository(parseRepoTarget(body, scope, id)));
       }),
     },
   },

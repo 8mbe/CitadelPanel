@@ -124,6 +124,54 @@ export const config = {
    * inside this container and resolves its IP to report back to the panel.
    */
   nodeDbContainer: optional("NODE_DB_CONTAINER", "citadel-node-db"),
+
+  /**
+   * Scratch space for backup work: database dumps on the way into a snapshot,
+   * and on the way back out during a restore.
+   *
+   * Deliberately a *sibling* of the data root rather than a directory inside
+   * it. A dump written under `<serverDataRoot>/<id>` would be visible in the
+   * file manager and over SFTP — so a plaintext copy of the game's database
+   * would be readable by every subuser with the `files` permission but not the
+   * `database` one. It would also land inside the very tree restic is walking.
+   */
+  backupStagingRoot: resolve(
+    optional(
+      "BACKUP_STAGING_ROOT",
+      resolve(optional("SERVER_DATA_ROOT", "/var/lib/citadel/servers"), "../backup-staging"),
+    ),
+  ),
+
+  /**
+   * The restic image the agent runs backups with.
+   *
+   * restic is the backup engine rather than a hand-rolled tar-to-S3 uploader
+   * because snapshots, deduplication, compression and client-side encryption
+   * are the parts of a backup system that are hard to get right — see
+   * `docs/backups.md`. It runs in a throwaway container instead of being
+   * installed on the host so a node needs nothing beyond the Docker socket the
+   * agent already owns.
+   *
+   * Pinned, not `latest`: a repository written by one restic version and read
+   * by another is a thing to opt into, not to discover after an upgrade.
+   */
+  resticImage: optional("RESTIC_IMAGE", "restic/restic:0.19.1"),
+
+  /**
+   * Network for the agent's own tooling containers (restic, database dumps).
+   *
+   * Its own bridge rather than the default one: these containers hold the
+   * operator's S3 credentials and a server's database password, so no tenant
+   * container should ever share a network with them.
+   */
+  backupNetwork: optional("BACKUP_NETWORK", "citadel_backup_net"),
+
+  /**
+   * Cap on how many log lines the agent retains per backup job. The panel
+   * drains these as the job runs; the cap bounds a runaway restic's memory use
+   * on the node.
+   */
+  maxBackupLogLines: optionalInt("AGENT_MAX_BACKUP_LOG_LINES", 2000),
 } as const;
 
 export type AgentConfig = typeof config;

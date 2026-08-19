@@ -28,6 +28,11 @@ export const forbidden = (message = "Insufficient permissions") =>
 export const notFound = (message = "Not found") => new HttpError(404, message);
 export const conflict = (message: string) => new HttpError(409, message);
 export const payloadTooLarge = (message: string) => new HttpError(413, message);
+/**
+ * The panel is working but a dependency it needs is not. Distinct from a 500:
+ * nothing is wrong with the request, and retrying it later is the right advice.
+ */
+export const serviceUnavailable = (message: string) => new HttpError(503, message);
 
 export function json(
   data: unknown,
