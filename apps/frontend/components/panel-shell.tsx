@@ -232,6 +232,7 @@ function MobileNav({
         </SheetHeader>
         <nav className="flex flex-col gap-0.5 overflow-y-auto p-2">
           <SheetClose
+            nativeButton={false}
             render={
               <Link
                 href="/"
@@ -258,6 +259,7 @@ function MobileNav({
             return (
               <SheetClose
                 key={section.href}
+                nativeButton={false}
                 render={
                   <Link
                     href={section.href}
