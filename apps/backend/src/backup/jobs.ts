@@ -9,9 +9,9 @@
  *
  * State lives in memory on the agent, not on disk, and that is deliberate: the
  * agent is stateless by design (see `servers.ts`), and the panel is the system's
- * durable record — it has a `server_backups` row before it ever calls here. An
- * agent restart therefore loses in-flight job *progress*, not the knowledge that
- * a backup was running; the panel reconciles a job that vanished into a failed
+ * durable record — it has a `backup_runs` row before it ever calls here. An agent
+ * restart therefore loses in-flight job *progress*, not the knowledge that a
+ * backup was running; the panel reconciles a job that vanished into a failed
  * backup with a clear reason.
  *
  * Log lines are the other half of the contract. Each job holds an append-only,
@@ -20,6 +20,13 @@
  * written in the same millisecond must still have a stable order, and because
  * they make the drain idempotent — a panel that retries a poll re-reads the same
  * window instead of skipping lines.
+ *
+ * Jobs are keyed by an opaque **subject** string (`server:<uuid>` or
+ * `node:databases`) rather than a server id, because the two backup scopes are
+ * different kinds of thing that need the same mutual exclusion: two restics on
+ * one repository contend on its lock, and a node database backup must not run
+ * twice at once either. A single string keeps `hasRunningJob` scope-agnostic
+ * without the registry having to know what a server or a node is.
  */
 
 import { randomUUID } from "node:crypto";
@@ -37,12 +44,15 @@ export type JobStatus = "running" | "succeeded" | "failed";
  */
 export type JobPhase =
   | "starting"
-  | "dumping_databases"
   | "preparing_repository"
+  /** Deleting the oldest snapshots so the quota holds once one more is written. */
+  | "enforcing_limit"
+  | "dumping_databases"
   | "uploading"
   | "restoring_files"
   | "importing_databases"
-  | "applying_retention"
+  /** Measuring the repository so the panel can report storage use. */
+  | "measuring"
   | "finished";
 
 export type JobLogLevel = "info" | "warn" | "error";
@@ -62,13 +72,29 @@ export interface JobResult {
   bytesProcessed?: number;
   /** Bytes actually uploaded after dedup and compression. */
   bytesAdded?: number;
-  /** Databases included in this snapshot, by name. */
+  /** Databases included in this snapshot (node scope), by name. */
   databases?: string[];
+  /** Databases that could not be dumped or restored, with the reason. */
+  failedDatabases?: { name: string; error: string }[];
+  /**
+   * Snapshot ids deleted to keep the quota, so the panel can drop the matching
+   * rows. The panel cannot infer these — it would have to re-list the repository
+   * and diff — so the job that did the deleting reports them.
+   */
+  forgotten?: string[];
+  /**
+   * Deduplicated bytes this repository occupies after the run.
+   *
+   * Measured here rather than polled separately: the index is already in the
+   * local cache immediately after a backup, so it costs a metadata pass. Null
+   * when the measurement failed, which is deliberately distinct from zero.
+   */
+  repoSizeBytes?: number | null;
 }
 
 interface Job {
   id: string;
-  serverId: string;
+  subject: string;
   kind: JobKind;
   status: JobStatus;
   phase: JobPhase;
@@ -86,7 +112,7 @@ interface Job {
 /** A job's state as the panel reads it. */
 export interface JobSnapshot {
   id: string;
-  serverId: string;
+  subject: string;
   kind: JobKind;
   status: JobStatus;
   phase: JobPhase;
@@ -129,7 +155,7 @@ export interface JobReporter {
  * backup is a reportable state, not a crash.
  */
 export function startJob(
-  serverId: string,
+  subject: string,
   kind: JobKind,
   work: (reporter: JobReporter) => Promise<JobResult | void>,
 ): string {
@@ -137,7 +163,7 @@ export function startJob(
 
   const job: Job = {
     id: randomUUID(),
-    serverId,
+    subject,
     kind,
     status: "running",
     phase: "starting",
@@ -201,7 +227,7 @@ export function readJob(jobId: string, afterSeq = 0): JobSnapshot {
 
   return {
     id: job.id,
-    serverId: job.serverId,
+    subject: job.subject,
     kind: job.kind,
     status: job.status,
     phase: job.phase,
@@ -217,19 +243,33 @@ export function readJob(jobId: string, afterSeq = 0): JobSnapshot {
 }
 
 /**
- * Whether this server already has a job in flight.
+ * Whether this subject already has a job in flight.
  *
- * Backups and restores for one server must not overlap: two restics writing to
+ * Backups and restores for one subject must not overlap: two restics writing to
  * one repository contend on its lock, and a restore racing a backup would
- * snapshot a half-restored world. Checked per server rather than globally so a
- * busy node can still back up its other servers.
+ * snapshot half-restored data. Checked per subject rather than globally, so a
+ * node backing up its databases can still back up its servers' files, and a busy
+ * server does not block its neighbours.
  */
-export function hasRunningJob(serverId: string): boolean {
+export function hasRunningJob(subject: string): boolean {
   for (const job of jobs.values()) {
-    if (job.serverId === serverId && job.status === "running") return true;
+    if (job.subject === subject && job.status === "running") return true;
   }
   return false;
 }
+
+/** The registry key for one server's file backups. */
+export function serverSubject(serverId: string): string {
+  return `server:${serverId}`;
+}
+
+/**
+ * The registry key for this node's database backups.
+ *
+ * Constant, not per-node: an agent only ever serves the one node it runs on, so
+ * there is exactly one database-backup subject per agent process.
+ */
+export const NODE_DATABASES_SUBJECT = "node:databases";
 
 /**
  * Append a log line, dropping the oldest when the cap is reached.

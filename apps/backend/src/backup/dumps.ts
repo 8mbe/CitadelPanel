@@ -1,27 +1,32 @@
 /**
- * SQL dumps of a server's provisioned databases, on the way into and out of a
- * snapshot.
+ * SQL dumps of the databases provisioned on this node.
  *
- * A game server's state is split across two stores: files under
- * `<serverDataRoot>/<id>`, and whatever it keeps in the databases its owner
- * provisioned on the node's shared MariaDB (`docker/database.ts`). A backup of
- * only the files restores a world whose economy, permissions and player records
- * are from a different point in time — so both go into the same snapshot, and a
- * restore puts both back.
+ * These belong to the **administrator's** backup, not a server owner's. The
+ * split is deliberate and is the shape of the whole feature:
+ *
+ *   - a server owner backs up their server's **files**;
+ *   - an administrator backs up the **databases** every server on a node uses.
+ *
+ * Reading one tenant's database is a per-server operation; reading all of them
+ * at once needs the node's MariaDB admin credential, which is root-equivalent on
+ * that instance. Only an administrator has a reason to hold it, so only an
+ * administrator can take this backup. Folding it into a per-server backup would
+ * have meant the owner-triggered path touching a shared database instance on
+ * behalf of everyone on the node.
  *
  * Two decisions worth stating, because the obvious alternatives are wrong:
  *
  * **A throwaway container, not `execInContainer`.** `docker/exec.ts` buffers a
  * command's whole stdout into a string, which is fine for a `CREATE DATABASE`
  * and fatal for a multi-gigabyte dump. Running `mariadb-dump` in its own
- * container with the staging directory bind-mounted lets the dump stream to
- * disk and never enter the agent's memory.
+ * container with the staging directory bind-mounted lets the dump stream to disk
+ * and never enter the agent's memory.
  *
- * **The scoped per-database user, not the DB admin.** The panel already
- * decrypts each database's own credentials for the database explorer, and those
- * grants cover exactly one database. Dumping as that user means MariaDB itself
- * contains a bug here to the one database being backed up; the root-equivalent
- * admin credential never enters the backup path at all.
+ * **One file per database, not `--all-databases`.** A single stream would also
+ * capture `mysql.user` — every tenant's password hash — and would make a
+ * per-database restore impossible. The panel is already the source of truth for
+ * database credentials (it stores them encrypted and can re-provision the user
+ * and its grants), so the dumps only need to carry *data*.
  */
 
 import { mkdir, rm } from "node:fs/promises";
@@ -34,55 +39,68 @@ import { ensureDirectory } from "../dataRoot";
 import { runToolContainer } from "./toolContainer";
 import { DUMPS_MOUNT } from "./restic";
 
-/** One database to dump or restore, with its own scoped credentials. */
-export interface DatabaseCredential {
-  name: string;
+/** The MariaDB admin credential for this node, supplied per request. */
+export interface DbAdminCredential {
   user: string;
   password: string;
 }
 
 /** Wall-clock ceiling for one database's dump or import. */
-const DUMP_TIMEOUT_MS = 30 * 60_000;
+const DUMP_TIMEOUT_MS = 60 * 60_000;
 
 /**
- * Where a server's dumps are staged on the node.
+ * Where a node's database dumps are staged.
  *
- * Under `config.backupStagingRoot`, which is a sibling of the data root — a
- * dump inside the server's own data directory would be readable through the
- * file manager and SFTP by anyone with the `files` permission, which is not the
- * same set of people as those with `database` permission.
+ * Under `config.backupStagingRoot`, which is a sibling of the server data root —
+ * a dump inside a server's own data directory would be readable through the file
+ * manager and over SFTP by anyone with the `files` permission, which is not the
+ * same set of people as those with `database`. Here it is worse still: this is
+ * *every* tenant's data, so it must not be under any one server's tree.
  */
-export function stagingPath(serverId: string): string {
-  return join(config.backupStagingRoot, serverId);
+export function nodeStagingPath(): string {
+  return join(config.backupStagingRoot, "node-databases");
 }
 
 /**
- * Prepare an empty staging directory for a server.
+ * Prepare an empty staging directory.
  *
- * Emptied rather than reused: a dump left over from a previous run for a
- * database that has since been deleted would silently ride along into the next
- * snapshot, and a restore would recreate it.
+ * Emptied rather than reused: a dump left over from a previous run for a database
+ * that has since been deleted would silently ride along into the next snapshot,
+ * and a restore would recreate it.
  */
-export async function resetStagingDir(serverId: string): Promise<string> {
-  const path = stagingPath(serverId);
+export async function resetNodeStagingDir(): Promise<string> {
+  const path = nodeStagingPath();
   await rm(path, { recursive: true, force: true });
-  return ensureDirectory(path, `the backup staging directory for server ${serverId}`);
+  return ensureDirectory(path, "the database backup staging directory");
 }
 
-/** Remove a server's staging directory once its snapshot is written. */
-export async function clearStagingDir(serverId: string): Promise<void> {
-  await rm(stagingPath(serverId), { recursive: true, force: true }).catch(() => undefined);
+/** Ensure the staging directory exists without emptying it (restore path). */
+export async function ensureNodeStagingDir(): Promise<string> {
+  const path = nodeStagingPath();
+  await mkdir(path, { recursive: true });
+  return path;
+}
+
+/**
+ * Remove the staging directory.
+ *
+ * Always called once a snapshot is written or a restore finishes: leaving
+ * plaintext SQL for every database on the node sitting on disk between backups is
+ * the largest needless exposure in this whole path.
+ */
+export async function clearNodeStagingDir(): Promise<void> {
+  await rm(nodeStagingPath(), { recursive: true, force: true }).catch(() => undefined);
 }
 
 /**
  * Resolve the image to run the MariaDB client from.
  *
  * The node's own database container is inspected for its image rather than
- * pinning a version here: whatever engine is serving the data is guaranteed to
- * ship a `mariadb-dump` that can read it, and a mismatched client is a class of
- * dump corruption that only shows up at restore time. Falls back to the
- * configured container name's image being unavailable by failing loudly — a
- * silent fallback to some other MariaDB version is the thing being avoided.
+ * pinning a version here: whatever engine is serving the data ships a
+ * `mariadb-dump` that can read it, and a mismatched client is a class of dump
+ * corruption that only shows up at restore time. A missing container fails
+ * loudly — a silent fallback to some other MariaDB version is the thing being
+ * avoided.
  */
 async function resolveDbClientImage(): Promise<string> {
   const containerName = config.nodeDbContainer;
@@ -113,151 +131,180 @@ export interface DumpResult {
 }
 
 /**
- * Dump every one of a server's databases into its staging directory.
+ * Dump every named database into the staging directory.
  *
- * Sequential, not parallel: these run against a MariaDB instance shared by
- * every server on the node, and N concurrent dumps of large tables is exactly
- * the sort of load that makes other tenants' servers time out.
+ * Sequential, not parallel: these run against a MariaDB instance shared by every
+ * server on the node, and N concurrent dumps of large tables is exactly the sort
+ * of load that makes other tenants' servers time out. An admin backup of a busy
+ * node is allowed to be slow; it is not allowed to be an outage.
  *
  * `--single-transaction` takes a consistent InnoDB snapshot without locking the
- * tables, so the game keeps writing while the dump runs. `--no-tablespaces`
- * avoids needing the global `PROCESS` privilege, which the scoped user
- * deliberately does not have.
+ * tables, so games keep writing while the dump runs.
+ *
+ * A database that cannot be dumped does **not** fail the whole run. On a node
+ * with fifty databases, one that was dropped out from under us (or is corrupt)
+ * must not cost the other forty-nine their backup — the failure is reported and
+ * the sweep continues.
  */
-export async function dumpDatabases(
-  serverId: string,
-  databases: DatabaseCredential[],
-  onLog: (message: string) => void,
-): Promise<DumpResult[]> {
-  if (databases.length === 0) return [];
+export async function dumpNodeDatabases(
+  databases: string[],
+  admin: DbAdminCredential,
+  onLog: (message: string, level?: "info" | "warn" | "error") => void,
+): Promise<{ dumped: DumpResult[]; failed: { name: string; error: string }[] }> {
+  const dumped: DumpResult[] = [];
+  const failed: { name: string; error: string }[] = [];
+
+  if (databases.length === 0) return { dumped, failed };
 
   const image = await resolveDbClientImage();
-  const hostStaging = await resetStagingDir(serverId);
-  const results: DumpResult[] = [];
+  const staging = await resetNodeStagingDir();
 
-  for (const database of databases) {
-    assertValidDbIdentifier(database.name, "name");
-    assertValidDbIdentifier(database.user, "user");
+  for (const name of databases) {
+    // The panel generated these names, but this is the agent defending itself:
+    // the value is interpolated into a shell redirect and a SQL identifier below.
+    assertValidDbIdentifier(name, "name");
 
-    const fileName = dumpFileName(database.name);
-    onLog(`Dumping database ${database.name}…`);
+    const fileName = dumpFileName(name);
+    onLog(`Dumping ${name}…`);
 
-    // The redirect needs a shell, so the entrypoint is a shell and the whole
-    // pipeline is one argument. The identifiers are validated above and the
-    // password travels in the environment, so nothing interpolated here is
-    // attacker-controlled or secret.
+    // The redirect needs a shell, so the entrypoint is a shell and the pipeline
+    // is one argument. The identifier is validated above and the password travels
+    // in the environment, so nothing interpolated here is attacker-controlled.
     const script =
       `set -o pipefail; mariadb-dump --single-transaction --no-tablespaces ` +
       `--routines --events --default-character-set=utf8mb4 ` +
       `-h "$DB_HOST" -u "$DB_USER" "$DB_NAME" > "${DUMPS_MOUNT}/${fileName}"`;
 
-    const result = await runToolContainer({
-      image,
-      entrypoint: ["/bin/sh", "-c"],
-      command: [script],
-      env: {
-        DB_HOST: config.nodeDbContainer,
-        DB_USER: database.user,
-        DB_NAME: database.name,
-        // MYSQL_PWD keeps the password out of argv, matching `docker/database.ts`.
-        MYSQL_PWD: database.password,
-      },
-      mounts: [{ hostPath: hostStaging, containerPath: DUMPS_MOUNT }],
-      extraNetworks: [config.nodeDbNetwork],
-      timeoutMs: DUMP_TIMEOUT_MS,
-    });
+    try {
+      const result = await runToolContainer({
+        image,
+        entrypoint: ["/bin/sh", "-c"],
+        command: [script],
+        env: {
+          DB_HOST: config.nodeDbContainer,
+          DB_USER: admin.user,
+          DB_NAME: name,
+          // MYSQL_PWD keeps the password out of argv, matching `docker/database.ts`.
+          MYSQL_PWD: admin.password,
+          MYSQL_DATABASE: name,
+        },
+        mounts: [{ hostPath: staging, containerPath: DUMPS_MOUNT }],
+        extraNetworks: [config.nodeDbNetwork],
+        timeoutMs: DUMP_TIMEOUT_MS,
+      });
 
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `Dumping database ${database.name} failed (exit ${result.exitCode}): ` +
-          result.output.trim().slice(-800),
-      );
+      if (result.exitCode !== 0) {
+        const detail = result.output.trim().slice(-500);
+        failed.push({ name, error: `exit ${result.exitCode}: ${detail}` });
+        onLog(`Could not dump ${name} (exit ${result.exitCode}): ${detail}`, "warn");
+        // Remove the partial file so a truncated dump never lands in a snapshot
+        // and get silently restored later.
+        await rm(join(staging, fileName), { force: true }).catch(() => undefined);
+        continue;
+      }
+
+      const sizeBytes = Bun.file(join(staging, fileName)).size;
+      dumped.push({ name, fileName, sizeBytes });
+      onLog(`Dumped ${name} (${formatBytes(sizeBytes)}).`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failed.push({ name, error: message });
+      onLog(`Could not dump ${name}: ${message}`, "warn");
+      await rm(join(staging, fileName), { force: true }).catch(() => undefined);
     }
-
-    const sizeBytes = Bun.file(join(hostStaging, fileName)).size;
-    onLog(`Dumped ${database.name} (${formatBytes(sizeBytes)}).`);
-    results.push({ name: database.name, fileName, sizeBytes });
   }
 
-  return results;
+  return { dumped, failed };
 }
 
 /**
- * Re-import each database's dump after a restore has written it back to the
- * staging directory.
+ * Re-import databases from a restored staging directory.
  *
- * A dump that is absent from the snapshot is skipped with a log line rather
- * than failing the restore: it means the database was provisioned after that
- * backup was taken, and losing the rest of the restore over it would be worse.
+ * `CREATE DATABASE IF NOT EXISTS` runs first, because the reason to restore a
+ * node's databases is usually that they are gone. The panel re-provisions the
+ * scoped *users* and their grants separately from its own encrypted records —
+ * which is why the dumps only need to carry data.
  *
- * The import is not wrapped in a transaction — a `mariadb-dump` file contains
- * its own `DROP TABLE` / `CREATE TABLE` DDL, which MariaDB cannot roll back. A
- * failed import therefore leaves that one database partially restored, which is
- * reported rather than hidden.
+ * As with dumping, one database's failure does not abort the rest: a restore that
+ * recovers forty-nine of fifty databases and says which one it could not is far
+ * more useful than one that stops at the first problem.
+ *
+ * An import is not transactional — `mariadb-dump` output contains its own
+ * `DROP`/`CREATE TABLE` DDL, which MariaDB cannot roll back — so a failure
+ * leaves that one database partially restored. That is reported, not hidden.
  */
-export async function importDatabases(
-  serverId: string,
-  databases: DatabaseCredential[],
-  onLog: (message: string) => void,
-): Promise<void> {
-  if (databases.length === 0) return;
+export async function importNodeDatabases(
+  databases: string[],
+  admin: DbAdminCredential,
+  onLog: (message: string, level?: "info" | "warn" | "error") => void,
+): Promise<{ restored: string[]; failed: { name: string; error: string }[] }> {
+  const restored: string[] = [];
+  const failed: { name: string; error: string }[] = [];
+
+  if (databases.length === 0) return { restored, failed };
 
   const image = await resolveDbClientImage();
-  const hostStaging = stagingPath(serverId);
+  const staging = await ensureNodeStagingDir();
 
-  for (const database of databases) {
-    assertValidDbIdentifier(database.name, "name");
-    assertValidDbIdentifier(database.user, "user");
+  for (const name of databases) {
+    assertValidDbIdentifier(name, "name");
 
-    const fileName = dumpFileName(database.name);
-    const dumpFile = Bun.file(join(hostStaging, fileName));
-
-    if (!(await dumpFile.exists())) {
+    const fileName = dumpFileName(name);
+    if (!(await Bun.file(join(staging, fileName)).exists())) {
       onLog(
-        `No dump for ${database.name} in this snapshot — it was created after ` +
-          `the backup was taken. Leaving it untouched.`,
+        `No dump for ${name} in this snapshot — it was created after the backup ` +
+          `was taken. Leaving it untouched.`,
+        "warn",
       );
       continue;
     }
 
-    onLog(`Restoring database ${database.name}…`);
+    onLog(`Restoring ${name}…`);
 
     const script =
       `mariadb --default-character-set=utf8mb4 -h "$DB_HOST" -u "$DB_USER" ` +
+      `-e "CREATE DATABASE IF NOT EXISTS \\\`$DB_NAME\\\` ` +
+      `CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" && ` +
+      `mariadb --default-character-set=utf8mb4 -h "$DB_HOST" -u "$DB_USER" ` +
       `"$DB_NAME" < "${DUMPS_MOUNT}/${fileName}"`;
 
-    const result = await runToolContainer({
-      image,
-      entrypoint: ["/bin/sh", "-c"],
-      command: [script],
-      env: {
-        DB_HOST: config.nodeDbContainer,
-        DB_USER: database.user,
-        DB_NAME: database.name,
-        MYSQL_PWD: database.password,
-      },
-      mounts: [{ hostPath: hostStaging, containerPath: DUMPS_MOUNT, readOnly: true }],
-      extraNetworks: [config.nodeDbNetwork],
-      timeoutMs: DUMP_TIMEOUT_MS,
-    });
+    try {
+      const result = await runToolContainer({
+        image,
+        entrypoint: ["/bin/sh", "-c"],
+        command: [script],
+        env: {
+          DB_HOST: config.nodeDbContainer,
+          DB_USER: admin.user,
+          DB_NAME: name,
+          MYSQL_PWD: admin.password,
+        },
+        mounts: [{ hostPath: staging, containerPath: DUMPS_MOUNT, readOnly: true }],
+        extraNetworks: [config.nodeDbNetwork],
+        timeoutMs: DUMP_TIMEOUT_MS,
+      });
 
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `Restoring database ${database.name} failed (exit ${result.exitCode}). ` +
-          `That database may be partially restored. ` +
-          result.output.trim().slice(-800),
-      );
+      if (result.exitCode !== 0) {
+        const detail = result.output.trim().slice(-500);
+        failed.push({ name, error: `exit ${result.exitCode}: ${detail}` });
+        onLog(
+          `Could not restore ${name} (exit ${result.exitCode}). It may be ` +
+            `partially restored. ${detail}`,
+          "error",
+        );
+        continue;
+      }
+
+      restored.push(name);
+      onLog(`Restored ${name}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failed.push({ name, error: message });
+      onLog(`Could not restore ${name}: ${message}`, "error");
     }
-
-    onLog(`Restored ${database.name}.`);
   }
-}
 
-/** Ensure the staging directory exists without emptying it (restore path). */
-export async function ensureStagingDir(serverId: string): Promise<string> {
-  const path = stagingPath(serverId);
-  await mkdir(path, { recursive: true });
-  return path;
+  return { restored, failed };
 }
 
 function formatBytes(bytes: number): string {

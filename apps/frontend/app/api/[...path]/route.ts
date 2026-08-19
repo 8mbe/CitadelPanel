@@ -29,16 +29,25 @@ import {
   handleAdminSetApiKeyEnabled,
 } from "@/lib/server/control-plane/routes/apiKeys";
 import {
+  handleCreateNodeDatabaseBackup,
   handleCreateServerBackup,
+  handleDeleteNodeDatabaseBackup,
   handleDeleteServerBackup,
+  handleGetBackupStorage,
+  handleGetNodeDatabaseBackupLogs,
   handleGetServerBackup,
   handleGetServerBackupLogs,
+  handleListDatabaseBackupNodes,
+  handleListNodeDatabaseBackups,
+  handleListNodeRepositorySnapshots,
   handleListRepositorySnapshots,
   handleListServerBackups,
   handlePreviewBackupSchedule,
+  handleRestoreNodeDatabaseBackup,
   handleRestoreServerBackup,
   handleStartServerAfterRestore,
   handleTestBackupDestination,
+  handleUpdateNodeDatabaseBackupSettings,
   handleUpdateServerBackupSettings,
 } from "@/lib/server/control-plane/routes/backups";
 import {
@@ -184,6 +193,10 @@ const exact = new Map<string, Partial<Record<string, Handler>>>([
   // "when would it run?" helpers the form needs.
   ["admin/backups/test", { POST: handleTestBackupDestination }],
   ["admin/backups/preview-schedule", { POST: handlePreviewBackupSchedule }],
+  // Storage accounting for the admin page's used/allowed/total line.
+  ["admin/backups/storage", { GET: handleGetBackupStorage }],
+  // Node database backups: the admin-owned scope (see routes/backups.ts).
+  ["admin/backups/databases", { GET: handleListDatabaseBackupNodes }],
   ["admin/legal", { GET: handleGetLegal }],
   ["me", { GET: handleGetMe }],
   ["account/delete", { POST: handleDeleteAccount }],
@@ -282,6 +295,14 @@ const patterns: Array<{
   // and returns 405 instead of reaching the regenerate handler.
   { pattern: /^servers\/([^/]+)\/sftp\/credentials\/regenerate$/, methods: { POST: handleRegenerateSftpCredential } },
   { pattern: /^servers\/([^/]+)\/sftp\/credentials\/([^/]+)$/, methods: { DELETE: handleDeleteSftpCredential } },
+  // Node database backups. Literal sub-paths before the bare :runId pattern, and
+  // all of them before the `admin/nodes/:id` routes, which they do not share a
+  // prefix with but are easy to confuse when reading.
+  { pattern: /^admin\/backups\/databases\/([^/]+)$/, methods: { GET: handleListNodeDatabaseBackups, POST: handleCreateNodeDatabaseBackup, PATCH: handleUpdateNodeDatabaseBackupSettings } },
+  { pattern: /^admin\/backups\/databases\/([^/]+)\/snapshots$/, methods: { GET: handleListNodeRepositorySnapshots } },
+  { pattern: /^admin\/backups\/databases\/([^/]+)\/runs\/([^/]+)\/logs$/, methods: { GET: handleGetNodeDatabaseBackupLogs } },
+  { pattern: /^admin\/backups\/databases\/([^/]+)\/runs\/([^/]+)\/restore$/, methods: { POST: handleRestoreNodeDatabaseBackup } },
+  { pattern: /^admin\/backups\/databases\/([^/]+)\/runs\/([^/]+)$/, methods: { DELETE: handleDeleteNodeDatabaseBackup } },
   { pattern: /^admin\/nodes\/([^/]+)$/, methods: { GET: handleGetNode, PATCH: handleUpdateNode, DELETE: handleDeleteNode } },
   { pattern: /^admin\/nodes\/([^/]+)\/health$/, methods: { GET: handleNodeHealth } },
   { pattern: /^admin\/nodes\/([^/]+)\/ports$/, methods: { GET: handleListNodePortPool, POST: handleAddNodePortPoolEntry } },

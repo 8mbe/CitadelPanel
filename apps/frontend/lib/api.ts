@@ -505,7 +505,10 @@ export interface ServerBackup {
   snapshotId: string | null;
   bytesProcessed: number | null;
   bytesAdded: number | null;
-  /** Databases whose dumps are inside this snapshot. */
+  /**
+   * Databases inside the snapshot. Always empty for a server backup — those are
+   * files only; databases are backed up per node by an administrator.
+   */
   databases: string[];
   error: string | null;
   requestedBy: string | null;
@@ -521,14 +524,6 @@ export interface ServerBackupLogLine {
   createdAt: string;
 }
 
-/** Retention rules. All zero means every snapshot is kept forever. */
-export interface BackupRetention {
-  keepLast: number;
-  keepDaily: number;
-  keepWeekly: number;
-  keepMonthly: number;
-}
-
 /**
  * The schedule context the backups tab needs, with nothing secret in it: whether
  * a destination is configured at all, the cron expression, and when it next fires.
@@ -540,13 +535,20 @@ export interface ServerBackupSchedule {
   /** ISO timestamp of the next scheduled run, or null when there is no schedule. */
   nextRun: string | null;
   timezone: string;
-  retention: BackupRetention;
   enabledForServer: boolean;
+}
+
+/** How many backups this server keeps, and how many it has. */
+export interface ServerBackupQuota {
+  used: number;
+  /** A new backup removes the oldest to stay inside this. 0 = unlimited. */
+  max: number;
 }
 
 export interface ServerBackupsView {
   backups: ServerBackup[];
   schedule: ServerBackupSchedule;
+  quota: ServerBackupQuota;
   /** True while a run is in flight, so the UI can poll and disable the button. */
   active: boolean;
 }
@@ -632,6 +634,8 @@ export async function testBackupDestination(): Promise<{
   reachable: boolean;
   initialised: boolean;
   detail: string;
+  /** Which node the probe ran on, since that is what has to reach S3. */
+  viaNode: string;
 }> {
   return request("/api/admin/backups/test", { method: "POST", body: JSON.stringify({}) });
 }
@@ -2538,20 +2542,184 @@ export interface AdminSettings {
  */
 export interface AdminBackupSettings {
   enabled: boolean;
-  /** Bare S3 host, no scheme — the node always connects over https. */
+  /** Bare S3 host with optional port, no scheme. */
   endpoint: string | null;
+  /**
+   * Whether nodes connect over TLS. Its own field rather than part of the
+   * endpoint, so plaintext is always a deliberate choice — needed for a
+   * self-hosted Garage or MinIO on a LAN, which usually has no certificate.
+   */
+  useTls: boolean;
+  /** Part of the SigV4 signature, so a wrong value fails auth. Garage uses "garage". */
   region: string;
   bucket: string | null;
   prefix: string;
   accessKeyId: string | null;
   hasSecretAccessKey: boolean;
-  /** Five-field cron in the panel timezone. Empty = manual backups only. */
-  schedule: string;
-  retention: BackupRetention;
-  exclude: string[];
-  concurrency: number;
+  storage: BackupStorageLimits;
+  servers: ServerBackupPolicy;
+  databases: DatabaseBackupPolicy;
   usable: boolean;
 }
+
+/** Enforced ceiling and operator-declared capacity, both in bytes. 0 = unset. */
+export interface BackupStorageLimits {
+  quotaBytes: number;
+  capacityBytes: number;
+}
+
+/** Server file backups: when, how many per server, and what to leave out. */
+export interface ServerBackupPolicy {
+  schedule: string;
+  /** A new backup removes the oldest to stay inside this. 0 = unlimited. */
+  maxPerServer: number;
+  exclude: string[];
+  concurrency: number;
+}
+
+/** Node database backups: when, and how many per node. */
+export interface DatabaseBackupPolicy {
+  schedule: string;
+  maxPerNode: number;
+}
+
+/**
+ * The one-line storage report: used / allowed / total.
+ *
+ * `usedBytes` is summed from per-repository sizes recorded after each backup, so it
+ * is at most one backup interval stale. `unmeasured` counts repositories never
+ * measured, which makes `usedBytes` a floor rather than an exact figure — the UI
+ * says so instead of presenting it as complete.
+ */
+export interface BackupStorageReport {
+  usedBytes: number;
+  quotaBytes: number;
+  capacityBytes: number;
+  repositories: number;
+  unmeasured: number;
+  overQuota: boolean;
+}
+
+/** GET /api/admin/backups/storage — used / allowed / total. */
+export async function getBackupStorage(): Promise<BackupStorageReport> {
+  return request<BackupStorageReport>("/api/admin/backups/storage");
+}
+
+// --- Node database backups (admin) ------------------------------------------------
+
+/**
+ * One node's database-backup status.
+ *
+ * `hasDatabaseServer` is false when the node has no MariaDB admin credential
+ * configured, which is the difference between "nothing to back up" and "cannot back
+ * up" — the UI needs to say which.
+ */
+export interface DatabaseBackupNode {
+  nodeId: string;
+  nodeName: string;
+  hasDatabaseServer: boolean;
+  /** Whether the database schedule includes this node. */
+  enabled: boolean;
+  databaseCount: number;
+  lastRun: ServerBackup | null;
+  /** Completed snapshots currently kept for this node. */
+  backupCount: number;
+}
+
+export interface DatabaseBackupsView {
+  nodes: DatabaseBackupNode[];
+  schedule: {
+    configured: boolean;
+    cron: string;
+    nextRun: string | null;
+    timezone: string;
+    maxPerNode: number;
+  };
+}
+
+/** GET /api/admin/backups/databases — per-node database backup status. */
+export async function getDatabaseBackupNodes(): Promise<DatabaseBackupsView> {
+  return request<DatabaseBackupsView>("/api/admin/backups/databases");
+}
+
+/** GET /api/admin/backups/databases/:nodeId — one node's history. */
+export async function getNodeDatabaseBackups(nodeId: string): Promise<ServerBackup[]> {
+  const data = await request<{ backups: ServerBackup[] }>(
+    `/api/admin/backups/databases/${nodeId}`,
+  );
+  return data.backups;
+}
+
+/**
+ * POST /api/admin/backups/databases/:nodeId — dump every database on the node.
+ *
+ * Returns immediately with the run in `pending`/`running`; follow it with
+ * {@link getNodeDatabaseBackupLogs}.
+ */
+export async function createNodeDatabaseBackup(nodeId: string): Promise<ServerBackup> {
+  const data = await request<{ backup: ServerBackup }>(
+    `/api/admin/backups/databases/${nodeId}`,
+    { method: "POST" },
+  );
+  return data.backup;
+}
+
+/** GET /api/admin/backups/databases/:nodeId/runs/:runId/logs?afterSeq= — live tail. */
+export async function getNodeDatabaseBackupLogs(
+  nodeId: string,
+  runId: string,
+  afterSeq = 0,
+): Promise<{
+  logs: ServerBackupLogLine[];
+  status: BackupStatus;
+  phase: string | null;
+  percent: number;
+  error: string | null;
+}> {
+  return request(
+    `/api/admin/backups/databases/${nodeId}/runs/${runId}/logs?afterSeq=${afterSeq}`,
+  );
+}
+
+/**
+ * POST /api/admin/backups/databases/:nodeId/runs/:runId/restore — restore a node's
+ * databases.
+ *
+ * Overwrites the live contents of every database in the snapshot, across every
+ * tenant on that node.
+ */
+export async function restoreNodeDatabaseBackup(
+  nodeId: string,
+  runId: string,
+): Promise<ServerBackup> {
+  const data = await request<{ backup: ServerBackup }>(
+    `/api/admin/backups/databases/${nodeId}/runs/${runId}/restore`,
+    { method: "POST" },
+  );
+  return data.backup;
+}
+
+/** DELETE /api/admin/backups/databases/:nodeId/runs/:runId — drop the snapshot. */
+export async function deleteNodeDatabaseBackup(
+  nodeId: string,
+  runId: string,
+): Promise<void> {
+  await request<void>(`/api/admin/backups/databases/${nodeId}/runs/${runId}`, {
+    method: "DELETE",
+  });
+}
+
+/** PATCH /api/admin/backups/databases/:nodeId — include this node in the schedule. */
+export async function setNodeDatabaseBackupsEnabled(
+  nodeId: string,
+  enabled: boolean,
+): Promise<{ enabled: boolean }> {
+  return request(`/api/admin/backups/databases/${nodeId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 
 /** The site name and strapline shown in the header, on sign-in, and in titles. */
 export interface BrandingSettings {
@@ -2640,18 +2808,18 @@ export interface AdminSettingsUpdate {
   backups?: {
     enabled: boolean;
     endpoint?: string | null;
+    useTls?: boolean;
     region?: string | null;
     bucket?: string | null;
     prefix?: string | null;
     accessKeyId?: string | null;
     /** Plaintext; omit to keep the stored secret. */
     secretAccessKey?: string | null;
-    /** Five-field cron; empty string means manual backups only. */
-    schedule?: string | null;
-    retention?: Partial<BackupRetention>;
-    exclude?: string[];
-    concurrency?: number;
+    storage?: Partial<BackupStorageLimits>;
+    servers?: Partial<ServerBackupPolicy>;
+    databases?: Partial<DatabaseBackupPolicy>;
   };
+
   branding?: Partial<BrandingSettings>;
   theme?: Partial<SiteThemeSettings>;
   registration?: Partial<RegistrationSettings>;

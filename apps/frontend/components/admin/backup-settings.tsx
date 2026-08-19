@@ -1,17 +1,20 @@
 "use client";
 
 import * as React from "react";
-import { Archive, Clock, CloudUpload, Plug } from "lucide-react";
+import { Clock, CloudUpload, HardDrive, Plug } from "lucide-react";
 
 import {
   ApiError,
   getAdminSettings,
+  getBackupStorage,
   previewBackupSchedule,
   testBackupDestination,
   updateAdminSettings,
   type AdminSettings,
   type AdminSettingsUpdate,
+  type BackupStorageReport,
 } from "@/lib/api";
+import { DatabaseBackupsSection } from "@/components/admin/database-backups-card";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -34,10 +37,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { CRON_PRESETS } from "@/lib/cron";
+import { formatBytes } from "@/lib/format";
 
 /**
  * Admin backup settings.
@@ -89,15 +94,16 @@ export function AdminBackupSettings() {
       <div className="flex flex-col gap-1">
         <h1 className="font-heading text-xl font-semibold tracking-tight">Backups</h1>
         <p className="text-sm text-muted-foreground">
-          Where every server&apos;s snapshots go, when they are taken, and how long
-          they are kept. Each server&apos;s files and its databases go into one
-          snapshot together.
+          Where snapshots go, when they are taken, and how many are kept. Server
+          backups hold files and are taken by their owners; database backups sweep
+          every database on a node and are yours alone.
         </p>
       </div>
 
       <DestinationCard settings={settings} patch={patch} />
       <ScheduleCard settings={settings} patch={patch} />
-      <RetentionCard settings={settings} patch={patch} />
+      <DatabaseBackupsSection settings={settings} patch={patch} />
+      <StorageCard settings={settings} patch={patch} />
     </div>
   );
 }
@@ -114,6 +120,7 @@ function DestinationCard({
   const s = settings.backups;
   const [enabled, setEnabled] = React.useState(s.enabled);
   const [endpoint, setEndpoint] = React.useState(s.endpoint ?? "");
+  const [useTls, setUseTls] = React.useState(s.useTls);
   const [region, setRegion] = React.useState(s.region);
   const [bucket, setBucket] = React.useState(s.bucket ?? "");
   const [prefix, setPrefix] = React.useState(s.prefix);
@@ -132,12 +139,22 @@ function DestinationCard({
     setError(null);
     setSaved(false);
     try {
+      // An operator will paste a console URL sooner or later. Rather than rejecting
+      // the form, strip the scheme — and let an explicit `http://` *set the toggle*,
+      // since that is unambiguously what they meant. The switch visibly moves, so
+      // this is a suggestion they can see and undo, not a silent downgrade.
+      const raw = endpoint.trim();
+      const pastedScheme = /^(https?):\/\//i.exec(raw)?.[1]?.toLowerCase();
+      const cleaned = raw.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+      const tls = pastedScheme ? pastedScheme === "https" : useTls;
+      if (cleaned !== raw) setEndpoint(cleaned);
+      if (tls !== useTls) setUseTls(tls);
+
       await patch({
         backups: {
           enabled,
-          // An operator will paste a console URL sooner or later; strip the
-          // scheme here rather than rejecting the whole form over it.
-          endpoint: endpoint.trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "") || null,
+          endpoint: cleaned || null,
+          useTls: tls,
           region: region.trim() || null,
           bucket: bucket.trim() || null,
           prefix: prefix.trim(),
@@ -202,6 +219,22 @@ function DestinationCard({
               onCheckedChange={(checked) => setEnabled(checked === true)}
             />
           </Field>
+
+          <Field orientation="horizontal">
+            <div className="flex flex-1 flex-col gap-0.5">
+              <FieldLabel htmlFor="backups-tls">Connect over TLS</FieldLabel>
+              <FieldDescription>
+                {useTls
+                  ? "Nodes reach the endpoint over https. Leave this on for any storage reachable from the internet."
+                  : "Nodes will reach the endpoint over plain http. Only do this on a trusted network — the bucket credentials and API traffic are unencrypted in transit. Snapshot contents stay encrypted either way, because that happens on the node before upload."}
+              </FieldDescription>
+            </div>
+            <Switch
+              id="backups-tls"
+              checked={useTls}
+              onCheckedChange={(checked) => setUseTls(checked === true)}
+            />
+          </Field>
         </FieldGroup>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -214,7 +247,9 @@ function DestinationCard({
               placeholder="s3.us-east-1.amazonaws.com"
             />
             <FieldDescription>
-              Host only, no <code>https://</code>. Nodes always connect over TLS.
+              Host and optional port, e.g. <code>s3.us-east-1.amazonaws.com</code> or{" "}
+              <code>192.168.1.120:3900</code>. Pasting a full URL is fine — its scheme
+              sets the TLS switch above.
             </FieldDescription>
           </Field>
 
@@ -227,7 +262,9 @@ function DestinationCard({
               placeholder="us-east-1"
             />
             <FieldDescription>
-              Providers without regions (MinIO) accept any value.
+              Part of the request signature, so a wrong value fails authentication
+              rather than being ignored. Garage uses <code>garage</code> unless
+              configured otherwise; MinIO accepts anything.
             </FieldDescription>
           </Field>
 
@@ -337,8 +374,9 @@ function ScheduleCard({
   patch: (update: AdminSettingsUpdate) => Promise<AdminSettings>;
 }) {
   const s = settings.backups;
-  const [cron, setCron] = React.useState(s.schedule);
-  const [concurrency, setConcurrency] = React.useState(String(s.concurrency));
+  const [cron, setCron] = React.useState(s.servers.schedule);
+  const [concurrency, setConcurrency] = React.useState(String(s.servers.concurrency));
+  const [maxPerServer, setMaxPerServer] = React.useState(String(s.servers.maxPerServer));
   const [loading, setLoading] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -383,8 +421,11 @@ function ScheduleCard({
       await patch({
         backups: {
           enabled: s.enabled,
-          schedule: cron.trim(),
-          concurrency: Number(concurrency) || 1,
+          servers: {
+            schedule: cron.trim(),
+            concurrency: Number(concurrency) || 1,
+            maxPerServer: Math.max(0, Number(maxPerServer) || 0),
+          },
         },
       });
       setSaved(true);
@@ -400,12 +441,13 @@ function ScheduleCard({
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Clock className="size-4" />
-          Schedule
+          Server backup schedule
         </CardTitle>
         <CardDescription>
           A standard five-field cron expression, evaluated in the panel&apos;s
-          timezone. Leave it empty for manual backups only. Owners can opt an
-          individual server out from its own backups tab.
+          timezone, covering every server&apos;s <em>files</em>. Leave it empty for
+          manual backups only. Owners can opt an individual server out from its own
+          backups tab. Database backups have their own schedule below.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -459,6 +501,24 @@ function ScheduleCard({
         )}
 
         <Field>
+          <FieldLabel htmlFor="backups-max-per-server">Backups kept per server</FieldLabel>
+          <Input
+            id="backups-max-per-server"
+            type="number"
+            min={0}
+            max={1000}
+            value={maxPerServer}
+            onChange={(e) => setMaxPerServer(e.target.value)}
+          />
+          <FieldDescription>
+            Once a server has this many, taking a new backup removes its oldest one
+            first — so the count never exceeds the limit. Snapshots deduplicate
+            against each other, so five costs far less than five full copies. 0 means
+            unlimited.
+          </FieldDescription>
+        </Field>
+
+        <Field>
           <FieldLabel htmlFor="backups-concurrency">Servers backed up at once</FieldLabel>
           <Input
             id="backups-concurrency"
@@ -491,9 +551,18 @@ function ScheduleCard({
   );
 }
 
-// --- Retention ------------------------------------------------------------------
+// --- Storage ---------------------------------------------------------------------
 
-function RetentionCard({
+/**
+ * Storage: the one-line used / allowed / total report, plus the two limits behind it.
+ *
+ * `used` is measured (restic's deduplicated repository size, recorded after each
+ * backup). `allowed` is enforced — new backups are refused once it is reached.
+ * `total` is **declared by the operator**, because S3 exposes no capacity API: the
+ * size of their storage plan is something only they know, so the panel asks rather
+ * than pretending to have discovered it.
+ */
+function StorageCard({
   settings,
   patch,
 }: {
@@ -501,25 +570,35 @@ function RetentionCard({
   patch: (update: AdminSettingsUpdate) => Promise<AdminSettings>;
 }) {
   const s = settings.backups;
-  const [keepLast, setKeepLast] = React.useState(String(s.retention.keepLast));
-  const [keepDaily, setKeepDaily] = React.useState(String(s.retention.keepDaily));
-  const [keepWeekly, setKeepWeekly] = React.useState(String(s.retention.keepWeekly));
-  const [keepMonthly, setKeepMonthly] = React.useState(String(s.retention.keepMonthly));
-  const [exclude, setExclude] = React.useState(s.exclude.join("\n"));
+  const [quotaGb, setQuotaGb] = React.useState(bytesToGb(s.storage.quotaBytes));
+  const [capacityGb, setCapacityGb] = React.useState(bytesToGb(s.storage.capacityBytes));
+  const [exclude, setExclude] = React.useState(s.servers.exclude.join("\n"));
+  const [report, setReport] = React.useState<BackupStorageReport | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = React.useState(0);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await getBackupStorage();
+        if (!cancelled) setReport(data);
+      } catch {
+        // The line is informational; a failed read leaves it hidden rather than
+        // blocking the limits form underneath it.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
 
   const patterns = exclude
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
-
-  const allZero =
-    Number(keepLast) === 0 &&
-    Number(keepDaily) === 0 &&
-    Number(keepWeekly) === 0 &&
-    Number(keepMonthly) === 0;
 
   const save = async () => {
     setLoading(true);
@@ -529,89 +608,111 @@ function RetentionCard({
       await patch({
         backups: {
           enabled: s.enabled,
-          retention: {
-            keepLast: Number(keepLast) || 0,
-            keepDaily: Number(keepDaily) || 0,
-            keepWeekly: Number(keepWeekly) || 0,
-            keepMonthly: Number(keepMonthly) || 0,
+          storage: {
+            quotaBytes: gbToBytes(quotaGb),
+            capacityBytes: gbToBytes(capacityGb),
           },
-          exclude: patterns,
+          servers: { exclude: patterns },
         },
       });
       setSaved(true);
+      setRefreshKey((key) => key + 1);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not save retention.");
+      setError(err instanceof ApiError ? err.message : "Could not save storage settings.");
     } finally {
       setLoading(false);
     }
   };
 
+  // Progress is against the allowed figure when one is set, otherwise against the
+  // declared capacity. With neither there is nothing to be a fraction of, so the
+  // bar is hidden rather than shown at an arbitrary zero.
+  const denominator =
+    report && report.quotaBytes > 0
+      ? report.quotaBytes
+      : report && report.capacityBytes > 0
+        ? report.capacityBytes
+        : 0;
+  const percent =
+    report && denominator > 0
+      ? Math.min(100, Math.round((report.usedBytes / denominator) * 100))
+      : null;
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Archive className="size-4" />
-          Retention &amp; exclusions
+          <HardDrive className="size-4" />
+          Storage
         </CardTitle>
         <CardDescription>
-          Applied after every backup. Snapshots deduplicate against each other, so
-          keeping a month of history costs far less than a month of full copies.
+          How much the fleet&apos;s backups occupy, and the ceiling they may not pass.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <div className="grid gap-4 sm:grid-cols-4">
+        {report && (
+          <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 px-3 py-2.5">
+            <p className="text-sm tabular-nums">
+              <span className="font-medium">{formatBytes(report.usedBytes)}</span> used
+              <span className="text-muted-foreground"> · </span>
+              <span className="font-medium">
+                {report.quotaBytes > 0 ? formatBytes(report.quotaBytes) : "unlimited"}
+              </span>{" "}
+              allowed
+              <span className="text-muted-foreground"> · </span>
+              <span className="font-medium">
+                {report.capacityBytes > 0 ? formatBytes(report.capacityBytes) : "unknown"}
+              </span>{" "}
+              total
+            </p>
+            {percent !== null && <Progress value={percent} />}
+            <p className="text-xs text-muted-foreground">
+              Across {report.repositories} repositor
+              {report.repositories === 1 ? "y" : "ies"}, measured after each backup.
+              {report.unmeasured > 0 &&
+                ` ${report.unmeasured} not yet measured, so the figure is a floor.`}
+              {report.overQuota &&
+                " The limit has been reached — new backups are refused until you delete some or raise it."}
+            </p>
+          </div>
+        )}
+
+        <div className="grid gap-4 sm:grid-cols-2">
           <Field>
-            <FieldLabel htmlFor="keep-last">Most recent</FieldLabel>
+            <FieldLabel htmlFor="backups-quota">Storage limit (GB)</FieldLabel>
             <Input
-              id="keep-last"
+              id="backups-quota"
               type="number"
               min={0}
-              max={1000}
-              value={keepLast}
-              onChange={(e) => setKeepLast(e.target.value)}
+              step={1}
+              value={quotaGb}
+              onChange={(e) => setQuotaGb(e.target.value)}
             />
+            <FieldDescription>
+              Enforced: once backups reach this, new ones are refused with an
+              explanation instead of the overage turning up on an invoice. Deleting
+              always works, so you can never be locked out of getting back under it.
+              0 means no limit.
+            </FieldDescription>
           </Field>
+
           <Field>
-            <FieldLabel htmlFor="keep-daily">Daily</FieldLabel>
+            <FieldLabel htmlFor="backups-capacity">Bucket capacity (GB)</FieldLabel>
             <Input
-              id="keep-daily"
+              id="backups-capacity"
               type="number"
               min={0}
-              max={1000}
-              value={keepDaily}
-              onChange={(e) => setKeepDaily(e.target.value)}
+              step={1}
+              value={capacityGb}
+              onChange={(e) => setCapacityGb(e.target.value)}
             />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="keep-weekly">Weekly</FieldLabel>
-            <Input
-              id="keep-weekly"
-              type="number"
-              min={0}
-              max={1000}
-              value={keepWeekly}
-              onChange={(e) => setKeepWeekly(e.target.value)}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="keep-monthly">Monthly</FieldLabel>
-            <Input
-              id="keep-monthly"
-              type="number"
-              min={0}
-              max={1000}
-              value={keepMonthly}
-              onChange={(e) => setKeepMonthly(e.target.value)}
-            />
+            <FieldDescription>
+              Shown for context only — S3 has no way to report how big a bucket may
+              get, so this is whatever your storage plan gives you. 0 leaves it
+              unknown.
+            </FieldDescription>
           </Field>
         </div>
-
-        <FieldDescription>
-          {allZero
-            ? "All zero: every backup is kept forever and nothing is ever pruned. Storage grows without bound."
-            : "Keeping the most recent N as well as the calendar rules guarantees a very " +
-              "fresh backup survives even if the schedule or the clock is misconfigured."}
-        </FieldDescription>
 
         <Field>
           <FieldLabel htmlFor="backups-exclude">
@@ -625,9 +726,10 @@ function RetentionCard({
             placeholder={"cache/**\n*.tmp\nlogs/**"}
           />
           <FieldDescription>
-            One glob per line, relative to each server&apos;s data directory.
-            Excluding regenerable data (caches, logs) shrinks every snapshot on
-            every server.
+            One glob per line, relative to each server&apos;s data directory. Applies to
+            server file backups on every server — excluding regenerable data (caches,
+            logs) shrinks every snapshot in the fleet. Database backups have nothing
+            to exclude.
           </FieldDescription>
         </Field>
 
@@ -639,10 +741,22 @@ function RetentionCard({
         <div>
           <Button onClick={save} disabled={loading}>
             {loading && <Spinner />}
-            Save retention
+            Save storage settings
           </Button>
         </div>
       </CardContent>
     </Card>
   );
+}
+
+/** Bytes to a whole-GB string for the form. 0 renders as "0", not "". */
+function bytesToGb(bytes: number): string {
+  if (bytes <= 0) return "0";
+  return String(Math.round(bytes / 1024 ** 3));
+}
+
+function gbToBytes(value: string): number {
+  const gb = Number(value);
+  if (!Number.isFinite(gb) || gb <= 0) return 0;
+  return Math.round(gb) * 1024 ** 3;
 }

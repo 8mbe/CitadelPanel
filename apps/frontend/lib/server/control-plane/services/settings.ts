@@ -1201,93 +1201,144 @@ export async function setLegalDocument(
 // --- Backups ------------------------------------------------------------------
 
 /**
- * S3 backup configuration and the schedule that drives it.
+ * S3 backup configuration.
  *
- * Panel-wide rather than per-server, and per-node not at all: one bucket holds
- * the fleet's snapshots (one restic repository per server inside it — see
- * `docs/backups.md`), and an operator configures the destination once. A
- * per-server bucket would multiply the credential surface by the server count
- * for no benefit anyone asked for.
+ * Panel-wide rather than per-server, and per-node not at all: one bucket holds the
+ * fleet's snapshots (one restic repository per server and per node inside it — see
+ * `docs/backups.md`), and an operator configures the destination once.
+ *
+ * The two scopes are configured separately because they are different jobs owned
+ * by different people. Server **file** backups are taken by server owners and
+ * capped per server; **database** backups sweep every database on a node and are
+ * taken by administrators. An operator commonly wants one running and not the
+ * other, so they get their own schedules and their own limits.
  *
  * The secret access key lives inside this setting but is AES-256-GCM encrypted
  * before it is written, so — as with captcha, mail and AI — nothing in the stored
  * value may be handed to a client as-is.
- *
- * `schedule` is a five-field cron expression evaluated in the panel's configured
- * timezone (see `@/lib/cron`). Empty means manual backups only, which is
- * distinct from `enabled: false`: an operator may well want the button to work
- * and no cron behind it.
  */
 export interface StoredBackupSettings {
   enabled: boolean;
-  /** Bare S3 host, no scheme — the agent always connects over https. */
+  /** Bare S3 host with optional port, no scheme. The scheme comes from `useTls`. */
   endpoint: string | null;
+  /**
+   * Whether nodes reach the endpoint over TLS.
+   *
+   * Defaults to true, and is a field of its own rather than part of `endpoint`, so
+   * plaintext is always a deliberate choice somebody made and never something you
+   * arrive at by pasting a URL. It has to be possible though: a self-hosted
+   * Garage, MinIO or SeaweedFS on a LAN usually has no certificate, which is the
+   * normal case for an operator self-hosting this panel.
+   */
+  useTls: boolean;
+  /**
+   * Signing region. Not cosmetic — it is part of the SigV4 signature, so a wrong
+   * value fails authentication rather than being ignored. Self-hosted servers pick
+   * their own: Garage defaults to `garage`, MinIO accepts anything.
+   */
   region: string;
   bucket: string | null;
-  /** Key prefix inside the bucket. Server repositories nest below it. */
+  /** Key prefix inside the bucket; `servers/` and `nodes/` nest below it. */
   prefix: string;
   accessKeyId: string | null;
   secretAccessKeyEncrypted: string | null;
+  storage: BackupStorageLimits;
+  servers: ServerBackupPolicy;
+  databases: DatabaseBackupPolicy;
+}
+
+/**
+ * How much storage backups may use.
+ *
+ * `quotaBytes` is enforced: once the measured total reaches it, new backups are
+ * refused with an explanation rather than the operator discovering the overage on
+ * an invoice. `capacityBytes` is display-only, because S3 exposes no capacity API
+ * — the size of the operator's storage plan is something only they can tell us, so
+ * the admin page shows it as context beside used and allowed rather than
+ * pretending to have discovered it. Zero means unset for both.
+ */
+export interface BackupStorageLimits {
+  quotaBytes: number;
+  capacityBytes: number;
+}
+
+/** Server file backups: when, how many, and what to leave out. */
+export interface ServerBackupPolicy {
   /** Five-field cron, in the panel timezone. Empty = manual backups only. */
   schedule: string;
-  retention: BackupRetention;
-  /** Data-directory-relative glob patterns to leave out of every snapshot. */
+  /**
+   * Snapshots kept per server. A new backup deletes the oldest to stay inside
+   * this. 0 means unlimited.
+   */
+  maxPerServer: number;
+  /**
+   * Data-directory-relative glob patterns to leave out of every server snapshot.
+   * Admin-controlled: excluding regenerable data shrinks every snapshot on every
+   * server, which is a fleet-wide decision rather than a per-owner one.
+   */
   exclude: string[];
   /**
    * How many servers the scheduler backs up at once.
    *
    * Every concurrent backup is a restic container reading a disk and saturating
-   * upstream bandwidth on the same node, so this is a throttle on the fleet, not
-   * a performance dial. Two is enough to keep a large fleet moving overnight
-   * without making the games unplayable while it does.
+   * upstream bandwidth, so this is a throttle on the fleet, not a performance
+   * dial. Two keeps a large fleet moving overnight without making the games
+   * unplayable while it does.
    */
   concurrency: number;
 }
 
-/** How many snapshots survive a prune. All zero means keep everything. */
-export interface BackupRetention {
-  keepLast: number;
-  keepDaily: number;
-  keepWeekly: number;
-  keepMonthly: number;
+/** Node database backups: when, and how many per node. */
+export interface DatabaseBackupPolicy {
+  /** Five-field cron, in the panel timezone. Empty = manual backups only. */
+  schedule: string;
+  /** Snapshots kept per node. 0 means unlimited. */
+  maxPerNode: number;
 }
 
 /** Backup config safe to hand to a browser: no secret key, just "is one stored?". */
 export interface PublicBackupSettings {
   enabled: boolean;
   endpoint: string | null;
+  useTls: boolean;
   region: string;
   bucket: string | null;
   prefix: string;
   accessKeyId: string | null;
   hasSecretAccessKey: boolean;
-  schedule: string;
-  retention: BackupRetention;
-  exclude: string[];
-  concurrency: number;
+  storage: BackupStorageLimits;
+  servers: ServerBackupPolicy;
+  databases: DatabaseBackupPolicy;
   /** Whether the stored config is complete enough to actually run a backup. */
   usable: boolean;
 }
 
-const DEFAULT_RETENTION: BackupRetention = {
-  keepLast: 3,
-  keepDaily: 7,
-  keepWeekly: 4,
-  keepMonthly: 6,
+const DEFAULT_STORAGE: BackupStorageLimits = { quotaBytes: 0, capacityBytes: 0 };
+
+const DEFAULT_SERVER_POLICY: ServerBackupPolicy = {
+  schedule: "",
+  maxPerServer: 5,
+  exclude: [],
+  concurrency: 2,
+};
+
+const DEFAULT_DATABASE_POLICY: DatabaseBackupPolicy = {
+  schedule: "",
+  maxPerNode: 5,
 };
 
 const DEFAULT_BACKUPS: StoredBackupSettings = {
   enabled: false,
   endpoint: null,
+  useTls: true,
   region: "us-east-1",
   bucket: null,
   prefix: "citadel",
   accessKeyId: null,
   secretAccessKeyEncrypted: null,
-  schedule: "",
-  retention: DEFAULT_RETENTION,
-  exclude: [],
-  concurrency: 2,
+  storage: DEFAULT_STORAGE,
+  servers: DEFAULT_SERVER_POLICY,
+  databases: DEFAULT_DATABASE_POLICY,
 };
 
 export async function getBackupSettings(): Promise<StoredBackupSettings> {
@@ -1295,20 +1346,25 @@ export async function getBackupSettings(): Promise<StoredBackupSettings> {
   return {
     ...DEFAULT_BACKUPS,
     ...stored,
-    // A partially-written retention object must not leave a rule undefined —
-    // `restic forget` reads a missing rule as zero, and an accidental all-zero
-    // policy deletes every snapshot.
-    retention: { ...DEFAULT_RETENTION, ...(stored.retention ?? {}) },
-    exclude: Array.isArray(stored.exclude) ? stored.exclude : [],
+    // Each nested group is merged field-by-field. A partially-written group must
+    // not leave a limit undefined: `undefined` reaches the agent as "no limit",
+    // and silently unlimited retention is how a bucket quietly grows forever.
+    storage: { ...DEFAULT_STORAGE, ...(stored.storage ?? {}) },
+    servers: {
+      ...DEFAULT_SERVER_POLICY,
+      ...(stored.servers ?? {}),
+      exclude: Array.isArray(stored.servers?.exclude) ? stored.servers.exclude : [],
+    },
+    databases: { ...DEFAULT_DATABASE_POLICY, ...(stored.databases ?? {}) },
   };
 }
 
 /**
  * True when the stored config has everything a backup needs.
  *
- * Checked separately from `enabled` so a half-entered destination is never
- * treated as "backups are on" — the UI reports it as unusable and the scheduler
- * skips it rather than failing every server in the fleet once an hour.
+ * Checked separately from `enabled` so a half-entered destination is never treated
+ * as "backups are on" — the UI reports it as unusable and the scheduler skips it
+ * rather than failing every server in the fleet once an hour.
  */
 export function isBackupConfigUsable(settings: StoredBackupSettings): boolean {
   return Boolean(
@@ -1326,15 +1382,15 @@ export async function getPublicBackupSettings(): Promise<PublicBackupSettings> {
   return {
     enabled: backups.enabled,
     endpoint: backups.endpoint,
+    useTls: backups.useTls,
     region: backups.region,
     bucket: backups.bucket,
     prefix: backups.prefix,
     accessKeyId: backups.accessKeyId,
     hasSecretAccessKey: backups.secretAccessKeyEncrypted !== null,
-    schedule: backups.schedule,
-    retention: backups.retention,
-    exclude: backups.exclude,
-    concurrency: backups.concurrency,
+    storage: backups.storage,
+    servers: backups.servers,
+    databases: backups.databases,
     usable: isBackupConfigUsable(backups),
   };
 }
@@ -1349,26 +1405,26 @@ export async function getBackupSecretAccessKey(): Promise<string | null> {
 export interface BackupSettingsUpdate {
   enabled: boolean;
   endpoint?: string | null;
+  useTls?: boolean;
   region?: string | null;
   bucket?: string | null;
   prefix?: string | null;
   accessKeyId?: string | null;
   /** Plaintext; encrypted here. Omit to keep the stored secret unchanged. */
   secretAccessKey?: string | null;
-  schedule?: string | null;
-  retention?: Partial<BackupRetention>;
-  exclude?: string[];
-  concurrency?: number;
+  storage?: Partial<BackupStorageLimits>;
+  servers?: Partial<ServerBackupPolicy>;
+  databases?: Partial<DatabaseBackupPolicy>;
 }
 
 /**
  * Update the backup configuration.
  *
- * Enabling requires a complete destination, checked here so the admin page and
- * the scheduler's `isBackupConfigUsable` cannot disagree. Disabling keeps the
- * stored secret key, so toggling backups off for an evening does not mean
- * re-entering it — and, more importantly, does not mean losing the credential
- * that reads the existing snapshots.
+ * Enabling requires a complete destination, checked here so the admin page and the
+ * scheduler's `isBackupConfigUsable` cannot disagree. Disabling keeps the stored
+ * secret key, so turning backups off for an evening does not mean re-entering it —
+ * and, more importantly, does not mean losing the credential that reads the
+ * existing snapshots.
  *
  * Schedule validation lives in the route (which owns the operator-facing error
  * messages from `parseCron`); this stores what it is given.
@@ -1379,13 +1435,11 @@ export async function setBackupSettings(
 ): Promise<void> {
   const current = await getBackupSettings();
 
-  const pick = <T>(value: T | null | undefined, fallback: T): T =>
-    value === undefined ? fallback : value === null ? fallback : value;
-
   const next: StoredBackupSettings = {
     enabled: update.enabled,
     endpoint: update.endpoint === undefined ? current.endpoint : update.endpoint,
-    region: pick(update.region, current.region),
+    useTls: update.useTls === undefined ? current.useTls : update.useTls,
+    region: update.region ? update.region : current.region,
     bucket: update.bucket === undefined ? current.bucket : update.bucket,
     prefix: update.prefix === undefined ? current.prefix : (update.prefix ?? ""),
     accessKeyId: update.accessKeyId === undefined ? current.accessKeyId : update.accessKeyId,
@@ -1397,16 +1451,22 @@ export async function setBackupSettings(
         : update.secretAccessKey
           ? encryptSecret(update.secretAccessKey)
           : null,
-    schedule: update.schedule === undefined ? current.schedule : (update.schedule ?? ""),
-    retention: { ...current.retention, ...(update.retention ?? {}) },
-    exclude: update.exclude === undefined ? current.exclude : update.exclude,
-    concurrency: pick(update.concurrency, current.concurrency),
+    storage: { ...current.storage, ...(update.storage ?? {}) },
+    servers: { ...current.servers, ...(update.servers ?? {}) },
+    databases: { ...current.databases, ...(update.databases ?? {}) },
   };
 
   if (next.enabled && !isBackupConfigUsable(next)) {
     throw new Error(
       "A complete S3 destination is required to enable backups: endpoint, region, " +
         "bucket, access key ID, and secret access key.",
+    );
+  }
+  if (next.storage.quotaBytes > 0 && next.storage.capacityBytes > 0 &&
+      next.storage.quotaBytes > next.storage.capacityBytes) {
+    throw new Error(
+      "The backup storage limit cannot exceed the total capacity you have recorded " +
+        "for this bucket.",
     );
   }
 

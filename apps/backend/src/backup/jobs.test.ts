@@ -8,10 +8,17 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { hasRunningJob, readJob, resetJobs, startJob } from "./jobs";
+import {
+  hasRunningJob,
+  NODE_DATABASES_SUBJECT,
+  readJob,
+  resetJobs,
+  serverSubject,
+  startJob,
+} from "./jobs";
 
-const SERVER = "3f2b7c1e-0000-4000-8000-000000000001";
-const OTHER = "3f2b7c1e-0000-4000-8000-000000000002";
+const SERVER = serverSubject("3f2b7c1e-0000-4000-8000-000000000001");
+const OTHER = serverSubject("3f2b7c1e-0000-4000-8000-000000000002");
 
 /** Let the detached job body run to completion. */
 const settle = () => Bun.sleep(10);
@@ -29,7 +36,7 @@ describe("startJob", () => {
     const job = readJob(jobId);
     expect(job.status).toBe("running");
     expect(job.kind).toBe("backup");
-    expect(job.serverId).toBe(SERVER);
+    expect(job.subject).toBe(SERVER);
     expect(job.percent).toBe(0);
   });
 
@@ -38,6 +45,8 @@ describe("startJob", () => {
       snapshotId: "abc123",
       bytesAdded: 4096,
       databases: ["db_one", "db_two"],
+      forgotten: ["old1111"],
+      repoSizeBytes: 987654,
     }));
     await settle();
 
@@ -48,6 +57,33 @@ describe("startJob", () => {
     expect(job.result.snapshotId).toBe("abc123");
     expect(job.result.databases).toEqual(["db_one", "db_two"]);
     expect(job.finishedAt).not.toBeNull();
+  });
+
+  test("carries the quota deletions and the measured size back to the panel", async () => {
+    // The panel cannot infer which snapshots the quota removed without
+    // re-listing and diffing the repository, so the job that deleted them
+    // reports their ids.
+    const jobId = startJob(SERVER, "backup", async () => ({
+      snapshotId: "new0000",
+      forgotten: ["old1111", "old2222"],
+      repoSizeBytes: 1024,
+    }));
+    await settle();
+
+    const job = readJob(jobId);
+    expect(job.result.forgotten).toEqual(["old1111", "old2222"]);
+    expect(job.result.repoSizeBytes).toBe(1024);
+  });
+
+  test("an unmeasurable repository reports null, not zero", async () => {
+    // Zero is a real size for a fresh repository; conflating the two would
+    // understate the fleet's storage use.
+    const jobId = startJob(SERVER, "backup", async () => ({
+      snapshotId: "new0000",
+      repoSizeBytes: null,
+    }));
+    await settle();
+    expect(readJob(jobId).result.repoSizeBytes).toBeNull();
   });
 
   test("a thrown error becomes a failed job, not an unhandled rejection", async () => {
@@ -207,7 +243,7 @@ describe("log draining", () => {
 });
 
 describe("hasRunningJob", () => {
-  test("reports a job in flight for that server only", async () => {
+  test("reports a job in flight for that subject only", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -217,12 +253,36 @@ describe("hasRunningJob", () => {
     });
 
     expect(hasRunningJob(SERVER)).toBe(true);
-    // A busy server must not block backups of a different one.
+    // A busy server must not block backups of a different one, nor the node's
+    // own database backup — the two scopes write to different repositories.
     expect(hasRunningJob(OTHER)).toBe(false);
+    expect(hasRunningJob(NODE_DATABASES_SUBJECT)).toBe(false);
 
     release();
     await settle();
     expect(hasRunningJob(SERVER)).toBe(false);
+  });
+
+  test("the node database subject locks independently of any server", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    startJob(NODE_DATABASES_SUBJECT, "backup", async () => {
+      await gate;
+    });
+
+    expect(hasRunningJob(NODE_DATABASES_SUBJECT)).toBe(true);
+    expect(hasRunningJob(SERVER)).toBe(false);
+
+    release();
+    await settle();
+    expect(hasRunningJob(NODE_DATABASES_SUBJECT)).toBe(false);
+  });
+
+  test("subject keys namespace servers apart from the node", () => {
+    expect(serverSubject("abc")).toBe("server:abc");
+    expect(NODE_DATABASES_SUBJECT).not.toBe(serverSubject("abc"));
   });
 
   test("a failed job no longer counts as running", async () => {

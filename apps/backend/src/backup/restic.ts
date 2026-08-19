@@ -17,14 +17,26 @@
  * are immutable and timestamped, so a corrupted or ransomwared world does not
  * overwrite the good copy the way a sync would.
  *
- * Two paths go into every snapshot, at fixed mount points:
- *   /data   — the server's data directory
- *   /dumps  — SQL dumps of its provisioned databases (see `dumps.ts`)
- * They are absolute inside the container, so `restic restore --target /`
- * reconstructs both at the same mount points on the way back out.
+ * ## Two scopes, two kinds of repository
+ *
+ * A server's **files** and a node's **databases** are backed up separately,
+ * because they are owned by different people and have different lifetimes:
+ *
+ *   - `server` — a server's data directory, mounted at `/data`. Taken by the
+ *     server's owner, capped at a fixed number of snapshots.
+ *   - `node`   — SQL dumps of every database provisioned on one node, staged
+ *     and mounted at `/dumps`. Taken by an administrator, who is the only person
+ *     with a reason (or the credential) to read every tenant's data at once.
+ *
+ * Each gets its own repository, namespaced by scope so the two can never
+ * collide inside one bucket. Paths inside a snapshot are absolute, so
+ * `restic restore --target /` reconstructs them at the same mount points.
  */
 
-/** Mount point for the server's data directory inside the restic container. */
+/** Which kind of thing a repository holds. */
+export type BackupScope = "server" | "node";
+
+/** Mount point for a server's data directory inside the restic container. */
 export const DATA_MOUNT = "/data";
 
 /** Mount point for the database-dump staging directory. */
@@ -46,8 +58,8 @@ export const PROGRESS_FPS = "0.2";
 /** S3 connection details, as the panel supplies them per request. */
 export interface S3Target {
   /**
-   * Host (optionally with a path prefix) of the S3 endpoint, without a scheme
-   * — e.g. `s3.eu-central-1.amazonaws.com` or `minio.example.com:9000`.
+   * Host (optionally with a port) of the S3 endpoint, without a scheme — e.g.
+   * `s3.eu-central-1.amazonaws.com`, `minio.example.com:9000`, `192.168.1.120:3900`.
    */
   endpoint: string;
   bucket: string;
@@ -56,34 +68,64 @@ export interface S3Target {
   region: string;
   accessKeyId: string;
   secretAccessKey: string;
+  /**
+   * Whether to reach the endpoint over TLS.
+   *
+   * Defaults to on everywhere, and the scheme is a *separate field* rather than
+   * something the caller can smuggle into `endpoint` — so plaintext is always a
+   * deliberate, visible choice and never a silent downgrade.
+   *
+   * It has to be possible, though: a self-hosted Garage, MinIO or SeaweedFS on a
+   * LAN commonly has no certificate at all, and that is the normal case for the
+   * kind of operator who self-hosts this panel. Refusing it outright would just
+   * mean no backups.
+   */
+  useTls: boolean;
 }
 
-/** Everything needed to address and unlock one server's repository. */
+/** Everything needed to address and unlock one repository. */
 export interface RepoTarget {
   s3: S3Target;
-  /** Per-server repository password. Never persisted on the node. */
+  scope: BackupScope;
+  /** Server id or node id, matching `scope`. */
+  id: string;
+  /** Per-repository password. Never persisted on the node. */
   password: string;
 }
 
+/** The path segment each scope lives under, inside the bucket prefix. */
+function scopeSegment(scope: BackupScope): string {
+  return scope === "server" ? "servers" : "nodes";
+}
+
 /**
- * Build the `s3:` repository URL for one server.
+ * Build the `s3:` repository URL for one server or node.
  *
- * One repository per server, keyed by server id, rather than one shared
- * repository with per-server paths. A shared repository would mean every node
- * holding a password that decrypts every tenant's data, and `restic forget` for
- * one server would need to reason about another's snapshots. Separate
- * repositories cost some deduplication across tenants and buy a blast radius of
- * exactly one server.
+ * One repository per subject, rather than one shared repository with per-subject
+ * paths. A shared repository would mean every node holding a password that
+ * decrypts every tenant's data, and pruning one server's snapshots would need to
+ * reason about another's. Separate repositories cost some deduplication across
+ * tenants and buy a blast radius of exactly one subject.
  *
- * The scheme is forced to https — restic accepts `s3:http://…` for a plaintext
- * endpoint, and silently shipping an operator's bucket credentials in the clear
- * is not a mistake worth supporting.
+ * The `servers/` and `nodes/` segments keep the two scopes apart even though both
+ * ids are UUIDs — so a bucket can be read by a human without guessing which kind
+ * of thing a bare UUID is.
+ *
+ * The scheme comes from `useTls`, not from the endpoint string: a scheme the
+ * caller could embed in the host would make a plaintext connection something you
+ * could end up with by pasting a URL, whereas a separate boolean makes it a
+ * decision somebody took. `endpoint` is stripped of a scheme defensively rather
+ * than trusted to be clean.
  */
-export function repositoryUrl(s3: S3Target, serverId: string): string {
+export function repositoryUrl(s3: S3Target, scope: BackupScope, id: string): string {
   const host = s3.endpoint.replace(/^https?:\/\//, "").replace(/\/+$/, "");
   const prefix = s3.prefix.replace(/^\/+|\/+$/g, "");
-  const path = [s3.bucket, prefix, serverId].filter((part) => part.length > 0).join("/");
-  return `s3:https://${host}/${path}`;
+  const path = [s3.bucket, prefix, scopeSegment(scope), id]
+    .filter((part) => part.length > 0)
+    .join("/");
+  // restic's S3 backend takes the scheme inline: `s3:https://host/bucket/path`
+  // for TLS, `s3:http://host:9000/bucket/path` for a plaintext MinIO or Garage.
+  return `s3:${s3.useTls ? "https" : "http"}://${host}/${path}`;
 }
 
 /**
@@ -94,9 +136,9 @@ export function repositoryUrl(s3: S3Target, serverId: string): string {
  * because Docker records the command in the container's own inspect output
  * (which the agent logs on failure). The environment is not in either.
  */
-export function repositoryEnv(target: RepoTarget, serverId: string): Record<string, string> {
+export function repositoryEnv(target: RepoTarget): Record<string, string> {
   return {
-    RESTIC_REPOSITORY: repositoryUrl(target.s3, serverId),
+    RESTIC_REPOSITORY: repositoryUrl(target.s3, target.scope, target.id),
     RESTIC_PASSWORD: target.password,
     AWS_ACCESS_KEY_ID: target.s3.accessKeyId,
     AWS_SECRET_ACCESS_KEY: target.s3.secretAccessKey,
@@ -106,29 +148,6 @@ export function repositoryEnv(target: RepoTarget, serverId: string): Record<stri
     // incremental backup does not re-read the whole repository index from S3.
     RESTIC_CACHE_DIR: CACHE_MOUNT,
   };
-}
-
-/** Retention policy for `restic forget`. Zero means "do not keep by this rule". */
-export interface RetentionPolicy {
-  keepLast: number;
-  keepDaily: number;
-  keepWeekly: number;
-  keepMonthly: number;
-}
-
-/**
- * Whether a policy would keep anything at all.
- *
- * `restic forget` with no `--keep-*` rule deletes every snapshot, so an
- * all-zero policy must never reach it — the caller skips the prune instead.
- */
-export function retainsAnything(policy: RetentionPolicy): boolean {
-  return (
-    policy.keepLast > 0 ||
-    policy.keepDaily > 0 ||
-    policy.keepWeekly > 0 ||
-    policy.keepMonthly > 0
-  );
 }
 
 /** `restic init` — create the repository. Fails if one already exists. */
@@ -146,34 +165,38 @@ export function probeArgs(): string[] {
 }
 
 /**
- * `restic backup` for one server.
+ * `restic backup`.
  *
  * `--json` switches restic to newline-delimited JSON so progress is parseable
- * rather than scraped from a redrawn terminal line. Tags carry the server id and
- * why the backup ran, so `restic snapshots` stays legible to an operator poking
- * at the repository directly with the CLI.
+ * rather than scraped from a redrawn terminal line. Tags carry the scope, the
+ * subject id and why the backup ran, so `restic snapshots` stays legible to an
+ * operator poking at the repository directly with the CLI.
+ *
+ * `paths` is explicit rather than derived from the scope: a server backup
+ * snapshots `/data` and a node database backup snapshots `/dumps`, and there is
+ * no third case worth inferring.
  */
 export function backupArgs(options: {
-  serverId: string;
+  scope: BackupScope;
+  id: string;
+  /** Absolute paths inside the container to snapshot. */
+  paths: string[];
   /** What triggered this backup, recorded as a tag. */
   reason: string;
-  /** Include the dumps mount. False when the server has no databases. */
-  includeDumps: boolean;
-  /** Paths, relative to the data mount, to leave out of the snapshot. */
+  /** Glob patterns to leave out of the snapshot. */
   exclude: string[];
 }): string[] {
   const args = [
     "backup",
     "--json",
     "--tag",
-    `citadel`,
+    "citadel",
     "--tag",
-    `server:${options.serverId}`,
+    `${options.scope}:${options.id}`,
     "--tag",
     `reason:${options.reason}`,
-    DATA_MOUNT,
+    ...options.paths,
   ];
-  if (options.includeDumps) args.push(DUMPS_MOUNT);
   for (const pattern of options.exclude) {
     args.push("--exclude", pattern);
   }
@@ -186,38 +209,105 @@ export function snapshotsArgs(): string[] {
 }
 
 /**
+ * `restic stats --mode raw-data --json` — how much this repository occupies.
+ *
+ * `raw-data` rather than the default `restore-size`: the default reports how big
+ * a restore would be (i.e. the logical size of the newest snapshot), while
+ * `raw-data` reports the deduplicated, compressed bytes actually stored. The
+ * second is the number that corresponds to what the bucket is billing for, which
+ * is the only reason anyone is asking.
+ *
+ * Run right after a backup, when the repository index is already in the local
+ * cache, so it costs a metadata pass rather than a download.
+ */
+export function statsArgs(): string[] {
+  return ["stats", "--mode", "raw-data", "--json"];
+}
+
+/**
+ * Parse `restic stats --json` into a byte count, or null when it cannot be read.
+ *
+ * Null rather than zero on failure: zero is a legitimate size for a fresh
+ * repository, and reporting "this repository uses nothing" because a stats call
+ * timed out would understate the fleet's storage — the one number this exists to
+ * get right.
+ */
+export function parseRepositorySize(output: string): number | null {
+  const start = output.indexOf("{");
+  const end = output.lastIndexOf("}");
+  if (start === -1 || end <= start) return null;
+
+  try {
+    const parsed = JSON.parse(output.slice(start, end + 1)) as Record<string, unknown>;
+    const size = parsed.total_size;
+    return typeof size === "number" && Number.isFinite(size) && size >= 0 ? size : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * `restic restore` one snapshot back over its original mount points.
  *
- * `--target /` works because the snapshot holds absolute `/data` and `/dumps`
- * paths and the container mounts the same two places. There is deliberately no
- * `--delete`: a restore overlays the snapshot rather than making the data
- * directory byte-identical to it. Handing a filesystem-wide delete to a tool
- * running as root inside a container is a much worse failure mode than a few
- * stale files, and the owner can clear those from the file manager.
+ * `--target /` works because the snapshot holds absolute paths (`/data` or
+ * `/dumps`) and the container mounts the same places. There is deliberately no
+ * `--delete`: a restore overlays the snapshot rather than making the target
+ * byte-identical to it. Handing a filesystem-wide delete to a tool running as
+ * root inside a container is a much worse failure mode than a few stale files,
+ * and the owner can clear those from the file manager.
  */
 export function restoreArgs(snapshotId: string): string[] {
   return ["restore", snapshotId, "--target", "/", "--json"];
 }
 
 /**
- * `restic forget --prune` — apply the retention policy and reclaim the space.
+ * `restic forget --prune` for an explicit list of snapshot ids.
  *
- * Scoped with `--tag citadel` so a repository an operator also uses by hand is
- * not pruned on our rules. `--prune` is what actually deletes data from S3;
- * without it `forget` only unlinks snapshots and the bucket keeps growing.
+ * The only form of deletion this system uses. There is no `--keep-*` policy
+ * anywhere: retention is a plain count enforced by the caller, which decides
+ * *which* snapshots go and passes their ids. That is a deliberate trade — a
+ * `--keep-last N` would be one fewer round trip, but `forget` with a policy and
+ * no matching snapshots silently deletes everything, and a mistake in that
+ * argument is unrecoverable. An explicit id list cannot delete something the
+ * caller did not name.
+ *
+ * `--prune` is what actually reclaims the space in S3; without it `forget` only
+ * unlinks snapshots and the bucket keeps growing.
  */
-export function forgetArgs(policy: RetentionPolicy): string[] {
-  const args = ["forget", "--prune", "--json", "--tag", "citadel"];
-  if (policy.keepLast > 0) args.push("--keep-last", String(policy.keepLast));
-  if (policy.keepDaily > 0) args.push("--keep-daily", String(policy.keepDaily));
-  if (policy.keepWeekly > 0) args.push("--keep-weekly", String(policy.keepWeekly));
-  if (policy.keepMonthly > 0) args.push("--keep-monthly", String(policy.keepMonthly));
-  return args;
+export function forgetSnapshotsArgs(snapshotIds: string[]): string[] {
+  if (snapshotIds.length === 0) {
+    throw new Error("forgetSnapshotsArgs requires at least one snapshot id");
+  }
+  return ["forget", ...snapshotIds, "--prune", "--json"];
 }
 
-/** Drop one snapshot by id, then reclaim its unreferenced chunks. */
-export function forgetSnapshotArgs(snapshotId: string): string[] {
-  return ["forget", snapshotId, "--prune", "--json"];
+/**
+ * Pick the oldest snapshots that have to go for `keepMax` to hold once one more
+ * is written.
+ *
+ * The quota is "at most `keepMax` snapshots exist", and it is enforced *before*
+ * the new backup rather than after — so the limit is never briefly exceeded, and
+ * a node close to its storage ceiling frees space before asking for more. Which
+ * is also what an operator means by "a new backup replaces the oldest".
+ *
+ * `keepMax <= 0` means unlimited and never deletes anything.
+ */
+export function snapshotsToForget(
+  snapshots: SnapshotInfo[],
+  keepMax: number,
+): SnapshotInfo[] {
+  if (keepMax <= 0) return [];
+
+  // Oldest first. restic returns them oldest-first already, but the ordering is
+  // load-bearing here (it decides what gets deleted), so it is not assumed.
+  const ordered = [...snapshots].sort(
+    (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime(),
+  );
+
+  // Room for the one about to be written: keep at most keepMax - 1 of the
+  // existing snapshots.
+  const surplus = ordered.length - (keepMax - 1);
+  return surplus > 0 ? ordered.slice(0, surplus) : [];
 }
 
 // --- Output parsing -------------------------------------------------------------
@@ -377,9 +467,9 @@ export function explainResticFailure(exitCode: number, output: string): string {
   if (/wrong password|invalid data returned/i.test(tail)) {
     return (
       "restic could not decrypt the repository. The panel's stored repository " +
-      "password for this server does not match the one the repository was " +
-      "created with — this happens when PANEL_ENCRYPTION_KEY was rotated after " +
-      `the first backup. Details: ${tail}`
+      "password does not match the one the repository was created with — this " +
+      "happens when PANEL_ENCRYPTION_KEY was rotated after the first backup. " +
+      `Details: ${tail}`
     );
   }
   if (/SignatureDoesNotMatch|InvalidAccessKeyId|AccessDenied|403/i.test(tail)) {
@@ -388,11 +478,41 @@ export function explainResticFailure(exitCode: number, output: string): string {
       `and bucket in the panel's backup settings. Details: ${tail}`
     );
   }
-  if (/NoSuchBucket|does not exist/i.test(tail)) {
-    return `The configured S3 bucket does not exist or is not reachable. Details: ${tail}`;
+  if (/NoSuchBucket|bucket does not exist/i.test(tail)) {
+    return (
+      "The configured S3 bucket does not exist, or these credentials cannot see it. " +
+      "Create the bucket on the storage server first — nothing here creates one. " +
+      `Details: ${tail}`
+    );
   }
-  if (/no such host|dial tcp|connection refused|timeout/i.test(tail)) {
-    return `This node could not reach the S3 endpoint. Details: ${tail}`;
+  // A TLS handshake against a plaintext endpoint is the single most common
+  // misconfiguration for a self-hosted Garage or MinIO, and restic's own message
+  // for it ("first record does not look like a TLS handshake") tells an operator
+  // nothing about which setting to change.
+  if (/\btls\b|HTTP response to HTTPS client|handshake|x509|certificate/i.test(tail)) {
+    return (
+      "The S3 endpoint refused a TLS connection. If this is a self-hosted Garage, " +
+      'MinIO or SeaweedFS without a certificate, turn off "Connect over TLS" in the ' +
+      "backup destination settings. If it should have TLS, its certificate is not " +
+      `trusted by this node. Details: ${tail}`
+    );
+  }
+  if (/no such host|dial tcp|connection refused|i\/o timeout|timeout/i.test(tail)) {
+    return (
+      "This node could not reach the S3 endpoint. Check the host and port, and that " +
+      "the node can route to it — a LAN address reachable from the panel is not " +
+      `necessarily reachable from every node. Details: ${tail}`
+    );
+  }
+  // Garage validates the region in the request signature and defaults to
+  // "garage", so a copied-in "us-east-1" fails signature verification in a way
+  // that reads as a credential problem.
+  if (/region/i.test(tail)) {
+    return (
+      "The S3 endpoint rejected the region. Self-hosted servers often use their own " +
+      'value — Garage defaults to "garage" rather than an AWS region name. ' +
+      `Details: ${tail}`
+    );
   }
   return `restic exited with code ${exitCode}: ${tail}`;
 }

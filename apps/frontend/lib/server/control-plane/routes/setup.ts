@@ -65,7 +65,7 @@ import {
   setAiSettings,
   setAnalyticsSettings,
   setBackupSettings,
-  type BackupRetention,
+  type BackupSettingsUpdate,
   setBranding,
   setCaptchaSettings,
   setMailSettings,
@@ -677,52 +677,78 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
       throw badRequest('"backups.enabled" must be a boolean');
     }
 
-    // The schedule is validated here rather than in the service layer so the
-    // operator gets the cron parser's own message about the field they typed, and
-    // so an unparseable expression can never be stored — the scheduler would then
-    // silently never fire.
-    let schedule: string | undefined;
-    if (backups.schedule !== undefined) {
-      const raw = optionalString(backups, "schedule", { max: 256 }) ?? "";
+    // Cron is validated here rather than in the service layer so the operator gets
+    // the parser's own message about the field they typed, and so an unparseable
+    // expression can never be stored — the scheduler would then silently never fire.
+    const readSchedule = (group: Record<string, unknown>, label: string): string | undefined => {
+      if (group.schedule === undefined) return undefined;
+      const raw = optionalString(group, "schedule", { max: 256 }) ?? "";
       if (raw.trim().length > 0) {
         try {
           parseCron(raw);
         } catch (error) {
           throw badRequest(
-            error instanceof Error ? error.message : "Invalid backup schedule",
+            error instanceof Error ? `${label}: ${error.message}` : `Invalid ${label}`,
           );
         }
       }
-      schedule = raw.trim();
+      return raw.trim();
+    };
+
+    let servers: BackupSettingsUpdate["servers"];
+    if (backups.servers !== undefined) {
+      const group = requireObject(backups, "servers");
+      servers = {};
+      const schedule = readSchedule(group, "server backup schedule");
+      if (schedule !== undefined) servers.schedule = schedule;
+      if (group.maxPerServer !== undefined) {
+        servers.maxPerServer = requireNumber(group, "maxPerServer", { min: 0, max: 1000 });
+      }
+      if (group.concurrency !== undefined) {
+        servers.concurrency = requireNumber(group, "concurrency", { min: 1, max: 32 });
+      }
+      if (group.exclude !== undefined) {
+        if (!Array.isArray(group.exclude)) {
+          throw badRequest('"backups.servers.exclude" must be an array of glob patterns');
+        }
+        if (group.exclude.length > 64) {
+          throw badRequest('"backups.servers.exclude" must contain at most 64 patterns');
+        }
+        servers.exclude = group.exclude.map((entry, index) => {
+          if (typeof entry !== "string" || entry.trim().length === 0 || entry.length > 256) {
+            throw badRequest(
+              `"backups.servers.exclude[${index}]" must be a non-empty string of at most 256 characters`,
+            );
+          }
+          return entry.trim();
+        });
+      }
     }
 
-    let retention: Partial<BackupRetention> | undefined;
-    if (backups.retention !== undefined) {
-      const source = requireObject(backups, "retention");
-      retention = {};
-      for (const key of ["keepLast", "keepDaily", "keepWeekly", "keepMonthly"] as const) {
-        if (source[key] !== undefined) {
-          retention[key] = requireNumber(source, key, { min: 0, max: 1000 });
-        }
+    let databases: BackupSettingsUpdate["databases"];
+    if (backups.databases !== undefined) {
+      const group = requireObject(backups, "databases");
+      databases = {};
+      const schedule = readSchedule(group, "database backup schedule");
+      if (schedule !== undefined) databases.schedule = schedule;
+      if (group.maxPerNode !== undefined) {
+        databases.maxPerNode = requireNumber(group, "maxPerNode", { min: 0, max: 1000 });
       }
     }
 
-    let exclude: string[] | undefined;
-    if (backups.exclude !== undefined) {
-      if (!Array.isArray(backups.exclude)) {
-        throw badRequest('"backups.exclude" must be an array of glob patterns');
+    let storage: BackupSettingsUpdate["storage"];
+    if (backups.storage !== undefined) {
+      const group = requireObject(backups, "storage");
+      storage = {};
+      // A petabyte ceiling: high enough for any real operator, low enough that a
+      // typo cannot produce a number that overflows the display or the BIGINT.
+      const MAX_BYTES = 1024 ** 5;
+      if (group.quotaBytes !== undefined) {
+        storage.quotaBytes = requireNumber(group, "quotaBytes", { min: 0, max: MAX_BYTES });
       }
-      if (backups.exclude.length > 64) {
-        throw badRequest('"backups.exclude" must contain at most 64 patterns');
+      if (group.capacityBytes !== undefined) {
+        storage.capacityBytes = requireNumber(group, "capacityBytes", { min: 0, max: MAX_BYTES });
       }
-      exclude = backups.exclude.map((entry, index) => {
-        if (typeof entry !== "string" || entry.trim().length === 0 || entry.length > 256) {
-          throw badRequest(
-            `"backups.exclude[${index}]" must be a non-empty string of at most 256 characters`,
-          );
-        }
-        return entry.trim();
-      });
     }
 
     try {
@@ -733,6 +759,17 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
             backups.endpoint === undefined
               ? undefined
               : (optionalString(backups, "endpoint", { max: 253 }) ?? null),
+          // Absent leaves the stored value alone; it defaults to true on a fresh
+          // install so an upgrade never quietly starts sending credentials in clear.
+          useTls:
+            backups.useTls === undefined
+              ? undefined
+              : (() => {
+                  if (typeof backups.useTls !== "boolean") {
+                    throw badRequest('"backups.useTls" must be a boolean');
+                  }
+                  return backups.useTls;
+                })(),
           region: optionalString(backups, "region", { max: 64 }) ?? undefined,
           bucket:
             backups.bucket === undefined
@@ -751,18 +788,15 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
             backups.secretAccessKey === undefined
               ? undefined
               : (optionalString(backups, "secretAccessKey", { max: 512 }) ?? null),
-          schedule,
-          retention,
-          exclude,
-          concurrency:
-            backups.concurrency === undefined
-              ? undefined
-              : requireNumber(backups, "concurrency", { min: 1, max: 32 }),
+          storage,
+          servers,
+          databases,
         },
         admin.id,
       );
     } catch (error) {
-      // setBackupSettings enforces "enabled requires a complete destination".
+      // setBackupSettings enforces "enabled requires a complete destination" and the
+      // quota-within-capacity rule.
       throw badRequest(
         error instanceof Error ? error.message : "Invalid backup configuration",
       );

@@ -562,8 +562,10 @@ export function BackupsTab({ serverId }: { serverId: string }) {
                 </span>
               )}
               <span className="text-xs">
-                Kept: {describeRetention(data.schedule.retention)} · times shown in{" "}
-                {data.schedule.timezone}
+                {data.quota.max > 0
+                  ? `Keeping ${data.quota.used} of ${data.quota.max} — a new backup replaces the oldest.`
+                  : `${data.quota.used} kept, no limit set.`}{" "}
+                Times shown in {data.schedule.timezone}.
               </span>
             </div>
 
@@ -723,19 +725,4 @@ export function BackupsTab({ serverId }: { serverId: string }) {
       </Dialog>
     </div>
   );
-}
-
-/** Summarise the retention rules in one clause. */
-function describeRetention(retention: {
-  keepLast: number;
-  keepDaily: number;
-  keepWeekly: number;
-  keepMonthly: number;
-}): string {
-  const parts: string[] = [];
-  if (retention.keepLast > 0) parts.push(`the last ${retention.keepLast}`);
-  if (retention.keepDaily > 0) parts.push(`${retention.keepDaily} daily`);
-  if (retention.keepWeekly > 0) parts.push(`${retention.keepWeekly} weekly`);
-  if (retention.keepMonthly > 0) parts.push(`${retention.keepMonthly} monthly`);
-  return parts.length === 0 ? "every backup, forever" : parts.join(", ");
 }

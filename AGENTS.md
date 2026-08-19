@@ -93,10 +93,11 @@ Existing docs:
   constant), the registration toggle, SEO/`robots.txt`/`sitemap.xml` with
   indexing off by default, the Plausible/GA analytics toggle, and the error
   pages.
-- `docs/backups.md` — restic snapshots to S3: why restic in a throwaway
-  container rather than a tar-to-S3 uploader, one repository per server, files
-  and database dumps in one snapshot, the async job/reconciler split, and the
-  admin-configured cron schedule.
+- `docs/backups.md` — restic snapshots to S3: the two scopes (owner-triggered
+  server *files*, admin-triggered per-node *databases*) and why the credential
+  forces that split, why restic in a throwaway container, the FIFO snapshot
+  quota enforced before the new snapshot, the async job/reconciler split, the
+  storage accounting, and why TLS is a field rather than part of the endpoint.
 - `docs/legal-pages.md` — operator-authored terms and privacy policy: why the
   panel ships drafts rather than defaults, the "what this codebase stores"
   privacy inventory, and why Markdown is rendered to React nodes.
