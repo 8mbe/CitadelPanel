@@ -29,6 +29,19 @@ import {
   handleAdminSetApiKeyEnabled,
 } from "@/lib/server/control-plane/routes/apiKeys";
 import {
+  handleCreateServerBackup,
+  handleDeleteServerBackup,
+  handleGetServerBackup,
+  handleGetServerBackupLogs,
+  handleListRepositorySnapshots,
+  handleListServerBackups,
+  handlePreviewBackupSchedule,
+  handleRestoreServerBackup,
+  handleStartServerAfterRestore,
+  handleTestBackupDestination,
+  handleUpdateServerBackupSettings,
+} from "@/lib/server/control-plane/routes/backups";
+import {
   handleAdminCreateBlueprint,
   handleAdminDeleteBlueprint,
   handleAdminGetBlueprint,
@@ -166,6 +179,11 @@ const exact = new Map<string, Partial<Record<string, Handler>>>([
   ["admin/settings/test-email", { POST: handleTestEmail }],
   ["admin/settings/ai/models", { POST: handleFetchAiModels }],
   ["admin/settings/ai/test", { POST: handleTestAi }],
+  // Backup destination + schedule tooling (see routes/backups.ts). The S3 config
+  // itself is part of admin/settings; these two are the "does it work?" and
+  // "when would it run?" helpers the form needs.
+  ["admin/backups/test", { POST: handleTestBackupDestination }],
+  ["admin/backups/preview-schedule", { POST: handlePreviewBackupSchedule }],
   ["admin/legal", { GET: handleGetLegal }],
   ["me", { GET: handleGetMe }],
   ["account/delete", { POST: handleDeleteAccount }],
@@ -244,6 +262,17 @@ const patterns: Array<{
   { pattern: /^servers\/([^/]+)\/plugins\/versions\/([^/]+)$/, methods: { GET: handleListPluginVersions } },
   { pattern: /^servers\/([^/]+)\/plugins\/([^/]+)\/toggle$/, methods: { POST: handleTogglePlugin } },
   { pattern: /^servers\/([^/]+)\/plugins\/([^/]+)$/, methods: { DELETE: handleRemovePlugin } },
+  // Backups (see routes/backups.ts). The literal sub-paths (`settings`,
+  // `snapshots`, `start-server`) must come before the bare `:backupId` pattern,
+  // otherwise e.g. PATCH /backups/settings is captured as a backup id and
+  // returns 405 instead of reaching the handler.
+  { pattern: /^servers\/([^/]+)\/backups$/, methods: { GET: handleListServerBackups, POST: handleCreateServerBackup } },
+  { pattern: /^servers\/([^/]+)\/backups\/settings$/, methods: { PATCH: handleUpdateServerBackupSettings } },
+  { pattern: /^servers\/([^/]+)\/backups\/snapshots$/, methods: { GET: handleListRepositorySnapshots } },
+  { pattern: /^servers\/([^/]+)\/backups\/start-server$/, methods: { POST: handleStartServerAfterRestore } },
+  { pattern: /^servers\/([^/]+)\/backups\/([^/]+)\/logs$/, methods: { GET: handleGetServerBackupLogs } },
+  { pattern: /^servers\/([^/]+)\/backups\/([^/]+)\/restore$/, methods: { POST: handleRestoreServerBackup } },
+  { pattern: /^servers\/([^/]+)\/backups\/([^/]+)$/, methods: { GET: handleGetServerBackup, DELETE: handleDeleteServerBackup } },
   { pattern: /^servers\/([^/]+)\/subusers$/, methods: { GET: handleListSubusers, POST: handleInviteSubuser } },
   { pattern: /^servers\/([^/]+)\/subusers\/([^/]+)$/, methods: { PATCH: handleUpdateSubuser, DELETE: handleRemoveSubuser } },
   { pattern: /^servers\/([^/]+)\/sftp\/connection$/, methods: { GET: handleGetSftpConnection } },

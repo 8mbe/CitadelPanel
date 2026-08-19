@@ -28,6 +28,22 @@ import {
   dropServerDatabase,
   runServerDatabaseSql,
 } from "./docker/database";
+import { hasRunningJob, readJob } from "./backup/jobs";
+import {
+  checkRepository,
+  deleteSnapshot,
+  listSnapshots,
+  startBackup,
+  startRestore,
+} from "./backup/run";
+import {
+  parseDatabases,
+  parseExclude,
+  parseReason,
+  parseRepoTarget,
+  parseRetention,
+  parseSnapshotId,
+} from "./backup/wire";
 import { createSftpServer } from "./sftp";
 import {
   copyPath,
@@ -44,6 +60,7 @@ import {
 } from "./files";
 import {
   badRequest,
+  conflict,
   json,
   noContent,
   parseJsonBody,
@@ -966,6 +983,142 @@ const server = Bun.serve<ConsoleSocket, never>({
             "cache-control": "no-store",
           },
         });
+      }),
+    },
+
+    // --- Backups --------------------------------------------------------------
+    //
+    // restic-to-S3 backups, run by the agent in throwaway containers. The panel
+    // supplies the S3 credentials and the server's repository password on every
+    // call and the agent persists neither — the same posture the database routes
+    // take with the MariaDB admin credential.
+    //
+    // Backup and restore are *asynchronous*: they take minutes to hours, so the
+    // route registers a job and returns its id, and the panel polls for status
+    // and drains the job's log. Listing and deleting snapshots are synchronous
+    // metadata operations. See `backup/jobs.ts` and `docs/backups.md`.
+
+    /**
+     * POST /v1/servers/:id/backups — start a backup. 202 with a job id.
+     *
+     * Body: { repo: { s3, password }, databases[], retention, reason, exclude[] }
+     *
+     * Dumps the server's databases, then snapshots its data directory and those
+     * dumps together, then applies the retention policy.
+     */
+    "/v1/servers/:id/backups": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+
+        // One job per server at a time: two restics on one repository contend on
+        // its lock, and a backup racing a restore would snapshot a half-restored
+        // world.
+        if (hasRunningJob(serverId)) {
+          throw conflict(
+            "A backup or restore is already running for this server on this node.",
+          );
+        }
+
+        const jobId = startBackup(serverId, {
+          repo: parseRepoTarget(body),
+          databases: parseDatabases(body),
+          retention: parseRetention(body),
+          reason: parseReason(body),
+          exclude: parseExclude(body),
+        });
+
+        return json({ jobId }, 202);
+      }),
+    },
+
+    /**
+     * GET /v1/servers/:id/backups/jobs/:jobId — poll a job.
+     *
+     * `?afterSeq=N` returns only log lines newer than N, so the panel drains the
+     * log incrementally instead of re-reading it on every poll.
+     */
+    "/v1/servers/:id/backups/jobs/:jobId": {
+      GET: route(async (request) => {
+        serverIdOf(request);
+        const jobId = (request as ParamRequest<"id" | "jobId">).params.jobId;
+        const afterSeq = Number(queryOf(request).get("afterSeq") ?? "0");
+        return json(readJob(jobId, Number.isFinite(afterSeq) ? afterSeq : 0));
+      }),
+    },
+
+    /**
+     * POST /v1/servers/:id/backups/restore — start a restore. 202 with a job id.
+     *
+     * Body: { repo, snapshotId, databases[] }
+     *
+     * The panel stops the server before calling and starts it again afterwards:
+     * it owns the container lifecycle and the status the owner sees.
+     */
+    "/v1/servers/:id/backups/restore": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+
+        if (hasRunningJob(serverId)) {
+          throw conflict(
+            "A backup or restore is already running for this server on this node.",
+          );
+        }
+
+        const jobId = startRestore(serverId, {
+          repo: parseRepoTarget(body),
+          snapshotId: parseSnapshotId(body.snapshotId),
+          databases: parseDatabases(body),
+        });
+
+        return json({ jobId }, 202);
+      }),
+    },
+
+    /**
+     * POST /v1/servers/:id/backups/snapshots — list the repository's snapshots.
+     *
+     * POST rather than GET because the S3 credentials and repository password
+     * travel in the body; putting them in a query string would put them in every
+     * access log between the panel and the node.
+     */
+    "/v1/servers/:id/backups/snapshots": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+        const snapshots = await listSnapshots(serverId, parseRepoTarget(body));
+        return json({ snapshots });
+      }),
+    },
+
+    /** POST /v1/servers/:id/backups/forget — delete one snapshot and prune it. */
+    "/v1/servers/:id/backups/forget": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+        await deleteSnapshot(
+          serverId,
+          parseRepoTarget(body),
+          parseSnapshotId(body.snapshotId),
+        );
+        return noContent();
+      }),
+    },
+
+    /**
+     * POST /v1/servers/:id/backups/check — verify S3 from this node.
+     *
+     * Backs the admin settings page's "test connection" button. A repository
+     * that does not exist yet is a success: that is the expected state before
+     * the first backup, and initialising one to prove connectivity would leave
+     * debris in the operator's bucket.
+     */
+    "/v1/servers/:id/backups/check": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+        return json(await checkRepository(serverId, parseRepoTarget(body)));
       }),
     },
   },

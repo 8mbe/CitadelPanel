@@ -23,7 +23,7 @@ feed and nothing else.
 | `files` | File manager (all `/files/*` routes) and SFTP credentials |
 | `database` | Database list, create, delete, password reset — **including the list** |
 | `settings` | Env view/edit, ports view/add/remove, connected-servers list |
-| `backups` | Reserved; no routes yet |
+| `backups` | Backup list, status, logs, and taking a backup — **not** restore or delete, which are owner-only (`backups.md`) |
 
 Two design rules keep this coherent:
 
@@ -36,7 +36,11 @@ Two design rules keep this coherent:
   were granted — otherwise a delegated grant could escalate itself. Connecting
   servers (`server-links.md`) is the same: a link attaches the *target's*
   container to a shared network, so it requires owner-or-admin on both
-  servers even though its read sits under `settings`.
+  servers even though its read sits under `settings`. Restoring or deleting a
+  backup is the same again: `backups` is enough to *take* one, but a restore
+  overwrites a world and every database in the snapshot, and a delete destroys
+  the only copy of a point in time — so both sit behind `requireServerOwner`
+  while the rest of the tab sits under the flag.
 
 ## Enforcement: API first, UI second
 

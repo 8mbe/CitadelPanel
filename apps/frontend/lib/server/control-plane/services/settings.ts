@@ -1198,6 +1198,221 @@ export async function setLegalDocument(
   return next;
 }
 
+// --- Backups ------------------------------------------------------------------
+
+/**
+ * S3 backup configuration and the schedule that drives it.
+ *
+ * Panel-wide rather than per-server, and per-node not at all: one bucket holds
+ * the fleet's snapshots (one restic repository per server inside it — see
+ * `docs/backups.md`), and an operator configures the destination once. A
+ * per-server bucket would multiply the credential surface by the server count
+ * for no benefit anyone asked for.
+ *
+ * The secret access key lives inside this setting but is AES-256-GCM encrypted
+ * before it is written, so — as with captcha, mail and AI — nothing in the stored
+ * value may be handed to a client as-is.
+ *
+ * `schedule` is a five-field cron expression evaluated in the panel's configured
+ * timezone (see `@/lib/cron`). Empty means manual backups only, which is
+ * distinct from `enabled: false`: an operator may well want the button to work
+ * and no cron behind it.
+ */
+export interface StoredBackupSettings {
+  enabled: boolean;
+  /** Bare S3 host, no scheme — the agent always connects over https. */
+  endpoint: string | null;
+  region: string;
+  bucket: string | null;
+  /** Key prefix inside the bucket. Server repositories nest below it. */
+  prefix: string;
+  accessKeyId: string | null;
+  secretAccessKeyEncrypted: string | null;
+  /** Five-field cron, in the panel timezone. Empty = manual backups only. */
+  schedule: string;
+  retention: BackupRetention;
+  /** Data-directory-relative glob patterns to leave out of every snapshot. */
+  exclude: string[];
+  /**
+   * How many servers the scheduler backs up at once.
+   *
+   * Every concurrent backup is a restic container reading a disk and saturating
+   * upstream bandwidth on the same node, so this is a throttle on the fleet, not
+   * a performance dial. Two is enough to keep a large fleet moving overnight
+   * without making the games unplayable while it does.
+   */
+  concurrency: number;
+}
+
+/** How many snapshots survive a prune. All zero means keep everything. */
+export interface BackupRetention {
+  keepLast: number;
+  keepDaily: number;
+  keepWeekly: number;
+  keepMonthly: number;
+}
+
+/** Backup config safe to hand to a browser: no secret key, just "is one stored?". */
+export interface PublicBackupSettings {
+  enabled: boolean;
+  endpoint: string | null;
+  region: string;
+  bucket: string | null;
+  prefix: string;
+  accessKeyId: string | null;
+  hasSecretAccessKey: boolean;
+  schedule: string;
+  retention: BackupRetention;
+  exclude: string[];
+  concurrency: number;
+  /** Whether the stored config is complete enough to actually run a backup. */
+  usable: boolean;
+}
+
+const DEFAULT_RETENTION: BackupRetention = {
+  keepLast: 3,
+  keepDaily: 7,
+  keepWeekly: 4,
+  keepMonthly: 6,
+};
+
+const DEFAULT_BACKUPS: StoredBackupSettings = {
+  enabled: false,
+  endpoint: null,
+  region: "us-east-1",
+  bucket: null,
+  prefix: "citadel",
+  accessKeyId: null,
+  secretAccessKeyEncrypted: null,
+  schedule: "",
+  retention: DEFAULT_RETENTION,
+  exclude: [],
+  concurrency: 2,
+};
+
+export async function getBackupSettings(): Promise<StoredBackupSettings> {
+  const stored = await readSetting<Partial<StoredBackupSettings>>("backups", DEFAULT_BACKUPS);
+  return {
+    ...DEFAULT_BACKUPS,
+    ...stored,
+    // A partially-written retention object must not leave a rule undefined —
+    // `restic forget` reads a missing rule as zero, and an accidental all-zero
+    // policy deletes every snapshot.
+    retention: { ...DEFAULT_RETENTION, ...(stored.retention ?? {}) },
+    exclude: Array.isArray(stored.exclude) ? stored.exclude : [],
+  };
+}
+
+/**
+ * True when the stored config has everything a backup needs.
+ *
+ * Checked separately from `enabled` so a half-entered destination is never
+ * treated as "backups are on" — the UI reports it as unusable and the scheduler
+ * skips it rather than failing every server in the fleet once an hour.
+ */
+export function isBackupConfigUsable(settings: StoredBackupSettings): boolean {
+  return Boolean(
+    settings.enabled &&
+      settings.endpoint &&
+      settings.bucket &&
+      settings.region &&
+      settings.accessKeyId &&
+      settings.secretAccessKeyEncrypted,
+  );
+}
+
+export async function getPublicBackupSettings(): Promise<PublicBackupSettings> {
+  const backups = await getBackupSettings();
+  return {
+    enabled: backups.enabled,
+    endpoint: backups.endpoint,
+    region: backups.region,
+    bucket: backups.bucket,
+    prefix: backups.prefix,
+    accessKeyId: backups.accessKeyId,
+    hasSecretAccessKey: backups.secretAccessKeyEncrypted !== null,
+    schedule: backups.schedule,
+    retention: backups.retention,
+    exclude: backups.exclude,
+    concurrency: backups.concurrency,
+    usable: isBackupConfigUsable(backups),
+  };
+}
+
+/** The decrypted S3 secret key, or null when backups are not configured. */
+export async function getBackupSecretAccessKey(): Promise<string | null> {
+  const backups = await getBackupSettings();
+  if (!backups.secretAccessKeyEncrypted) return null;
+  return decryptSecret(backups.secretAccessKeyEncrypted);
+}
+
+export interface BackupSettingsUpdate {
+  enabled: boolean;
+  endpoint?: string | null;
+  region?: string | null;
+  bucket?: string | null;
+  prefix?: string | null;
+  accessKeyId?: string | null;
+  /** Plaintext; encrypted here. Omit to keep the stored secret unchanged. */
+  secretAccessKey?: string | null;
+  schedule?: string | null;
+  retention?: Partial<BackupRetention>;
+  exclude?: string[];
+  concurrency?: number;
+}
+
+/**
+ * Update the backup configuration.
+ *
+ * Enabling requires a complete destination, checked here so the admin page and
+ * the scheduler's `isBackupConfigUsable` cannot disagree. Disabling keeps the
+ * stored secret key, so toggling backups off for an evening does not mean
+ * re-entering it — and, more importantly, does not mean losing the credential
+ * that reads the existing snapshots.
+ *
+ * Schedule validation lives in the route (which owns the operator-facing error
+ * messages from `parseCron`); this stores what it is given.
+ */
+export async function setBackupSettings(
+  update: BackupSettingsUpdate,
+  updatedBy: string | null,
+): Promise<void> {
+  const current = await getBackupSettings();
+
+  const pick = <T>(value: T | null | undefined, fallback: T): T =>
+    value === undefined ? fallback : value === null ? fallback : value;
+
+  const next: StoredBackupSettings = {
+    enabled: update.enabled,
+    endpoint: update.endpoint === undefined ? current.endpoint : update.endpoint,
+    region: pick(update.region, current.region),
+    bucket: update.bucket === undefined ? current.bucket : update.bucket,
+    prefix: update.prefix === undefined ? current.prefix : (update.prefix ?? ""),
+    accessKeyId: update.accessKeyId === undefined ? current.accessKeyId : update.accessKeyId,
+    // Omitted secret keeps the existing ciphertext; an explicit empty string
+    // clears it. Same convention as the mail and AI settings.
+    secretAccessKeyEncrypted:
+      update.secretAccessKey === undefined
+        ? current.secretAccessKeyEncrypted
+        : update.secretAccessKey
+          ? encryptSecret(update.secretAccessKey)
+          : null,
+    schedule: update.schedule === undefined ? current.schedule : (update.schedule ?? ""),
+    retention: { ...current.retention, ...(update.retention ?? {}) },
+    exclude: update.exclude === undefined ? current.exclude : update.exclude,
+    concurrency: pick(update.concurrency, current.concurrency),
+  };
+
+  if (next.enabled && !isBackupConfigUsable(next)) {
+    throw new Error(
+      "A complete S3 destination is required to enable backups: endpoint, region, " +
+        "bucket, access key ID, and secret access key.",
+    );
+  }
+
+  await writeSetting("backups", next satisfies StoredBackupSettings, updatedBy);
+}
+
 // --- Setup state --------------------------------------------------------------
 
 export function getSetupState(): Promise<SetupState> {

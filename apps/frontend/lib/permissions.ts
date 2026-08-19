@@ -14,6 +14,7 @@ export const SERVER_SECTION_KEYS = [
   "files",
   "plugins",
   "database",
+  "backups",
   "ports",
   "subusers",
   "settings",
@@ -32,12 +33,19 @@ export type ServerSectionKey = (typeof SERVER_SECTION_KEYS)[number];
  * `ports` rides on `settings` because the backend gates the whole ports
  * endpoint (view and edit alike) on `settings`. `plugins` rides on `files`
  * because installing or removing a plugin is a filesystem write.
+ *
+ * `backups` gates the tab on its own flag, matching the list endpoint. Note that
+ * the tab being visible is not the same as everything on it being available: the
+ * restore and delete *actions* are owner-only server-side, because each destroys
+ * a world or the only copy of a point in time, so the tab renders them disabled
+ * for a subuser.
  */
 export const SECTION_PERMISSIONS = {
   console: null,
   files: "files",
   plugins: "files",
   database: "database",
+  backups: "backups",
   ports: "settings",
   subusers: "owner",
   settings: "settings",

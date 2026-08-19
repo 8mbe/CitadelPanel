@@ -479,6 +479,181 @@ export interface ServerPort {
   label: string | null;
 }
 
+// --- Backups --------------------------------------------------------------------
+
+export type BackupKind = "backup" | "restore";
+export type BackupStatus = "pending" | "running" | "succeeded" | "failed";
+export type BackupTrigger = "manual" | "scheduled";
+
+/**
+ * One backup or restore run.
+ *
+ * `bytesProcessed` is what was read from disk; `bytesAdded` is what actually
+ * went to S3 after restic deduplicated and compressed it. Showing both is the
+ * point — the second number is the one that maps to the operator's storage bill,
+ * and on a large world it is usually a tiny fraction of the first.
+ */
+export interface ServerBackup {
+  id: string;
+  serverId: string;
+  kind: BackupKind;
+  status: BackupStatus;
+  trigger: BackupTrigger;
+  /** Coarse stage, e.g. "uploading" or "dumping_databases". Null before start. */
+  phase: string | null;
+  percent: number;
+  snapshotId: string | null;
+  bytesProcessed: number | null;
+  bytesAdded: number | null;
+  /** Databases whose dumps are inside this snapshot. */
+  databases: string[];
+  error: string | null;
+  requestedBy: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+/** One line of a run's log. */
+export interface ServerBackupLogLine {
+  seq: number;
+  level: "info" | "warn" | "error";
+  message: string;
+  createdAt: string;
+}
+
+/** Retention rules. All zero means every snapshot is kept forever. */
+export interface BackupRetention {
+  keepLast: number;
+  keepDaily: number;
+  keepWeekly: number;
+  keepMonthly: number;
+}
+
+/**
+ * The schedule context the backups tab needs, with nothing secret in it: whether
+ * a destination is configured at all, the cron expression, and when it next fires.
+ * The S3 credentials live only in the admin-only settings view.
+ */
+export interface ServerBackupSchedule {
+  configured: boolean;
+  cron: string;
+  /** ISO timestamp of the next scheduled run, or null when there is no schedule. */
+  nextRun: string | null;
+  timezone: string;
+  retention: BackupRetention;
+  enabledForServer: boolean;
+}
+
+export interface ServerBackupsView {
+  backups: ServerBackup[];
+  schedule: ServerBackupSchedule;
+  /** True while a run is in flight, so the UI can poll and disable the button. */
+  active: boolean;
+}
+
+/** GET /api/servers/:id/backups — history plus schedule context in one call. */
+export async function getServerBackups(id: string): Promise<ServerBackupsView> {
+  return request<ServerBackupsView>(`/api/servers/${id}/backups`);
+}
+
+/**
+ * POST /api/servers/:id/backups — start a backup.
+ *
+ * Returns immediately with the run in `pending`/`running`; the work happens on
+ * the node and is followed by polling {@link getServerBackupLogs}.
+ */
+export async function createServerBackup(id: string): Promise<ServerBackup> {
+  const data = await request<{ backup: ServerBackup }>(`/api/servers/${id}/backups`, {
+    method: "POST",
+  });
+  return data.backup;
+}
+
+/**
+ * GET /api/servers/:id/backups/:backupId/logs?afterSeq= — the live log tail.
+ *
+ * Pass the highest `seq` already displayed and only newer lines come back, which
+ * is what keeps a two-second poll cheap while a long backup runs.
+ */
+export async function getServerBackupLogs(
+  id: string,
+  backupId: string,
+  afterSeq = 0,
+): Promise<{
+  logs: ServerBackupLogLine[];
+  status: BackupStatus;
+  phase: string | null;
+  percent: number;
+  error: string | null;
+}> {
+  return request(`/api/servers/${id}/backups/${backupId}/logs?afterSeq=${afterSeq}`);
+}
+
+/**
+ * POST /api/servers/:id/backups/:backupId/restore — restore from a backup.
+ *
+ * Owner or admin only. Stops the server, overwrites its data directory and every
+ * database in the snapshot, and leaves it stopped.
+ */
+export async function restoreServerBackup(
+  id: string,
+  backupId: string,
+): Promise<ServerBackup> {
+  const data = await request<{ backup: ServerBackup }>(
+    `/api/servers/${id}/backups/${backupId}/restore`,
+    { method: "POST" },
+  );
+  return data.backup;
+}
+
+/** POST /api/servers/:id/backups/start-server — start the server after a restore. */
+export async function startServerAfterRestore(id: string): Promise<void> {
+  await request<void>(`/api/servers/${id}/backups/start-server`, { method: "POST" });
+}
+
+/** DELETE /api/servers/:id/backups/:backupId — drop the snapshot and the record. */
+export async function deleteServerBackup(id: string, backupId: string): Promise<void> {
+  await request<void>(`/api/servers/${id}/backups/${backupId}`, { method: "DELETE" });
+}
+
+/** PATCH /api/servers/:id/backups/settings — include this server in the schedule. */
+export async function setServerBackupsEnabled(
+  id: string,
+  enabled: boolean,
+): Promise<{ enabledForServer: boolean }> {
+  return request(`/api/servers/${id}/backups/settings`, {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+/** POST /api/admin/backups/test — verify the S3 destination from a real node. */
+export async function testBackupDestination(): Promise<{
+  reachable: boolean;
+  initialised: boolean;
+  detail: string;
+}> {
+  return request("/api/admin/backups/test", { method: "POST", body: JSON.stringify({}) });
+}
+
+/**
+ * POST /api/admin/backups/preview-schedule — validate a cron expression.
+ *
+ * Server-side so the preview uses the panel's timezone and the same parser the
+ * scheduler does; a schedule can never preview one thing and then do another.
+ */
+export async function previewBackupSchedule(cron: string): Promise<{
+  valid: boolean;
+  description: string;
+  nextRuns: string[];
+  timezone: string;
+}> {
+  return request("/api/admin/backups/preview-schedule", {
+    method: "POST",
+    body: JSON.stringify({ cron }),
+  });
+}
+
 /** GET /api/servers/:id/ports — the server's published ports. */
 export async function getServerPorts(id: string): Promise<ServerPort[]> {
   const data = await request<{ ports: ServerPort[] }>(
@@ -2344,11 +2519,38 @@ export interface AdminSettings {
   verification: { requireVerifiedSignIn: boolean };
   serverLimits: { maxAdditionalPortsPerServer: number; maxDatabasesPerServer: number };
   ai: AdminAiSettings;
+  backups: AdminBackupSettings;
   branding: BrandingSettings;
   theme: SiteThemeSettings;
   registration: RegistrationSettings;
   seo: SeoSettings;
   analytics: AnalyticsSettings;
+}
+
+/**
+ * S3 backup config as the admin form sees it: the secret access key is reported
+ * only as "is one stored?", since it is encrypted at rest precisely so it cannot
+ * be read back.
+ *
+ * `usable` is separate from `enabled` on purpose — a half-entered destination
+ * must never render as "backups are on", because the scheduler would skip it and
+ * nobody would know why.
+ */
+export interface AdminBackupSettings {
+  enabled: boolean;
+  /** Bare S3 host, no scheme — the node always connects over https. */
+  endpoint: string | null;
+  region: string;
+  bucket: string | null;
+  prefix: string;
+  accessKeyId: string | null;
+  hasSecretAccessKey: boolean;
+  /** Five-field cron in the panel timezone. Empty = manual backups only. */
+  schedule: string;
+  retention: BackupRetention;
+  exclude: string[];
+  concurrency: number;
+  usable: boolean;
 }
 
 /** The site name and strapline shown in the header, on sign-in, and in titles. */
@@ -2434,6 +2636,21 @@ export interface AdminSettingsUpdate {
     /** Plaintext; omit to keep the stored secret. */
     apiKey?: string | null;
     model?: string | null;
+  };
+  backups?: {
+    enabled: boolean;
+    endpoint?: string | null;
+    region?: string | null;
+    bucket?: string | null;
+    prefix?: string | null;
+    accessKeyId?: string | null;
+    /** Plaintext; omit to keep the stored secret. */
+    secretAccessKey?: string | null;
+    /** Five-field cron; empty string means manual backups only. */
+    schedule?: string | null;
+    retention?: Partial<BackupRetention>;
+    exclude?: string[];
+    concurrency?: number;
   };
   branding?: Partial<BrandingSettings>;
   theme?: Partial<SiteThemeSettings>;

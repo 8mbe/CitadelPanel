@@ -93,6 +93,10 @@ Existing docs:
   constant), the registration toggle, SEO/`robots.txt`/`sitemap.xml` with
   indexing off by default, the Plausible/GA analytics toggle, and the error
   pages.
+- `docs/backups.md` — restic snapshots to S3: why restic in a throwaway
+  container rather than a tar-to-S3 uploader, one repository per server, files
+  and database dumps in one snapshot, the async job/reconciler split, and the
+  admin-configured cron schedule.
 - `docs/legal-pages.md` — operator-authored terms and privacy policy: why the
   panel ships drafts rather than defaults, the "what this codebase stores"
   privacy inventory, and why Markdown is rendered to React nodes.
