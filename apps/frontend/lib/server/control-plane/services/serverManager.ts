@@ -15,7 +15,7 @@
 
 import { randomBytes } from "node:crypto";
 import { sql } from "../db/client";
-import { badRequest, conflict, notFound } from "../lib/http";
+import { badRequest, conflict, notFound, HttpError } from "../lib/http";
 import { decryptSecret, encryptSecret, generateStrongPassword } from "../lib/crypto";
 import {
   getBlueprintByKey,
@@ -577,6 +577,66 @@ function assertHasContainer(server: ServerRow): void {
   }
 }
 
+/**
+ * Rebuild a container the node no longer has.
+ *
+ * Panel/node drift is a real state, not a corrupted one: a container can be
+ * removed out of band — a manual `docker rm`, a prune, a rebuilt node — while
+ * the server row still points at its id. Every lifecycle call then comes back
+ * as the agent's "no container exists on this node" 404, and nothing in the UI
+ * can clear it, because the only path that creates a container is provisioning
+ * and that already ran.
+ *
+ * Rebuilding from the stored spec is the way out, and it is non-destructive:
+ * the data directory belongs to the agent and outlives any container, so the
+ * new container comes up on the world, config and logs the old one left.
+ *
+ * Returns false when the node does have the container after all — the 404 came
+ * from something else and the caller must re-throw it.
+ */
+async function healMissingContainer(server: ServerRow): Promise<boolean> {
+  const state = await getServerState(server.node_id, server.id);
+  if (state !== "missing") return false;
+
+  console.warn(
+    `[serverManager] container for ${server.id} is gone from node ${server.node_id}; rebuilding it`,
+  );
+
+  // Drop the stale id first: it names a container that no longer exists, so
+  // recreating would otherwise spend a stop + remove round trip on it and log
+  // two failures that mean nothing.
+  await sql`
+    UPDATE servers SET container_id = NULL, updated_at = now() WHERE id = ${server.id}
+  `;
+  await recreateServerContainer(server.id);
+  return true;
+}
+
+/**
+ * Run a container operation, rebuilding the container once if the node reports
+ * it is missing.
+ *
+ * Every power action goes through here, so drift is repaired by the action the
+ * operator already took rather than by a support ticket. The retry is safe for
+ * all four: start on a fresh container is the normal case, and stop/kill are
+ * idempotent against a container that is not running.
+ */
+async function withMissingContainerRecovery<T>(
+  server: ServerRow,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!(error instanceof HttpError) || error.status !== 404) throw error;
+    // A rebuild that fails carries the more useful message (an unreachable
+    // node, a blueprint that is gone), so it replaces the 404 rather than
+    // being swallowed in favour of it.
+    if (!(await healMissingContainer(server))) throw error;
+    return await operation();
+  }
+}
+
 export async function startServer(
   serverId: string,
   actorId: string,
@@ -591,7 +651,9 @@ export async function startServer(
     // auto-updater runs inside the "starting" phase. Best-effort by contract —
     // a catalog outage never blocks a start.
     await autoUpdateServerPlugins(serverId);
-    await startServerContainer(server.node_id, serverId);
+    await withMissingContainerRecovery(server, () =>
+      startServerContainer(server.node_id, serverId),
+    );
     await setStatus(serverId, "running");
   } catch (error) {
     await setStatus(serverId, "error");
@@ -617,7 +679,9 @@ export async function stopServer(
 
   await setStatus(serverId, "stopping");
   try {
-    await stopServerContainer(server.node_id, serverId);
+    await withMissingContainerRecovery(server, () =>
+      stopServerContainer(server.node_id, serverId),
+    );
     await setStatus(serverId, "stopped");
   } catch (error) {
     await setStatus(serverId, "error");
@@ -652,7 +716,9 @@ export async function killServer(
 
   await setStatus(serverId, "stopping");
   try {
-    await killServerContainer(server.node_id, serverId);
+    await withMissingContainerRecovery(server, () =>
+      killServerContainer(server.node_id, serverId),
+    );
     await setStatus(serverId, "stopped");
   } catch (error) {
     await setStatus(serverId, "error");
@@ -681,7 +747,9 @@ export async function restartServer(
     // A restart re-reads the plugins directory at boot, so the auto-updater
     // runs before the agent restarts the container.
     await autoUpdateServerPlugins(serverId);
-    await restartServerContainer(server.node_id, serverId);
+    await withMissingContainerRecovery(server, () =>
+      restartServerContainer(server.node_id, serverId),
+    );
     await setStatus(serverId, "running");
   } catch (error) {
     await setStatus(serverId, "error");
@@ -967,6 +1035,13 @@ async function recreateServerContainer(serverId: string): Promise<void> {
         error,
       );
     }
+
+    // The old id must not survive the removal: if the create below fails, a row
+    // still pointing at a container the node no longer has is exactly the drift
+    // healMissingContainer would have to repair later.
+    await sql`
+      UPDATE servers SET container_id = NULL, updated_at = now() WHERE id = ${serverId}
+    `;
   }
 
   // Rebuild the same startup command the create path produced, so a recreated
