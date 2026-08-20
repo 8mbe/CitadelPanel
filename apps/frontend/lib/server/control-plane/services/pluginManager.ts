@@ -106,20 +106,38 @@ export interface PluginContext {
   support: ResolvedPluginSupport;
 }
 
-async function loadPluginContext(
+/**
+ * The server columns the plugin context needs.
+ *
+ * Exposed so a caller that has already read the row — the server detail view
+ * does, on every page load — can hand it over instead of paying for a second
+ * read of the same three columns.
+ */
+export interface PluginServerFields {
+  node_id: string;
+  blueprint_id: string;
+  plugin_auto_update: boolean;
+}
+
+async function loadPluginServerFields(
   serverId: string,
-): Promise<PluginContext | null> {
+): Promise<PluginServerFields> {
   const rows = (await sql`
     SELECT node_id, blueprint_id, plugin_auto_update
     FROM servers WHERE id = ${serverId}
-  `) as {
-    node_id: string;
-    blueprint_id: string;
-    plugin_auto_update: boolean;
-  }[];
+  `) as PluginServerFields[];
   const server = rows[0];
   if (!server) throw notFound("Server not found");
+  return server;
+}
 
+async function loadPluginContext(
+  serverId: string,
+  preloaded?: PluginServerFields,
+): Promise<PluginContext | null> {
+  const server = preloaded ?? (await loadPluginServerFields(serverId));
+
+  // Blueprints are cached in the registry, so this is a map read, not a query.
   const blueprint = await getBlueprintById(server.blueprint_id);
   if (!blueprint?.plugins) return null;
 
@@ -154,13 +172,19 @@ export async function requirePluginContext(
 /**
  * The minimal capability flag for the server detail response: what the tab is
  * called and who serves it. Null means no tab.
+ *
+ * `preloaded` lets the detail view pass the server row it already holds, which
+ * turns this from two queries into one.
  */
-export async function getServerPluginSupportSummary(serverId: string): Promise<{
+export async function getServerPluginSupportSummary(
+  serverId: string,
+  preloaded?: PluginServerFields,
+): Promise<{
   label: string;
   providerId: string;
   directory: string;
 } | null> {
-  const ctx = await loadPluginContext(serverId);
+  const ctx = await loadPluginContext(serverId, preloaded);
   if (!ctx) return null;
   return {
     label: ctx.support.label,

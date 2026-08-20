@@ -110,6 +110,10 @@ Existing docs:
 - `docs/legal-pages.md` — operator-authored terms and privacy policy: why the
   panel ships drafts rather than defaults, the "what this codebase stores"
   privacy inventory, and why Markdown is rendered to React nodes.
+- `docs/performance.md` — the two costs that dominate a request: why the agent
+  must never call `docker stats` with `stream: false`, and why panel read
+  endpoints are shaped around the number of database round trips (read the row
+  once, batch across rows, and the two caches whose writers must invalidate).
 
 When adding a feature, create `docs/<feature>.md` in the same style and cross-link related docs. Don't duplicate what the code already says — document the *why* and the cross-cutting flow, the way the existing docs do.
 

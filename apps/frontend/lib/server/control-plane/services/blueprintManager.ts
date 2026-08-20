@@ -12,6 +12,7 @@
  */
 
 import { sql } from "../db/client";
+import { invalidateBlueprintCache } from "../blueprints/registry";
 import { badRequest, conflict, notFound } from "../lib/http";
 import type {
   BlueprintEnvField,
@@ -213,6 +214,7 @@ export async function createBlueprint(
     RETURNING id
   `) as { id: string }[];
 
+  invalidateBlueprintCache();
   return getBlueprintDetail(rows[0]!.id);
 }
 
@@ -257,6 +259,7 @@ export async function updateBlueprint(
     WHERE id = ${id}
   `;
 
+  invalidateBlueprintCache();
   return getBlueprintDetail(id);
 }
 
@@ -280,4 +283,5 @@ export async function deleteBlueprint(id: string): Promise<void> {
   }
 
   await sql`DELETE FROM blueprints WHERE id = ${id}`;
+  invalidateBlueprintCache();
 }

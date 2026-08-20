@@ -375,3 +375,11 @@ activity feed. It is the row someone reads when asking where a world went.
 - **Status polling.** `reconcileServerStatus` maps a missing container to
   `error` and stops there. Reads never create infrastructure — the rebuild
   happens on the power action the operator deliberately took.
+
+## A note on the read path
+
+The detail endpoint runs this reconcile on every page load and every poll behind
+one, so it shares a single read of the server row with everything else the view
+needs (`getServerReconciled`). The live resource sample the same page polls does
+*not* go through Docker's blocking stats call. Both are load-bearing —
+[performance.md](performance.md).

@@ -50,9 +50,9 @@ import { recordAuditFromRequest } from "../services/auditLog";
 import {
   deleteServer,
   getServer,
+  getServerReconciled,
   listAccessibleServers,
   loadEnvForDisplay,
-  reconcileServerStatus,
   restartServer,
   startServer,
   stopServer,
@@ -120,21 +120,11 @@ export async function handleGetServer(
   // Console permission is the baseline "can look at this server" grant.
   const { access } = await requireServerPermission(request, id, "console");
 
-  // Reconcile the stored status against the node (a live docker inspect) at the
-  // same time as reading the record from the database — the node round trip and
-  // the DB reads are independent, so serializing them just adds the slower of
-  // the two to every detail load. `reconcileServerStatus` returns the
-  // authoritative status, which is written back over the record below, so the
-  // read racing the status write is harmless. A node being unreachable must not
-  // break the detail view, so the reconcile failure is swallowed to null.
-  const [reconciled, server] = await Promise.all([
-    reconcileServerStatus(id).catch((error) => {
-      console.error(`[servers] status reconcile failed for ${id}:`, error);
-      return null;
-    }),
-    getServer(id),
-  ]);
-  if (reconciled) server.status = reconciled;
+  // One call: the record and the live status reconcile share a single read of
+  // the row and run their independent parts concurrently. See
+  // `getServerReconciled` for why this endpoint is shaped around round trips.
+  const server = await getServerReconciled(id);
+
   // Tell the caller what they can do here so the UI can hide sections they
   // hold no permission for. Owners/admins have an empty permission set — the
   // `kind` says they implicitly hold all of them.
@@ -278,19 +268,42 @@ export async function handleGetServerEnv(
   return json({ env: await loadOwnerEnv(id) });
 }
 
+/** Where a server's container lives, for the endpoints that only need that. */
+interface ServerLocation {
+  container_id: string | null;
+  node_id: string;
+}
+
+/**
+ * Resolve `console` permission and the server's location in one round trip
+ * instead of two.
+ *
+ * The logs and stats endpoints are polled for as long as a server page is open,
+ * and both spent a database round trip on the guard and then another on a
+ * two-column read. Running them together halves that. The guard is still what
+ * gates the response: if it throws, this rejects and the caller gets its error —
+ * the row is read but never surfaced.
+ */
+async function requireConsoleAccessAndLocation(
+  request: Request,
+  serverId: string,
+): Promise<ServerLocation | undefined> {
+  const [, rows] = await Promise.all([
+    requireServerPermission(request, serverId, "console"),
+    sql`
+      SELECT container_id, node_id FROM servers WHERE id = ${serverId}
+    ` as unknown as Promise<ServerLocation[]>,
+  ]);
+  return rows[0];
+}
+
 /** GET /api/servers/:id/logs — recent console output. */
 export async function handleGetServerLogs(
   request: Request,
   serverId: string,
 ): Promise<Response> {
   const id = requireUuidParam(serverId, "serverId");
-  await requireServerPermission(request, id, "console");
-
-  const rows = (await sql`
-    SELECT container_id, node_id FROM servers WHERE id = ${id}
-  `) as { container_id: string | null; node_id: string }[];
-
-  const server = rows[0];
+  const server = await requireConsoleAccessAndLocation(request, id);
   if (!server?.container_id) {
     return json({ logs: "" });
   }
@@ -338,13 +351,7 @@ export async function handleGetServerStats(
   serverId: string,
 ): Promise<Response> {
   const id = requireUuidParam(serverId, "serverId");
-  await requireServerPermission(request, id, "console");
-
-  const rows = (await sql`
-    SELECT container_id, node_id FROM servers WHERE id = ${id}
-  `) as { container_id: string | null; node_id: string }[];
-
-  const server = rows[0];
+  const server = await requireConsoleAccessAndLocation(request, id);
   if (!server?.container_id) {
     return json({ stats: null });
   }

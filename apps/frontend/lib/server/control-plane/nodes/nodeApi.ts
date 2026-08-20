@@ -18,6 +18,7 @@ import { env } from "../config/env";
 import { HttpError } from "../lib/http";
 import {
   getNodeWithSecrets,
+  invalidateNode,
   type NodeWithSecrets,
 } from "./nodeRegistry";
 
@@ -75,9 +76,16 @@ function toConnection(node: NodeWithSecrets): CachedConnection {
   return connection;
 }
 
-/** Drop a cached connection, e.g. after a node is deleted or reconfigured. */
+/**
+ * Drop everything cached about a node, after it is deleted or reconfigured.
+ *
+ * Covers the registry's credential cache as well as the resolved connection —
+ * the two are refreshed together or not at all, and callers should not have to
+ * know there are two.
+ */
 export function invalidateNodeConnection(nodeId: string): void {
   connectionCache.delete(nodeId);
+  invalidateNode(nodeId);
 }
 
 export interface NodeRequestOptions {

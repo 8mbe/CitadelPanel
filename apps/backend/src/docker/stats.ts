@@ -62,28 +62,46 @@ interface RawDockerStats {
 
 const BYTES_PER_MB = 1024 * 1024;
 
+/** The cumulative CPU counters from one payload. */
+export interface CpuCounters {
+  /** Nanoseconds of CPU time the container has consumed, since it started. */
+  total: number;
+  /** Nanoseconds of CPU time the whole host has consumed, since it booted. */
+  system: number;
+  /** Cores the container can spread that time across. */
+  cpuCount: number;
+}
+
+/** Pull the cumulative CPU counters out of a raw stats payload. */
+export function readCpuCounters(raw: RawDockerStats): CpuCounters {
+  return {
+    total: raw.cpu_stats?.cpu_usage?.total_usage ?? 0,
+    system: raw.cpu_stats?.system_cpu_usage ?? 0,
+    cpuCount:
+      raw.cpu_stats?.online_cpus ??
+      raw.cpu_stats?.cpu_usage?.percpu_usage?.length ??
+      1,
+  };
+}
+
 /**
- * Convert Docker's cumulative CPU counters into a percentage.
+ * Convert two readings of Docker's cumulative CPU counters into a percentage.
  *
- * Returns 0 when the system delta is non-positive, which happens on the very
- * first sample (no previous reading to difference against).
+ * CPU usage is a rate, so it only exists between two readings — Docker reports
+ * counters, not a percentage. Returns 0 when the pair cannot yield one: no time
+ * passed on the host clock, or the container's counter went *backwards*, which
+ * means it restarted and the two readings belong to different processes.
  */
-export function computeCpuPercent(raw: RawDockerStats): number {
-  const cpuDelta =
-    (raw.cpu_stats?.cpu_usage?.total_usage ?? 0) -
-    (raw.precpu_stats?.cpu_usage?.total_usage ?? 0);
-  const systemDelta =
-    (raw.cpu_stats?.system_cpu_usage ?? 0) -
-    (raw.precpu_stats?.system_cpu_usage ?? 0);
+export function cpuPercentBetween(
+  previous: CpuCounters,
+  current: CpuCounters,
+): number {
+  const cpuDelta = current.total - previous.total;
+  const systemDelta = current.system - previous.system;
 
   if (systemDelta <= 0 || cpuDelta < 0) return 0;
 
-  const cpuCount =
-    raw.cpu_stats?.online_cpus ??
-    raw.cpu_stats?.cpu_usage?.percpu_usage?.length ??
-    1;
-
-  return (cpuDelta / systemDelta) * cpuCount * 100;
+  return (cpuDelta / systemDelta) * current.cpuCount * 100;
 }
 
 /**
@@ -132,10 +150,17 @@ export function computeBlockIoBytes(raw: RawDockerStats): {
   return { read, write };
 }
 
-/** Normalise a raw Docker stats payload. */
+/**
+ * Normalise a raw Docker stats payload.
+ *
+ * `cpuPercent` is passed in rather than derived here: every other figure is a
+ * point-in-time reading of this one payload, but CPU is a rate between two of
+ * them, and the pairing is the caller's business (see {@link sampleContainerStats}).
+ */
 export function normalizeStats(
   containerId: string,
   raw: RawDockerStats,
+  cpuPercent: number,
 ): ContainerStats {
   const memoryUsageMb = computeMemoryUsageMb(raw);
   const memoryLimitMb = (raw.memory_stats?.limit ?? 0) / BYTES_PER_MB;
@@ -144,7 +169,7 @@ export function normalizeStats(
 
   return {
     containerId,
-    cpuPercent: computeCpuPercent(raw),
+    cpuPercent,
     memoryUsageMb,
     memoryLimitMb,
     memoryPercent: memoryLimitMb > 0 ? (memoryUsageMb / memoryLimitMb) * 100 : 0,
@@ -159,25 +184,135 @@ export function normalizeStats(
 }
 
 /**
+ * The last CPU reading taken for a container, and the percentage it produced.
+ *
+ * This map is what lets a stats sample be cheap. `stats?stream=false` looks like
+ * a one-shot call but is not: the daemon takes a reading, waits out its own
+ * collection interval, takes a second, and only then answers — **one to two
+ * seconds**, every time. The panel polls stats per open server page and sweeps
+ * every server for the admin list, so that delay was the single largest source
+ * of latency in the product.
+ *
+ * `one-shot=true` returns immediately (~5ms) but zeroes `precpu_stats`, so the
+ * daemon-supplied delta is gone. Keeping the previous reading here restores it:
+ * we difference against our own last sample instead of against one Docker
+ * blocked a request to collect. The pairing is strictly better for a poller,
+ * too — the percentage covers the interval between polls rather than an
+ * arbitrary one-second window inside the request.
+ */
+interface CpuBaseline extends CpuCounters {
+  /** `performance.now()` when this reading was taken. */
+  at: number;
+  /** The percentage this reading produced, reused when re-asked too soon. */
+  percent: number;
+}
+
+const cpuBaselines = new Map<string, CpuBaseline>();
+
+/**
+ * How far apart two readings must be for their delta to mean anything.
+ *
+ * Below this, the host's CPU counter has barely advanced and the quotient is
+ * mostly quantisation noise — so a baseline younger than this is kept and its
+ * percentage reused, rather than replaced with a number derived from a few
+ * milliseconds. This is what makes two viewers polling the same server (or the
+ * admin sweep landing on top of a page poll) cheap instead of destructive.
+ */
+const MIN_CPU_INTERVAL_MS = 200;
+
+/**
+ * How long a baseline stays usable.
+ *
+ * A percentage is an average over the gap between the two readings, so a very
+ * old baseline reports "average CPU since some point minutes ago", which is not
+ * what a live meter means. Past this the baseline is discarded and a fresh pair
+ * is taken.
+ */
+const MAX_CPU_BASELINE_AGE_MS = 60_000;
+
+/** Baselines for containers nobody has asked about in a while. */
+const BASELINE_EVICT_AFTER_MS = 5 * 60_000;
+
+function evictStaleBaselines(now: number): void {
+  for (const [id, baseline] of cpuBaselines) {
+    if (now - baseline.at > BASELINE_EVICT_AFTER_MS) cpuBaselines.delete(id);
+  }
+}
+
+/** Drop a container's CPU baseline — it is gone, or about to be replaced. */
+export function forgetCpuBaseline(containerId: string): void {
+  cpuBaselines.delete(containerId);
+}
+
+/** One immediate, non-blocking reading. See {@link cpuBaselines} for why. */
+async function readRawStats(
+  client: Docker,
+  containerId: string,
+): Promise<RawDockerStats> {
+  return (await client
+    .getContainer(containerId)
+    .stats({ stream: false, "one-shot": true } as never)) as unknown as RawDockerStats;
+}
+
+/**
  * Take a single stats sample for one container.
  *
- * `stream: false` makes Docker return one snapshot that already includes
- * `precpu_stats`, so a usable CPU percentage comes from a single call.
+ * Returns null when the container stopped or vanished between being listed and
+ * being sampled, which is a normal race rather than an error.
  */
 export async function sampleContainerStats(
   client: Docker,
   containerId: string,
 ): Promise<ContainerStats | null> {
   try {
-    const raw = (await client
-      .getContainer(containerId)
-      .stats({ stream: false })) as unknown as RawDockerStats;
+    const raw = await readRawStats(client, containerId);
+    const now = performance.now();
+    const counters = readCpuCounters(raw);
+    const baseline = cpuBaselines.get(containerId);
+    const age = baseline ? now - baseline.at : Infinity;
+    evictStaleBaselines(now);
 
-    return normalizeStats(containerId, raw);
+    // Asked again before the counters could move: answer with the last
+    // percentage and keep the older baseline, so the next caller still has a
+    // wide enough interval to measure over.
+    if (baseline && age < MIN_CPU_INTERVAL_MS) {
+      return normalizeStats(containerId, raw, baseline.percent);
+    }
+
+    // A counter that went backwards means the container restarted between the
+    // two readings, so the baseline belongs to a process that no longer exists.
+    const usable =
+      baseline !== undefined &&
+      age <= MAX_CPU_BASELINE_AGE_MS &&
+      counters.total >= baseline.total;
+
+    if (baseline && usable) {
+      const percent = cpuPercentBetween(baseline, counters);
+      cpuBaselines.set(containerId, { ...counters, at: now, percent });
+      return normalizeStats(containerId, raw, percent);
+    }
+
+    // No usable baseline (first sample for this container, a long gap, or a
+    // restart that reset the counters). Take a second reading rather than
+    // reporting 0: a brief wait is still an order of magnitude below what the
+    // daemon's own blocking sample costs, and it only happens once.
+    await Bun.sleep(MIN_CPU_INTERVAL_MS);
+    const second = await readRawStats(client, containerId);
+    const secondCounters = readCpuCounters(second);
+    const percent = cpuPercentBetween(counters, secondCounters);
+    cpuBaselines.set(containerId, {
+      ...secondCounters,
+      at: performance.now(),
+      percent,
+    });
+    return normalizeStats(containerId, second, percent);
   } catch (error) {
     const status = (error as { statusCode?: number }).statusCode;
     // A container that stopped between listing and sampling is not an error.
-    if (status === 404 || status === 409) return null;
+    if (status === 404 || status === 409) {
+      cpuBaselines.delete(containerId);
+      return null;
+    }
     throw error;
   }
 }

@@ -84,6 +84,7 @@ interface ServerRow {
   cpu_limit: string | number;
   memory_limit_mb: number;
   disk_limit_mb: number;
+  plugin_auto_update: boolean;
   created_at: Date;
   updated_at: Date;
   /** Joined from `nodes.hostname` — the address players connect to. */
@@ -93,10 +94,10 @@ interface ServerRow {
   /** When the server was last suspended. Null when not suspended. */
   suspended_at?: Date | null;
   /**
-   * Joined from `blueprints.key` on list queries, so the blueprint key is
-   * resolved in the same round trip as the server rows rather than per-server
-   * via {@link getBlueprintKeyById}. Absent on single-server reads, which
-   * resolve it through {@link toSummary}.
+   * Joined from `blueprints.key`, so the blueprint key is resolved in the same
+   * round trip as the server row(s). Optional only because a few internal reads
+   * select the bare `servers` row; {@link toSummary} falls back to the registry
+   * when it is absent.
    */
   blueprint_key?: string;
 }
@@ -329,8 +330,10 @@ async function summariesFromRows(
 
 async function loadServerRow(serverId: string): Promise<ServerRow> {
   const rows = (await sql`
-    SELECT s.*, n.hostname AS node_hostname
-    FROM servers s JOIN nodes n ON n.id = s.node_id
+    SELECT s.*, n.hostname AS node_hostname, b.key AS blueprint_key
+    FROM servers s
+    JOIN nodes n ON n.id = s.node_id
+    JOIN blueprints b ON b.id = s.blueprint_id
     WHERE s.id = ${serverId}
   `) as ServerRow[];
   const row = rows[0];
@@ -338,12 +341,23 @@ async function loadServerRow(serverId: string): Promise<ServerRow> {
   return row;
 }
 
+/**
+ * The detail view of one server.
+ *
+ * Shaped around round trips rather than readability of the call graph, because
+ * this runs on every server page load and every status poll and the database is
+ * frequently not on the same machine as the panel. The row is read once and
+ * then *shared*: the ports and the plugin-support probe both descend from it and
+ * run against the database concurrently, so the whole read costs two round
+ * trips instead of the one-per-lookup chain it used to be.
+ */
 export async function getServer(serverId: string): Promise<ServerSummary> {
-  const summary = await toSummary(await loadServerRow(serverId));
-  return {
-    ...summary,
-    pluginSupport: await getServerPluginSupportSummary(serverId),
-  };
+  const row = await loadServerRow(serverId);
+  const [summary, pluginSupport] = await Promise.all([
+    toSummary(row),
+    getServerPluginSupportSummary(serverId, row),
+  ]);
+  return { ...summary, pluginSupport };
 }
 
 async function setStatus(serverId: string, status: ServerStatus): Promise<void> {
@@ -1329,12 +1343,11 @@ export async function deleteServer(
  * is only given the two inputs it needs: the observed state, and how long the
  * stored status has been in place (`updated_at`, which `setStatus` bumps).
  */
-export async function reconcileServerStatus(serverId: string): Promise<ServerStatus> {
-  const server = await loadServerRow(serverId);
+async function reconcileRowStatus(server: ServerRow): Promise<ServerStatus> {
   if (server.status === "suspended") return "suspended";
   if (!server.container_id) return server.status;
 
-  const state = await getServerState(server.node_id, serverId);
+  const state = await getServerState(server.node_id, server.id);
   const resolved = reconcileStatus(
     server.status,
     state,
@@ -1342,9 +1355,42 @@ export async function reconcileServerStatus(serverId: string): Promise<ServerSta
   );
 
   if (resolved !== server.status) {
-    await setStatus(serverId, resolved);
+    await setStatus(server.id, resolved);
   }
   return resolved;
+}
+
+export async function reconcileServerStatus(serverId: string): Promise<ServerStatus> {
+  return reconcileRowStatus(await loadServerRow(serverId));
+}
+
+/**
+ * {@link getServer} plus a live status reconcile, off a single read of the row.
+ *
+ * This is the server detail endpoint, so it runs on every page load and every
+ * poll behind one. Everything that follows from the row — the ports, the
+ * plugin-support probe, and asking the node what the container is actually
+ * doing — is independent of the others, so they all run at once; the whole
+ * endpoint is two database round trips and one node round trip deep.
+ *
+ * A node that cannot be reached must not cost the owner the page, so the
+ * reconcile falls back to the stored status rather than propagating.
+ */
+export async function getServerReconciled(
+  serverId: string,
+): Promise<ServerSummary> {
+  const row = await loadServerRow(serverId);
+
+  const [summary, pluginSupport, status] = await Promise.all([
+    toSummary(row),
+    getServerPluginSupportSummary(serverId, row),
+    reconcileRowStatus(row).catch((error) => {
+      console.error(`[servers] status reconcile failed for ${serverId}:`, error);
+      return row.status;
+    }),
+  ]);
+
+  return { ...summary, pluginSupport, status };
 }
 
 // --- Reinstall ------------------------------------------------------------------

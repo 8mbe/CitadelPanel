@@ -72,16 +72,25 @@ export function isAdmin(user: AuthenticatedUser): boolean {
  *
  * Precedence: admin (everything) > owner (everything on their own server) >
  * subuser (only the flags explicitly granted).
+ *
+ * The subuser grant is LEFT JOINed rather than looked up after the owner check
+ * fails. Every guarded endpoint passes through here, so the second query cost a
+ * database round trip on every request a subuser made — and the join is free
+ * for the owner and admin cases, where the joined column is simply ignored.
  */
 export async function resolveServerAccess(
   user: AuthenticatedUser,
   serverId: string,
 ): Promise<ServerAccess | null> {
-  const serverRows = (await sql`
-    SELECT id, owner_id FROM servers WHERE id = ${serverId}
-  `) as { id: string; owner_id: string }[];
+  const rows = (await sql`
+    SELECT s.id, s.owner_id, su.permissions
+    FROM servers s
+    LEFT JOIN server_subusers su
+      ON su.server_id = s.id AND su.user_id = ${user.id}
+    WHERE s.id = ${serverId}
+  `) as { id: string; owner_id: string; permissions: unknown }[];
 
-  const server = serverRows[0];
+  const server = rows[0];
   if (!server) return null;
 
   if (isAdmin(user)) {
@@ -92,19 +101,15 @@ export async function resolveServerAccess(
     return { kind: "owner", serverId: server.id, permissions: {} };
   }
 
-  const subuserRows = (await sql`
-    SELECT permissions
-    FROM server_subusers
-    WHERE server_id = ${serverId} AND user_id = ${user.id}
-  `) as { permissions: unknown }[];
-
-  const subuser = subuserRows[0];
-  if (!subuser) return null;
+  // No matching subuser row: the LEFT JOIN leaves this null.
+  if (server.permissions === null || server.permissions === undefined) {
+    return null;
+  }
 
   return {
     kind: "subuser",
     serverId: server.id,
-    permissions: sanitizePermissions(subuser.permissions),
+    permissions: sanitizePermissions(server.permissions),
   };
 }
 

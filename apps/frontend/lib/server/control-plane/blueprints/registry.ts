@@ -174,62 +174,128 @@ export async function syncBlueprintsToDatabase(): Promise<void> {
     `;
   }
 
+  invalidateBlueprintCache();
+
   console.log(
     `[blueprints] synced ${BUILT_IN_BLUEPRINTS.length} built-in blueprint(s) to database`,
   );
 }
 
-/** Every blueprint in the database, built-in and custom, by name. */
-export async function listBlueprints(): Promise<Blueprint[]> {
+/**
+ * The whole blueprint table, held in memory.
+ *
+ * Blueprints are read constantly — resolving a server's image, its plugin
+ * support, its minimums, the key shown next to its name — and written only when
+ * an admin edits one or the built-ins are seeded at boot. Each of those reads
+ * was its own SELECT, so a single server page load could spend several database
+ * round trips re-fetching rows that had not changed since the process started.
+ *
+ * The whole table is loaded at once rather than a row per key: there are a
+ * handful of blueprints, one query answers every lookup shape below, and it
+ * makes `getBlueprintById` (the hot one) a map read.
+ *
+ * Correctness comes from {@link invalidateBlueprintCache}, which every write
+ * path calls; the TTL only bounds how long a *second* panel process can serve a
+ * blueprint another one edited.
+ */
+interface BlueprintCache {
+  /** Ordered by name, as the list endpoint expects. */
+  all: Blueprint[];
+  byId: Map<string, Blueprint>;
+  byKey: Map<string, Blueprint>;
+  idByKey: Map<string, string>;
+  keyById: Map<string, string>;
+  at: number;
+}
+
+const BLUEPRINT_CACHE_TTL_MS = 30_000;
+
+let blueprintCache: BlueprintCache | null = null;
+/** Set while a load is in flight, so concurrent readers share one query. */
+let blueprintCacheLoad: Promise<BlueprintCache> | null = null;
+
+/** Drop the cached blueprints. Every write to the table must call this. */
+export function invalidateBlueprintCache(): void {
+  blueprintCache = null;
+  blueprintCacheLoad = null;
+}
+
+async function fetchBlueprintCache(): Promise<BlueprintCache> {
   const rows = (await sql`
     SELECT ${BLUEPRINT_COLUMNS} FROM blueprints ORDER BY name ASC
   `) as BlueprintRow[];
-  return rows.map(rowToBlueprint);
+
+  const cache: BlueprintCache = {
+    all: [],
+    byId: new Map(),
+    byKey: new Map(),
+    idByKey: new Map(),
+    keyById: new Map(),
+    at: Date.now(),
+  };
+
+  for (const row of rows) {
+    const blueprint = rowToBlueprint(row);
+    cache.all.push(blueprint);
+    cache.byId.set(row.id, blueprint);
+    cache.byKey.set(row.key, blueprint);
+    cache.idByKey.set(row.key, row.id);
+    cache.keyById.set(row.id, row.key);
+  }
+  return cache;
+}
+
+async function loadBlueprints(): Promise<BlueprintCache> {
+  const cached = blueprintCache;
+  if (cached && Date.now() - cached.at < BLUEPRINT_CACHE_TTL_MS) return cached;
+
+  blueprintCacheLoad ??= fetchBlueprintCache()
+    .then((cache) => {
+      blueprintCache = cache;
+      return cache;
+    })
+    .finally(() => {
+      blueprintCacheLoad = null;
+    });
+
+  return blueprintCacheLoad;
+}
+
+/** Every blueprint in the database, built-in and custom, by name. */
+export async function listBlueprints(): Promise<Blueprint[]> {
+  // A copy: the cached array outlives the request, and callers sort and filter.
+  return [...(await loadBlueprints()).all];
 }
 
 /** Resolve a full blueprint by its stable key, or null when unknown. */
 export async function getBlueprintByKey(key: string): Promise<Blueprint | null> {
-  const rows = (await sql`
-    SELECT ${BLUEPRINT_COLUMNS} FROM blueprints WHERE key = ${key}
-  `) as BlueprintRow[];
-  return rows[0] ? rowToBlueprint(rows[0]) : null;
+  return (await loadBlueprints()).byKey.get(key) ?? null;
 }
 
 /** Resolve a full blueprint by database id, or null when unknown. */
 export async function getBlueprintById(id: string): Promise<Blueprint | null> {
-  const rows = (await sql`
-    SELECT ${BLUEPRINT_COLUMNS} FROM blueprints WHERE id = ${id}
-  `) as BlueprintRow[];
-  return rows[0] ? rowToBlueprint(rows[0]) : null;
+  return (await loadBlueprints()).byId.get(id) ?? null;
 }
 
 /** Look up the database id for a blueprint key. */
 export async function getBlueprintIdByKey(key: string): Promise<string | null> {
-  const rows = (await sql`
-    SELECT id FROM blueprints WHERE key = ${key}
-  `) as { id: string }[];
-  return rows[0]?.id ?? null;
+  return (await loadBlueprints()).idByKey.get(key) ?? null;
 }
 
 /** Look up the blueprint key for a database id, for reverse resolution. */
 export async function getBlueprintKeyById(id: string): Promise<string | null> {
-  const rows = (await sql`
-    SELECT key FROM blueprints WHERE id = ${id}
-  `) as { key: string }[];
-  return rows[0]?.key ?? null;
+  return (await loadBlueprints()).keyById.get(id) ?? null;
 }
 
 /**
  * The expected resource profile for a blueprint id, defaulting to "bursty".
  *
- * Read directly rather than via {@link getBlueprintById} because the abuse
- * watcher only needs this one field per server on every sweep.
+ * The abuse watcher wants this one field per server on every sweep, which used
+ * to justify its own narrow SELECT; now that every blueprint is already in
+ * memory, reading the whole record costs nothing.
  */
 export async function getResourceProfileById(
   id: string,
 ): Promise<ResourceProfile> {
-  const rows = (await sql`
-    SELECT expected_resource_profile FROM blueprints WHERE id = ${id}
-  `) as { expected_resource_profile: ResourceProfile }[];
-  return rows[0]?.expected_resource_profile ?? "bursty";
+  return (await getBlueprintById(id))?.expectedResourceProfile ?? "bursty";
 }
