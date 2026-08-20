@@ -78,19 +78,41 @@ export function isAdmin(user: AuthenticatedUser): boolean {
  * database round trip on every request a subuser made — and the join is free
  * for the owner and admin cases, where the joined column is simply ignored.
  */
-export async function resolveServerAccess(
-  user: AuthenticatedUser,
+/** What the database knows about one user's relationship to one server. */
+export interface ServerAccessRow {
+  id: string;
+  owner_id: string;
+  /** Null unless the user holds a subuser grant on this server. */
+  permissions: unknown;
+}
+
+/**
+ * The read half of {@link resolveServerAccess}, split from the decision.
+ *
+ * It needs only the caller's *id*, which the session carries without a database
+ * read — so a guard can start this at the same time as the ban/role lookup
+ * instead of after it. The decision below still waits for both.
+ */
+export async function loadServerAccessRow(
+  userId: string,
   serverId: string,
-): Promise<ServerAccess | null> {
+): Promise<ServerAccessRow | null> {
   const rows = (await sql`
     SELECT s.id, s.owner_id, su.permissions
     FROM servers s
     LEFT JOIN server_subusers su
-      ON su.server_id = s.id AND su.user_id = ${user.id}
+      ON su.server_id = s.id AND su.user_id = ${userId}
     WHERE s.id = ${serverId}
-  `) as { id: string; owner_id: string; permissions: unknown }[];
+  `) as ServerAccessRow[];
 
-  const server = rows[0];
+  return rows[0] ?? null;
+}
+
+/** The decision half: pure, given the row and the authenticated user. */
+export function accessFromRow(
+  user: AuthenticatedUser,
+  server: ServerAccessRow | null,
+): ServerAccess | null {
   if (!server) return null;
 
   if (isAdmin(user)) {
@@ -111,6 +133,13 @@ export async function resolveServerAccess(
     serverId: server.id,
     permissions: sanitizePermissions(server.permissions),
   };
+}
+
+export async function resolveServerAccess(
+  user: AuthenticatedUser,
+  serverId: string,
+): Promise<ServerAccess | null> {
+  return accessFromRow(user, await loadServerAccessRow(user.id, serverId));
 }
 
 /**

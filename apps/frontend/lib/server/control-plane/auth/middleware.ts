@@ -11,7 +11,8 @@ import { isRole, type Role } from "./betterAuth";
 import {
   accessAllows,
   accessAllowsOwnerOnly,
-  resolveServerAccess,
+  accessFromRow,
+  loadServerAccessRow,
   type AuthenticatedUser,
   type ServerAccess,
   type SubuserPermission,
@@ -52,22 +53,52 @@ function withApiKeyHeaderAlias(headers: Headers): Headers {
  * so checking `banned` here is belt-and-suspenders against a surviving session
  * or the API-key-synthesized session. An expired ban is cleared and allowed.
  */
-export async function getAuthenticatedUser(
+/**
+ * The session, before the database has been consulted.
+ *
+ * Split out because it is free — with the cookie cache on, `getSession` answers
+ * from a signed cookie — while everything below it costs a round trip. Knowing
+ * the caller's id without paying for it is what lets the server guards start
+ * their own lookup at the same time as the ban/role check (see
+ * {@link requireServerPermission}).
+ */
+interface SessionIdentity {
+  id: string;
+  email: string;
+  /** The session's copy of the role; only a fallback, see {@link authorizeSession}. */
+  sessionRole: unknown;
+}
+
+async function resolveSessionIdentity(
   request: Request,
-): Promise<AuthenticatedUser | null> {
+): Promise<SessionIdentity | null> {
   const session = await auth.api.getSession({
     headers: withApiKeyHeaderAlias(request.headers),
   });
   if (!session?.user) return null;
 
-  // A banned user is never allowed past the auth layer, regardless of how their
-  // session was established (cookie or API key). The role is read from the same
-  // row: with the session served from the cookie cache, `session.user.role`
-  // could be up to the cache lifetime stale, so the authoritative value comes
-  // from the database here — a promotion or demotion takes effect on the next
-  // request, not minutes later.
+  return {
+    id: session.user.id,
+    email: session.user.email,
+    sessionRole: (session.user as { role?: unknown }).role,
+  };
+}
+
+/**
+ * Turn a session into an authenticated user: reject bans, resolve the real role.
+ *
+ * A banned user is never allowed past the auth layer, regardless of how their
+ * session was established (cookie or API key). The role is read from the same
+ * row: with the session served from the cookie cache, `session.user.role` could
+ * be up to the cache lifetime stale, so the authoritative value comes from the
+ * database here — a promotion or demotion takes effect on the next request, not
+ * minutes later.
+ */
+async function authorizeSession(
+  identity: SessionIdentity,
+): Promise<AuthenticatedUser> {
   const banRows = (await sql`
-    SELECT banned, "banExpires", role FROM "user" WHERE id = ${session.user.id}
+    SELECT banned, "banExpires", role FROM "user" WHERE id = ${identity.id}
   `) as { banned: boolean | null; banExpires: Date | null; role: unknown }[];
   const banRow = banRows[0];
   if (banRow?.banned) {
@@ -75,7 +106,7 @@ export async function getAuthenticatedUser(
       // Expired ban: clear it so future requests skip this path, and allow.
       await sql`
         UPDATE "user" SET banned = FALSE, "banReason" = NULL, "banExpires" = NULL
-        WHERE id = ${session.user.id}
+        WHERE id = ${identity.id}
       `;
     } else {
       throw forbidden(
@@ -87,14 +118,21 @@ export async function getAuthenticatedUser(
   // Prefer the row's role; fall back to the session's copy if the row is
   // somehow absent. `role` is read defensively: an unexpected value degrades to
   // the least-privileged role rather than granting admin.
-  const rawRole = banRow?.role ?? (session.user as { role?: unknown }).role;
+  const rawRole = banRow?.role ?? identity.sessionRole;
   const role: Role = isRole(rawRole) ? rawRole : "user";
 
-  return {
-    id: session.user.id,
-    email: session.user.email,
-    role,
-  };
+  return { id: identity.id, email: identity.email, role };
+}
+
+/**
+ * Resolve the current session into a typed user, or null when unauthenticated.
+ */
+export async function getAuthenticatedUser(
+  request: Request,
+): Promise<AuthenticatedUser | null> {
+  const identity = await resolveSessionIdentity(request);
+  if (!identity) return null;
+  return authorizeSession(identity);
 }
 
 /** Require any authenticated user. */
@@ -132,8 +170,7 @@ export async function requireServerPermission(
   serverId: string,
   permission: SubuserPermission,
 ): Promise<ServerContext> {
-  const user = await requireAuth(request);
-  const access = await resolveServerAccess(user, serverId);
+  const { user, access } = await resolveServerContext(request, serverId);
 
   if (!access) throw notFound("Server not found");
   if (!accessAllows(access, permission)) {
@@ -144,6 +181,33 @@ export async function requireServerPermission(
 }
 
 /**
+ * Resolve the caller and their access to one server, in one round trip.
+ *
+ * Both lookups hang off the session's user id, and the session is served from
+ * the signed cookie cache — so the id is known before either query runs, and
+ * running them one after the other made every guarded server endpoint wait
+ * twice for no reason. They go together now.
+ *
+ * The ban check is not weakened by this: `authorizeSession` still throws for a
+ * banned user, and it throws *before* this returns, so the access row is read
+ * but never acted on. Nothing is authorized off a query that merely completed.
+ */
+async function resolveServerContext(
+  request: Request,
+  serverId: string,
+): Promise<{ user: AuthenticatedUser; access: ServerAccess | null }> {
+  const identity = await resolveSessionIdentity(request);
+  if (!identity) throw unauthorized();
+
+  const [user, row] = await Promise.all([
+    authorizeSession(identity),
+    loadServerAccessRow(identity.id, serverId),
+  ]);
+
+  return { user, access: accessFromRow(user, row) };
+}
+
+/**
  * Require owner-or-admin on a server, for non-delegable actions such as
  * managing subusers or deleting the server.
  */
@@ -151,8 +215,7 @@ export async function requireServerOwner(
   request: Request,
   serverId: string,
 ): Promise<ServerContext> {
-  const user = await requireAuth(request);
-  const access = await resolveServerAccess(user, serverId);
+  const { user, access } = await resolveServerContext(request, serverId);
 
   if (!access) throw notFound("Server not found");
   if (!accessAllowsOwnerOnly(access)) {
