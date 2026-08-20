@@ -60,6 +60,7 @@ import {
   autoUpdateServerPlugins,
   getServerPluginSupportSummary,
 } from "./pluginManager";
+import { reconcileStatus } from "./statusReconcile";
 
 export type ServerStatus =
   | "creating"
@@ -1063,6 +1064,12 @@ export async function restartServer(
   assertNotSuspended(server);
   assertHasContainer(server);
 
+  // A restart is a stop with a start behind it, and the stop half is the part
+  // that can hang. Recording `stopping` for the whole action is what makes the
+  // transition visible to everyone — a second tab, a page loaded mid-restart —
+  // rather than only to the client that clicked the button, which is what puts
+  // Kill within reach when the shutdown wedges.
+  await setStatus(serverId, "stopping");
   try {
     // A restart re-reads the plugins directory at boot, so the auto-updater
     // runs before the agent restarts the container.
@@ -1232,8 +1239,10 @@ export async function deleteServer(
  * Reconcile the stored status of a server with the node's actual container
  * state, so the dashboard does not show "running" for a crashed server.
  *
- * Suspended servers are never reconciled away: that state is an administrative
- * decision, not an observation of the node.
+ * The decision itself lives in `statusReconcile.ts` — including why a graceful
+ * stop is believed over a node that reports the container as still up. Here it
+ * is only given the two inputs it needs: the observed state, and how long the
+ * stored status has been in place (`updated_at`, which `setStatus` bumps).
  */
 export async function reconcileServerStatus(serverId: string): Promise<ServerStatus> {
   const server = await loadServerRow(serverId);
@@ -1241,18 +1250,16 @@ export async function reconcileServerStatus(serverId: string): Promise<ServerSta
   if (!server.container_id) return server.status;
 
   const state = await getServerState(server.node_id, serverId);
+  const resolved = reconcileStatus(
+    server.status,
+    state,
+    Date.now() - new Date(server.updated_at).getTime(),
+  );
 
-  const mapped: ServerStatus =
-    state === "running" || state === "restarting"
-      ? "running"
-      : state === "missing" || state === "dead"
-        ? "error"
-        : "stopped";
-
-  if (mapped !== server.status) {
-    await setStatus(serverId, mapped);
+  if (resolved !== server.status) {
+    await setStatus(serverId, resolved);
   }
-  return mapped;
+  return resolved;
 }
 
 // --- Reinstall ------------------------------------------------------------------

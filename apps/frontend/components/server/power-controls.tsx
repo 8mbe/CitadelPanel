@@ -20,13 +20,14 @@ import { ApiError, killServer, restartServer, startServer, stopServer } from "@/
  * absent rather than disabled, since there is nothing they could do with it.
  * The backend rejects the calls regardless; this is presentation.
  *
- * Kill: whenever the server is in a graceful stop (status `stopping` — whether
- * this client initiated it or not), the Stop button morphs into a red Kill. It
- * is disabled for a short grace window after the transition starts (so the
- * graceful shutdown gets a fair chance), then arms — at which point clicking it
- * sends SIGKILL to force the container down immediately. Kill is the escape
- * hatch for a container wedged in a graceful stop; it is never shown while the
- * server is simply running.
+ * Kill: whenever the server is in a graceful stop or restart (status
+ * `stopping` — whether this client initiated it or not), the Stop button morphs
+ * into a red Kill that sends SIGKILL and forces the container down immediately.
+ * It is live the moment it appears: being *in* a stop already means the graceful
+ * path had its chance, and a stop can finish in a couple of seconds, so a button
+ * that arms on a timer is disabled for most of the window it exists in. Kill is
+ * the escape hatch for a container wedged in a graceful stop; it is never shown
+ * while the server is simply running.
  */
 export function PowerControls() {
   const { server, status, setStatus, refresh } = useServerData();
@@ -39,19 +40,8 @@ export function PowerControls() {
   const [error, setError] = React.useState<string | null>(null);
 
   const stopping = status === "stopping";
-  // Kill arms a few seconds into a graceful stop, so the graceful path gets a
-  // real chance before the user reaches for the destructive option.
-  const [killArmed, setKillArmed] = React.useState(false);
-  React.useEffect(() => {
-    if (!stopping) {
-      setKillArmed(false);
-      return;
-    }
-    const t = setTimeout(() => setKillArmed(true), 3000);
-    return () => clearTimeout(t);
-  }, [stopping]);
 
-  // After the hooks: a viewer without `start_stop` gets no controls at all.
+  // A viewer without `start_stop` gets no controls at all.
   if (!viewerAllows(server.viewer, "start_stop")) return null;
 
   const isBusy =
@@ -116,18 +106,14 @@ export function PowerControls() {
         </Button>
         {stopping ? (
           // The server is in a graceful stop (whether or not this client is the
-          // one that initiated it). Offer Kill as the escape hatch once the grace
-          // window elapses, so a wedged shutdown can always be forced.
+          // one that initiated it), so Kill is the escape hatch for a shutdown
+          // that wedges. Only the request in flight disables it.
           <Button
             variant="destructive"
             onClick={kill}
-            disabled={!killArmed || killPending}
+            disabled={killPending}
             size="sm"
-            title={
-              killArmed
-                ? "Force-stop the container immediately (SIGKILL). The server will not get a chance to save."
-                : "Kill becomes available shortly if the graceful stop doesn't finish…"
-            }
+            title="Force-stop the container immediately (SIGKILL). The server will not get a chance to save."
           >
             <OctagonX />
             Kill

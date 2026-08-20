@@ -66,25 +66,39 @@ export function ServerDataProvider({
     }
   }, [initial.id]);
 
-  // While the server is still being built, re-read the record itself rather
-  // than a resource sample: there is no container to sample, and the thing worth
-  // knowing is when the provision ends. This is what lets the shell's installing
-  // gate fall away on its own — an owner who opened the page mid-install gets
-  // their server without reloading, and an admin watching the install log sees
-  // the console take over. Provisioning is minutes long, so 5s is plenty.
+  // While the server is mid-transition, re-read the record itself rather than a
+  // resource sample: what matters is when the transition ends, not what the CPU
+  // is doing.
+  //
+  // Provisioning (`creating`/`installing`) is the long case: there is no
+  // container to sample, and this poll is what lets the shell's installing gate
+  // fall away on its own — an owner who opened the page mid-install gets their
+  // server without reloading, and an admin watching the install log sees the
+  // console take over. Minutes long, so 5s is plenty.
+  //
+  // `starting`/`stopping` are the short case, and they need the *other* cadence.
+  // A stop is seconds, and it is the window in which the power controls offer
+  // Kill — a page that opened during someone else's stop has to see the stop
+  // land, or it sits on a Kill button for a server that is already down.
+  const recordPollMs = isProvisioning(status)
+    ? 5000
+    : status === "starting" || status === "stopping"
+      ? 2000
+      : null;
+
   React.useEffect(() => {
-    if (!isProvisioning(status)) return;
+    if (recordPollMs === null) return;
 
     let cancelled = false;
     const interval = setInterval(() => {
       if (!cancelled) void refresh().catch(() => undefined);
-    }, 5000);
+    }, recordPollMs);
 
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [status, refresh]);
+  }, [recordPollMs, refresh]);
 
   // Poll a live resource sample so the stats cards and status stay current
   // without a manual refresh.

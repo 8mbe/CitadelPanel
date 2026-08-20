@@ -194,6 +194,56 @@ Start and restart run the plugin auto-updater first, because plugins must be on
 disk before the game process reads the directory — see
 [plugins.md](plugins.md).
 
+Restart writes `stopping` for the whole action even though it ends in `running`.
+A restart *is* a stop with a start behind it, and the stop half is the half that
+hangs; recording the transition is what makes it visible to a second tab or a
+page loaded mid-restart, instead of only to the client that clicked the button.
+
+### Kill, and why `stopping` outranks the node
+
+Kill is the escape hatch for a shutdown that will not finish: SIGKILL, no grace
+period, nothing saved. It takes the same `start_stop` permission as Stop —
+anyone who can stop a server can force-stop it — and is audited as `server.kill`
+rather than `server.stop` so the destructive path is legible in the log.
+
+The UI offers it by morphing Stop into a red Kill for exactly as long as the
+status is `stopping`, whoever started that stop. Which makes the status the whole
+mechanism, and the status had two ways of losing it:
+
+- **Docker has no "shutting down" state.** From SIGTERM until the process
+  actually exits, `docker inspect` reports `running` — so a reconcile that
+  trusted the node turned every in-flight stop back into `running`, and the Kill
+  button vanished mid-stop or never appeared on a page loaded during one. A
+  `stopping` now outranks a node that says "still up". Its mirror image is
+  `starting`, which the panel holds while the plugin auto-updater runs
+  ([plugins.md](plugins.md)) and the container still sits there `exited`: each
+  transition has exactly one observation it cannot be told apart from, and that
+  observation is the one the reconcile ignores. Any *other* is real news and
+  settles the status — exited means the stop finished, up means the start
+  finished, gone is an error. The rule is a pure function in
+  `statusReconcile.ts`, tested there.
+- **Restart never recorded the transition at all**, so the client that clicked it
+  saw Kill (from its own optimistic status) and nobody else did — including the
+  same client after any refresh. Hence the `stopping` above.
+
+Trust in a transition is bounded (`TRANSITION_TRUSTED_FOR_MS`): past it the node
+wins again, so an action whose request died with the panel process cannot strand
+a server in `stopping` for good. Sized off the longest power action, not off any
+expected duration — every one of them either settles its status or writes
+`error` within its own timeouts, so the window is only a backstop.
+
+The other half of making a transition visible is following it: the server page
+re-reads the record every 2s while the status is `starting` or `stopping` (the
+same poll that follows a provision, at a cadence that suits seconds rather than
+minutes). Without it a page that opened during someone else's stop would keep
+offering Kill for a server that had already gone down.
+
+The button itself is live the moment it appears. It used to arm on a three-second
+timer so the graceful path got "a fair chance", which reads well and works
+badly: being *in* a stop already means the graceful path is underway, and a stop
+that finishes in five seconds spends most of that window with its escape hatch
+greyed out.
+
 ## When the container is gone from the node
 
 The panel addresses containers by server id, but it also stores the container
