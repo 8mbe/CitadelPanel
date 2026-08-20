@@ -65,26 +65,20 @@ export const minecraftJava: Blueprint = {
       description: "Message of the day shown in the server list",
       editable: true,
     },
-    DIFFICULTY: {
-      required: false,
-      default: "normal",
-      options: ["peaceful", "easy", "normal", "hard"],
-      editable: true,
-    },
-    MAX_PLAYERS: {
-      required: false,
-      default: "20",
-      description: "Maximum concurrent players",
-      editable: true,
-    },
-    ONLINE_MODE: {
-      required: false,
-      default: "TRUE",
-      options: ["TRUE", "FALSE"],
-      description:
-        "Verify players against Mojang auth. Disabling allows cracked clients.",
-      editable: true,
-    },
+    // Deliberately NOT declared here: DIFFICULTY, MAX_PLAYERS and ONLINE_MODE.
+    // The image rewrites server.properties from its property variables on
+    // *every* boot, so declaring them would silently revert whatever the owner
+    // edited in the Files tab — and ONLINE_MODE in particular fought the
+    // Velocity setup, which needs online-mode=false in the file
+    // (velocity-proxy.md). An unset variable is left alone by the image, so
+    // omitting them makes server.properties the only place these live.
+    //
+    // SERVER_PORT (primaryPortEnv, above) is the one property mapping that must
+    // stay: server-port has to track the host port the panel published, and an
+    // owner editing it in the file would only break their own server
+    // (ports.md). MOTD stays too, as the one-line "name" a new server ships
+    // with — it carries the same rewrite-on-boot caveat.
+
     // The image's /start script runs as root, then `gosu`s to `minecraft` and
     // `chown`s /data. Both need capabilities the panel drops (CapDrop: ALL +
     // no-new-privileges), so the container is pinned to run as uid 1000 (the

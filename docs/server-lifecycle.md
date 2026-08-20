@@ -147,6 +147,41 @@ Both views update themselves. The page polls the server record while the status
 is `creating` or `installing`, so a finished provision hands the owner their
 server — and hands the admin back their console — without a reload.
 
+## Env vars vs. the game's own config files
+
+A blueprint's `envSchema` is the *whole* surface an owner may set: `resolveEnv`
+drops unknown keys, and the env PATCH refuses any key the schema does not mark
+`editable`. Which makes the schema a policy decision, not just a form: every
+variable declared there is a setting the panel owns, and most game images write
+their config file from those variables on every boot.
+
+So a variable that maps onto a line in a config file the owner can also edit is
+a trap — the file edit survives until the next restart and then silently
+reverts, with nothing in the panel to explain it. The rule for new blueprints:
+**if the owner edits it in the Files tab, do not declare it as env.** Declare
+env for what the panel must control (the published port, see
+[ports.md](ports.md)) or what the image only accepts as env (the EULA flag, the
+server type, JVM flags).
+
+`minecraft-java` is the worked example. `DIFFICULTY`, `MAX_PLAYERS` and
+`ONLINE_MODE` used to be editable env, and the itzg image rewrote
+`server.properties` from them on every boot; `ONLINE_MODE` also undid the
+`online-mode=false` that Velocity's modern forwarding requires
+([velocity-proxy.md](velocity-proxy.md)). They are gone from the schema, and
+migration 022 drops the stored values from existing Java servers. The image
+leaves a property alone when its variable is unset, so `server.properties` — via
+the Files tab and the editor ([file-editor.md](file-editor.md)) — is now the only
+place these three live.
+
+One caveat, because env is a *creation-time* fact for Docker: dropping the rows
+does not touch containers that already exist. A container keeps the environment
+it was created with until something recreates it — a port change, a link change,
+a reinstall, or the heal above. `server_env` is the spec a recreate reads
+(`loadEnvForContainer`), not something a restart re-applies, so an env edit on an
+existing server lands whenever that server is next recreated. The PATCH
+response's "takes effect the next time the server is restarted" is optimistic
+about that.
+
 ## The power actions
 
 `startServer`, `stopServer`, `killServer`, `restartServer` all follow the same
