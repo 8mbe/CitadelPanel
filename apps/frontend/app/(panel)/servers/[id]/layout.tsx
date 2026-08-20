@@ -13,6 +13,7 @@ import {
 import {
   ServerTabs,
   sectionFromPathname,
+  sectionShowsResourceStats,
 } from "@/components/server/server-tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -58,6 +59,11 @@ export default function ServerLayout({
     "loading",
   );
 
+  // Read inside the effect rather than depended on: the load below must run when
+  // the server changes, not every time the viewer switches tabs.
+  const pathnameRef = React.useRef(pathname);
+  pathnameRef.current = pathname;
+
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -67,9 +73,17 @@ export default function ServerLayout({
         // two are independent, so running them in parallel saves a round trip on
         // every page load. A stats failure is not fatal (a stopped or not-yet-
         // built server has no live sample); only the record decides ready/missing.
+        //
+        // Only worth doing when the section being opened actually shows the
+        // sample. Landing on files or settings, the seed would be a request for
+        // numbers that are never rendered — and the provider's poll is demand-
+        // driven for the same reason (see `useLiveResourceStats`).
+        const wantsStats = sectionShowsResourceStats(
+          sectionFromPathname(pathnameRef.current),
+        );
         const [result, sample] = await Promise.all([
           getServer(id),
-          getServerStats(id).catch(() => null),
+          wantsStats ? getServerStats(id).catch(() => null) : null,
         ]);
         if (cancelled) return;
         if (!result) {

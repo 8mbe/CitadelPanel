@@ -10,11 +10,17 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { useServerStatus } from "@/components/server/server-data-context";
+import {
+  useLiveResourceStats,
+  useServerStatus,
+} from "@/components/server/server-data-context";
 import { formatMb } from "@/lib/format";
 import type { ServerView } from "@/lib/types";
 
 export function ResourceStats({ server }: { server: ServerView }) {
+  // These cards are the only thing on a server page that reads the live sample,
+  // so the `/stats` poll runs while they are mounted and stops when they are not.
+  useLiveResourceStats();
   const [status] = useServerStatus();
   const running = status === "running";
   const active = running || status === "starting";

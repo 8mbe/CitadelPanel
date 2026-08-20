@@ -2,8 +2,8 @@
 
 The two costs that dominate every panel request — a blocking Docker call on the
 node, and a database round trip from the control plane — and the rules the code
-follows to keep them off the hot path. Read this before adding a read endpoint
-or a node call; both traps are easy to walk back into.
+follows to keep them off the hot path. Read this before adding a read endpoint,
+a node call, or a poll; all three traps are easy to walk back into.
 
 ## Rule 1: the agent never blocks on `docker stats`
 
@@ -44,6 +44,24 @@ of small files, and it changes far more slowly than a usage meter is polled.
 
 **If you add a stats-shaped endpoint, do not call `stats({ stream: false })`.**
 Go through `sampleContainerStats`.
+
+### Poll for what is on screen, not for what is mounted
+
+The stats sample is cheap now, but it is still a request per poll per viewer,
+and it reaches all the way to the node. The server page's data provider wraps
+every section while the cards that read the sample live in one of them, so
+polling unconditionally meant the files, settings, backups and activity tabs all
+sat there sampling CPU for numbers nobody was looking at.
+
+The poll is demand-driven instead: `ResourceStats` calls `useLiveResourceStats()`,
+the provider counts subscribers, and the interval runs only while at least one is
+mounted. The declaration lives in the component that renders the numbers, so
+moving the cards to another section moves the poll with them.
+
+The layout's seed fetch is gated the same way, by section
+(`sectionShowsResourceStats`), so opening straight to files does not fetch a
+sample that is never rendered. That function is the one place to update if a
+second section starts showing the cards.
 
 ## Rule 2: panel endpoints are shaped around database round trips
 

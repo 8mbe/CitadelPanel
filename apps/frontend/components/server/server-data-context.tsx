@@ -21,6 +21,11 @@ interface ServerDataValue {
   setStatus: (status: ServerStatus) => void;
   /** Re-fetch the server record (e.g. after an env or resource change). */
   refresh: () => Promise<void>;
+  /**
+   * Register interest in the live resource sample. Returns the unsubscribe.
+   * Use {@link useLiveResourceStats} rather than calling this directly.
+   */
+  watchStats: () => () => void;
 }
 
 const ServerDataContext = React.createContext<ServerDataValue | null>(null);
@@ -37,6 +42,9 @@ export function ServerDataProvider({
    * provider's own first poll. When present, the provider skips its immediate
    * on-mount sample (the interval below still keeps them live) — the two fetches
    * ran in parallel, so re-firing one here would just duplicate a request.
+   *
+   * Null when the section being opened does not show the sample, in which case
+   * there is nothing to seed and nothing polling it either.
    */
   initialStats?: ServerStats | null;
   children: React.ReactNode;
@@ -100,6 +108,25 @@ export function ServerDataProvider({
     };
   }, [recordPollMs, refresh]);
 
+  // How many mounted components are actually showing the resource sample.
+  //
+  // This provider wraps the whole server page, but the stats cards live in one
+  // section (the console). Polling unconditionally meant every other tab — files,
+  // settings, backups, activity — sat there sampling CPU on a timer for numbers
+  // nobody was looking at. Consumers declare their interest through
+  // {@link useLiveResourceStats}, and the poll below runs only while at least one
+  // of them is mounted.
+  const [statsWatchers, setStatsWatchers] = React.useState(0);
+
+  const watchStats = React.useCallback(() => {
+    setStatsWatchers((n) => n + 1);
+    return () => setStatsWatchers((n) => n - 1);
+  }, []);
+
+  // Only whether anyone is watching, not how many: a second consumer mounting
+  // must not tear down and restart the running interval.
+  const statsWanted = statsWatchers > 0;
+
   // Poll a live resource sample so the stats cards and status stay current
   // without a manual refresh.
   //
@@ -117,7 +144,7 @@ export function ServerDataProvider({
         : null;
 
   React.useEffect(() => {
-    if (pollIntervalMs === null) return;
+    if (pollIntervalMs === null || !statsWanted) return;
 
     let cancelled = false;
     const tick = async () => {
@@ -148,11 +175,17 @@ export function ServerDataProvider({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [status, pollIntervalMs, initial.id]);
+  }, [status, pollIntervalMs, statsWanted, initial.id]);
 
   const value = React.useMemo<ServerDataValue>(
-    () => ({ server: { ...server, status }, status, setStatus, refresh }),
-    [server, status, refresh],
+    () => ({
+      server: { ...server, status },
+      status,
+      setStatus,
+      refresh,
+      watchStats,
+    }),
+    [server, status, refresh, watchStats],
   );
 
   return (
@@ -168,6 +201,20 @@ export function useServerData(): ServerDataValue {
     throw new Error("useServerData must be used inside a ServerDataProvider");
   }
   return ctx;
+}
+
+/**
+ * Declare that this component is displaying the live resource sample.
+ *
+ * The provider polls `/stats` only while at least one component has said this,
+ * so the poll follows what is on screen rather than running for the whole time
+ * a server page is open. Call it from the component that renders the numbers —
+ * keeping the declaration next to the display is what stops the two drifting
+ * apart when a section moves.
+ */
+export function useLiveResourceStats(): void {
+  const { watchStats } = useServerData();
+  React.useEffect(() => watchStats(), [watchStats]);
 }
 
 /**
