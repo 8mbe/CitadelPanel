@@ -15,6 +15,7 @@ import { APIError, createAuthMiddleware } from "better-auth/api";
 import { authPool, sql } from "../db/client";
 import { env } from "../config/env";
 import { CAPTCHA_HEADER, verifyCaptcha } from "../security/captcha";
+import { invalidateSessionCache } from "./sessionCache";
 import { sendMail } from "../services/mail";
 import {
   getBranding,
@@ -372,6 +373,42 @@ const beforeHook = createAuthMiddleware(async (ctx) => {
   await banCheckHook(ctx);
 });
 
+/**
+ * Auth actions that take a session away, and so must drop the panel's cached
+ * copy of it.
+ *
+ * The panel caches resolved sessions for a few seconds so that a session whose
+ * cookie cache has lapsed does not re-read the database on every request (see
+ * `invalidateSessionCache`'s definition for why that gap exists). Signing out
+ * clears the cookie, so the cache would miss anyway — but revoking a session
+ * *from somewhere else* does not touch the victim's cookie, and banning a user
+ * revokes their sessions server-side. Those must take effect now, not when a TTL
+ * happens to lapse.
+ */
+const SESSION_REVOKING_PATHS = new Set([
+  "/sign-out",
+  "/revoke-session",
+  "/revoke-sessions",
+  "/revoke-other-sessions",
+  "/admin/ban-user",
+  "/admin/revoke-user-session",
+  "/admin/revoke-user-sessions",
+  "/admin/impersonate-user",
+  "/admin/stop-impersonating",
+  "/delete-user",
+  "/change-password",
+]);
+
+/**
+ * Runs after every auth action. Clearing the whole cache rather than one entry
+ * is deliberate: it is a performance cache, the actions above are rare, and
+ * mapping a revoked session back to its cache key would mean reproducing the
+ * key derivation here.
+ */
+const afterHook = createAuthMiddleware(async (ctx) => {
+  if (SESSION_REVOKING_PATHS.has(ctx.path)) invalidateSessionCache();
+});
+
 export const auth = betterAuth({
   database: authPool,
   secret: env.authSecret,
@@ -523,6 +560,9 @@ export const auth = betterAuth({
     // One composed before-hook runs the captcha gate then the email-verification
     // gate; each no-ops early when its path/conditions do not match.
     before: beforeHook,
+    // And one after-hook, which drops the panel's session cache whenever an
+    // action has taken a session away.
+    after: afterHook,
   },
 
   databaseHooks: {

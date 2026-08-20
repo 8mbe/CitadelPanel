@@ -6,8 +6,13 @@
  * router converts into a response.
  */
 
-import { auth } from "./betterAuth";
-import { isRole, type Role } from "./betterAuth";
+import { auth, isRole, type Role } from "./betterAuth";
+import {
+  readSessionCache,
+  sessionCacheKey,
+  writeSessionCache,
+  type SessionIdentity,
+} from "./sessionCache";
 import {
   accessAllows,
   accessAllowsOwnerOnly,
@@ -42,46 +47,36 @@ function withApiKeyHeaderAlias(headers: Headers): Headers {
 }
 
 /**
- * Resolve the current session into a typed user, or null when unauthenticated.
+ * Resolve who the caller is, from the session alone.
  *
- * `role` is read defensively: if the column somehow holds an unexpected value,
- * it degrades to the least-privileged role rather than granting admin.
- *
- * Banned users are rejected here even if they hold a live session cookie or an
- * API key: `auth.api.banUser` revokes sessions and the admin plugin blocks new
- * sign-ins, but this is the single chokepoint every panel route passes through,
- * so checking `banned` here is belt-and-suspenders against a surviving session
- * or the API-key-synthesized session. An expired ban is cleared and allowed.
+ * Kept separate from the ban/role check below because resolving *who* should be
+ * free while the authoritative check costs a round trip — knowing the caller's
+ * id cheaply is what lets the server guards start their own lookup at the same
+ * time as that check (see {@link requireServerPermission}). See
+ * `sessionCache.ts` for why the result is cached at all.
  */
-/**
- * The session, before the database has been consulted.
- *
- * Split out because it is free — with the cookie cache on, `getSession` answers
- * from a signed cookie — while everything below it costs a round trip. Knowing
- * the caller's id without paying for it is what lets the server guards start
- * their own lookup at the same time as the ban/role check (see
- * {@link requireServerPermission}).
- */
-interface SessionIdentity {
-  id: string;
-  email: string;
-  /** The session's copy of the role; only a fallback, see {@link authorizeSession}. */
-  sessionRole: unknown;
-}
-
 async function resolveSessionIdentity(
   request: Request,
 ): Promise<SessionIdentity | null> {
-  const session = await auth.api.getSession({
-    headers: withApiKeyHeaderAlias(request.headers),
-  });
-  if (!session?.user) return null;
+  const headers = withApiKeyHeaderAlias(request.headers);
+  const key = sessionCacheKey(headers);
 
-  return {
+  const cached = readSessionCache(key);
+  if (cached) return cached.identity;
+
+  const session = await auth.api.getSession({ headers });
+  if (!session?.user) {
+    writeSessionCache(key, null);
+    return null;
+  }
+
+  const identity: SessionIdentity = {
     id: session.user.id,
     email: session.user.email,
     sessionRole: (session.user as { role?: unknown }).role,
   };
+  writeSessionCache(key, identity);
+  return identity;
 }
 
 /**
