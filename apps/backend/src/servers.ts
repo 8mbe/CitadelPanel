@@ -329,6 +329,7 @@ export async function deleteServerContainer(
   // (plan.md section 11 step 8).
   if (deleteData) {
     await rm(serverDataPath(serverId), { recursive: true, force: true });
+    invalidateDiskUsage(serverId);
   }
 }
 
@@ -487,6 +488,35 @@ async function computeDiskUsageMb(serverId: string): Promise<number> {
   return (await dirSize(root)) / BYTES_PER_MB;
 }
 
+/**
+ * Cached disk-usage figures, keyed by server id.
+ *
+ * Walking a server's whole data directory is the expensive half of a stats
+ * sample — a populated game world is thousands of small files — and the panel
+ * polls stats every few seconds per open page. Disk usage changes slowly
+ * relative to that, so a short TTL keeps the figure fresh enough for a usage
+ * meter while collapsing a burst of samples (and every viewer of the same
+ * server) onto one walk. CPU/memory are not cached: they come straight from the
+ * daemon and are cheap and genuinely live.
+ */
+const diskUsageCache = new Map<string, { mb: number; at: number }>();
+const DISK_USAGE_TTL_MS = 30_000;
+
+async function cachedDiskUsageMb(serverId: string): Promise<number> {
+  const now = Date.now();
+  const cached = diskUsageCache.get(serverId);
+  if (cached && now - cached.at < DISK_USAGE_TTL_MS) return cached.mb;
+
+  const mb = await computeDiskUsageMb(serverId);
+  diskUsageCache.set(serverId, { mb, at: now });
+  return mb;
+}
+
+/** Drop a server's cached disk figure, e.g. when its data directory is removed. */
+function invalidateDiskUsage(serverId: string): void {
+  diskUsageCache.delete(serverId);
+}
+
 export async function getServerStats(
   serverId: string,
 ): Promise<ContainerStats | null> {
@@ -494,10 +524,11 @@ export async function getServerStats(
   if (!containerId) return null;
 
   // Sample docker stats and disk usage in parallel: the two are independent
-  // (one hits the daemon, the other walks the data dir).
+  // (one hits the daemon, the other walks the data dir — the latter behind a
+  // short-lived cache, see cachedDiskUsageMb).
   const [stats, diskUsageMb] = await Promise.all([
     sampleContainerStats(docker, containerId),
-    computeDiskUsageMb(serverId),
+    cachedDiskUsageMb(serverId),
   ]);
 
   if (stats) return { ...stats, diskUsageMb };

@@ -480,6 +480,19 @@ export const auth = betterAuth({
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24, // refresh once per day
+    // Serve the session from a signed cookie for up to 5 minutes rather than
+    // hitting the database on every request. Every `/api/*` call resolves the
+    // session (see auth/middleware.ts), so without this each one — including the
+    // status/stats polls a single open page fires every few seconds — costs a
+    // session+user DB read. The cookie is signed, so it cannot be forged; the
+    // only staleness it introduces is the session lifetime itself, and the two
+    // things that must react immediately (a ban, a role change) are re-read from
+    // the database on every request in `getAuthenticatedUser`, not from this
+    // cache.
+    cookieCache: {
+      enabled: true,
+      maxAge: 5 * 60, // seconds
+    },
   },
 
   advanced: {

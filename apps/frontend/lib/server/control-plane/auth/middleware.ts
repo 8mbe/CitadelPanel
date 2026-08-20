@@ -60,14 +60,15 @@ export async function getAuthenticatedUser(
   });
   if (!session?.user) return null;
 
-  const rawRole = (session.user as { role?: unknown }).role;
-  const role: Role = isRole(rawRole) ? rawRole : "user";
-
   // A banned user is never allowed past the auth layer, regardless of how their
-  // session was established (cookie or API key).
+  // session was established (cookie or API key). The role is read from the same
+  // row: with the session served from the cookie cache, `session.user.role`
+  // could be up to the cache lifetime stale, so the authoritative value comes
+  // from the database here — a promotion or demotion takes effect on the next
+  // request, not minutes later.
   const banRows = (await sql`
-    SELECT banned, "banExpires" FROM "user" WHERE id = ${session.user.id}
-  `) as { banned: boolean | null; banExpires: Date | null }[];
+    SELECT banned, "banExpires", role FROM "user" WHERE id = ${session.user.id}
+  `) as { banned: boolean | null; banExpires: Date | null; role: unknown }[];
   const banRow = banRows[0];
   if (banRow?.banned) {
     if (banRow.banExpires && banRow.banExpires.getTime() < Date.now()) {
@@ -82,6 +83,12 @@ export async function getAuthenticatedUser(
       );
     }
   }
+
+  // Prefer the row's role; fall back to the session's copy if the row is
+  // somehow absent. `role` is read defensively: an unexpected value degrades to
+  // the least-privileged role rather than granting admin.
+  const rawRole = banRow?.role ?? (session.user as { role?: unknown }).role;
+  const role: Role = isRole(rawRole) ? rawRole : "user";
 
   return {
     id: session.user.id,
