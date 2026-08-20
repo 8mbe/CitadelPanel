@@ -579,7 +579,23 @@ function NodeRow({
             )}
           </div>
 
-          {node.hasDatabaseServer ? (
+          {!node.hasDatabaseServer ? (
+            <span className="text-xs text-muted-foreground">
+              Run <span className="font-mono">bun run setup-db</span> on this node and
+              set its database admin credentials to enable backups.
+            </span>
+          ) : node.databaseCount === 0 ? (
+            // Says why the button below is dead. A node can have a working
+            // database server and still have nothing to dump — every database
+            // here belongs to a server, so deleting the last server that had one
+            // leaves this state. An empty snapshot is worse than none, so the
+            // agent refuses it; without this line the button just looked broken.
+            <span className="text-xs text-muted-foreground">
+              No databases have been created on this node yet, so there is nothing to
+              back up. A database belongs to a server — one appears here once a server
+              owner adds one.
+            </span>
+          ) : (
             <span className="text-xs text-muted-foreground">
               {node.lastRun ? (
                 <>
@@ -590,11 +606,6 @@ function NodeRow({
               ) : (
                 "Never backed up."
               )}
-            </span>
-          ) : (
-            <span className="text-xs text-muted-foreground">
-              Run <span className="font-mono">bun run setup-db</span> on this node and
-              set its database admin credentials to enable backups.
             </span>
           )}
         </div>

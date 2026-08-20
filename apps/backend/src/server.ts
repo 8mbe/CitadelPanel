@@ -54,6 +54,7 @@ import {
   parseSnapshotId,
   parseSubject,
 } from "./backup/wire";
+import { removeOrphanedToolContainers } from "./backup/toolContainer";
 import { createSftpServer } from "./sftp";
 import {
   copyPath,
@@ -1414,6 +1415,11 @@ console.log(`[agent] docker socket: ${config.dockerSocket}`);
 // Runs after `Bun.serve` so a slow or broken filesystem cannot delay the agent
 // accepting requests (see `dataRoot.ts` on why this does not exit).
 await reportDataRootAtBoot();
+
+// A backup container that outlived the process holds a restic repository lock,
+// which fails every later backup of that subject. Boot is the only moment when
+// none of ours is running, so it is where they get swept.
+await removeOrphanedToolContainers();
 
 // --- SFTP server ------------------------------------------------------------
 //

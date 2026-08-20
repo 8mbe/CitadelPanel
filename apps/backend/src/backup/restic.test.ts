@@ -419,6 +419,26 @@ describe("failure explanation", () => {
     expect(explainResticFailure(1, "dial tcp: lookup failed")).toContain("could not reach");
   });
 
+  test("names the node's own filesystem, not S3, on a permission error", () => {
+    // The real failure: restic could not create its cache because the container
+    // could not write a host directory. Unexplained it reaches the operator as a
+    // Go stack trace that reads like an S3 problem.
+    const message = explainResticFailure(
+      1,
+      "unable to open cache: open /cache/CACHEDIR.TAG: permission denied\n" +
+        "github.com/restic/restic/internal/backend/cache.writeCachedirTag",
+    );
+    expect(message).toContain("directory on this node");
+    expect(message).toContain("BACKUP_STAGING_ROOT");
+  });
+
+  test("still reports a locally-blocked connection as a network problem", () => {
+    // "permission denied" also shows up when something blocks the dial; that is a
+    // network failure, not a mount-ownership one.
+    const message = explainResticFailure(1, "dial tcp 10.0.0.5:9000: connect: permission denied");
+    expect(message).toContain("could not reach");
+  });
+
   test("points at the TLS toggle when the endpoint speaks plaintext", () => {
     // restic's own wording for this says nothing about which setting to change.
     const message = explainResticFailure(

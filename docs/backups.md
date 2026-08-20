@@ -67,11 +67,54 @@ blueprint install step already proved (`servers.ts` → `runContainerToCompletio
 The tool containers do **not** go through `docker/hardening.ts`. That module builds a
 spec for a *game* — one bind mount, published ports, a per-server isolated network —
 and every one of those invariants is wrong here. What replaces it is narrower:
-`backup/toolContainer.ts` drops all capabilities, sets `no-new-privileges`, publishes
-no ports, caps memory, and puts the container on its own bridge (`BACKUP_NETWORK`).
-That last point matters most — these containers hold the operator's S3 credentials
-and a MariaDB admin password in their environment, so no tenant container may ever
-share a network with them.
+`backup/toolContainer.ts` drops every capability except three, sets
+`no-new-privileges`, publishes no ports, caps memory, and puts the container on its
+own bridge (`BACKUP_NETWORK`). That last point matters most — these containers hold
+the operator's S3 credentials and a MariaDB admin password in their environment, so
+no tenant container may ever share a network with them.
+
+### Why a backup container keeps `DAC_OVERRIDE`
+
+Dropping *all* capabilities takes `CAP_DAC_OVERRIDE` with it, and that is the
+capability that lets root ignore file permissions. Without it, root inside a
+container is *weaker* than an ordinary user: it can only touch paths whose mode
+grants access to `other`. Every host directory these containers are handed — the
+restic cache, the dump staging area, a server's data directory — is owned by the
+user the agent runs as, mode `0755`. So a fully-capability-stripped run could not
+write any of them, and both scopes failed before taking a single backup: restic on
+`open /cache/CACHEDIR.TAG: permission denied`, `mariadb-dump` on the staging
+directory.
+
+Reading every file whoever owns it *is* what a backup is, so this is the one place
+where a DAC bypass is the point rather than a weakening. Three capabilities are
+added back:
+
+- **`DAC_OVERRIDE`** — read a world whose files belong to the game's uid, and write
+  the cache, the dumps, and a restore's output.
+- **`CHOWN` / `FOWNER`** — put ownership and modes back as they were on restore,
+  rather than leaving a restored world owned by root.
+
+Everything actually dangerous stays dropped (`SYS_ADMIN`, `NET_RAW`, `SETUID`,
+`MKNOD`, …), the container still gets no tenant network, and it still sees only the
+mounts its scope needs — so the blast radius is the paths it was handed. Running the
+container as the agent's own uid instead was the alternative, and it is worse: a
+game's data directory contains files owned by whatever uid the game image runs as,
+and a backup that silently skips the unreadable ones is not a backup.
+
+### A leaked tool container blocks every later backup
+
+`runToolContainer` removes its container in a `finally`, including on timeout,
+because a leaked restic holds a repository lock that fails every subsequent backup
+of that subject. Two things make that guarantee real rather than nominal:
+
+- Extra networks are attached **inside** the `try`, so a network that does not exist
+  cannot leave a created-but-never-started container behind.
+- Containers carry a `citadel.tool=backup` label and a `citadel-backup-*` name, and
+  the agent sweeps any that are still around **at boot** (`removeOrphanedToolContainers`).
+  The `finally` cannot run if the agent is killed mid-backup, and before the label
+  existed the leftover was an anonymous container an operator had to find by hand.
+  The label is deliberately not `citadel.managed` — that one means "a tenant's game
+  server" and is what the stats collector enumerates.
 
 ## Repository layout
 

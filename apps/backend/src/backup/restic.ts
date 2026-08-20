@@ -504,6 +504,23 @@ export function explainResticFailure(exitCode: number, output: string): string {
       `necessarily reachable from every node. Details: ${tail}`
     );
   }
+  // Not an S3 problem at all: restic could not write this node's own filesystem
+  // — its cache directory, or the staging area. It surfaces as a bare
+  // "permission denied" wrapped in a Go stack trace, which says nothing about
+  // which directory or whose fault it is, and the answer is always ownership of
+  // a path the agent handed to the container. Checked after the network cases so
+  // a connection refused *by* a local policy is still reported as a network
+  // problem, which is what it is.
+  if (/permission denied|operation not permitted/i.test(tail)) {
+    return (
+      "restic could not write to a directory on this node — its cache or the " +
+      "staging area, not S3. The agent's tool containers need the paths under " +
+      "BACKUP_STAGING_ROOT and SERVER_DATA_ROOT to be readable and writable by " +
+      "them, so check those directories exist, are owned by the user the agent " +
+      "runs as, and that nothing (SELinux, a read-only mount) is blocking " +
+      `writes. Details: ${tail}`
+    );
+  }
   // The region is part of the SigV4 signature, not a label, so a self-hosted
   // server that validates it rejects the whole request as malformed. Garage
   // answers a wrong region with a bare `400 Bad Request` that names nothing —
