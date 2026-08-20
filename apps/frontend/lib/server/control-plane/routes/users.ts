@@ -16,38 +16,29 @@ import {
 } from "../lib/http";
 import { sql } from "../db/client";
 import { recordAuditFromRequest } from "../services/auditLog";
-import { countUnreviewed } from "../security/suspiciousList";
+import { loadMeProfile } from "../services/me";
 
 /** GET /api/me — the caller's identity and role. */
 export async function handleGetMe(request: Request): Promise<Response> {
   const user = await requireAuth(request);
 
-  // The auth middleware resolves only { id, email, role }; the display name
-  // lives on the Better Auth user row, so fetch it here. `name` may be null for
-  // accounts created before a name was required.
-  const profile = (await sql`
-    SELECT name, "twoFactorEnabled" FROM "user" WHERE id = ${user.id}
-  `) as { name: string | null; twoFactorEnabled: boolean | null }[];
-
-  const counts = (await sql`
-    SELECT
-      (SELECT COUNT(*)::int FROM servers WHERE owner_id = ${user.id}) AS owned_servers,
-      (SELECT COUNT(*)::int FROM server_subusers WHERE user_id = ${user.id}) AS subuser_servers
-  `) as { owned_servers: number; subuser_servers: number }[];
-
-  // Only admins get the review queue badge.
-  const pendingReviews = user.role === "admin" ? await countUnreviewed() : undefined;
+  // Shared with the SSR session resolver (see lib/server/session.ts), so the
+  // payload is identical whether `/api/me` answers from this route or from the
+  // panel layout's server-side read.
+  const profile = await loadMeProfile(user);
 
   return json({
     user: {
       id: user.id,
       email: user.email,
-      name: profile[0]?.name ?? null,
+      name: profile.name,
       role: user.role,
-      twoFactorEnabled: profile[0]?.twoFactorEnabled ?? false,
-      ownedServers: counts[0]?.owned_servers ?? 0,
-      subuserServers: counts[0]?.subuser_servers ?? 0,
-      ...(pendingReviews !== undefined ? { pendingReviews } : {}),
+      twoFactorEnabled: profile.twoFactorEnabled,
+      ownedServers: profile.ownedServers,
+      subuserServers: profile.subuserServers,
+      ...(profile.pendingReviews !== undefined
+        ? { pendingReviews: profile.pendingReviews }
+        : {}),
     },
   });
 }

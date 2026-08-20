@@ -709,11 +709,16 @@ export async function handleListAdminServers(request: Request): Promise<Response
   const ownerIds = [...new Set(servers.map((server) => server.ownerId))];
   const ownersById = new Map<string, { email: string; name: string | null }>();
 
-  for (const ownerId of ownerIds) {
-    const rows = (await sql`
-      SELECT id, email, name FROM "user" WHERE id = ${ownerId}
+  if (ownerIds.length > 0) {
+    // One query for every owner, rather than one per server — the fleet-wide
+    // list fans out across users, and a serial per-owner SELECT turned each
+    // page load into a loop whose length was the number of distinct owners.
+    const ownerRows = (await sql`
+      SELECT id, email, name FROM "user" WHERE id = ANY(${sql.array(ownerIds)})
     `) as { id: string; email: string; name: string | null }[];
-    if (rows[0]) ownersById.set(rows[0].id, { email: rows[0].email, name: rows[0].name });
+    for (const row of ownerRows) {
+      ownersById.set(row.id, { email: row.email, name: row.name });
+    }
   }
 
   // Group by node so each node is asked exactly once.

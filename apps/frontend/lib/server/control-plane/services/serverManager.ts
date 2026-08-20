@@ -92,6 +92,13 @@ interface ServerRow {
   suspension_reason?: string | null;
   /** When the server was last suspended. Null when not suspended. */
   suspended_at?: Date | null;
+  /**
+   * Joined from `blueprints.key` on list queries, so the blueprint key is
+   * resolved in the same round trip as the server rows rather than per-server
+   * via {@link getBlueprintKeyById}. Absent on single-server reads, which
+   * resolve it through {@link toSummary}.
+   */
+  blueprint_key?: string;
 }
 
 export interface ServerSummary {
@@ -134,13 +141,36 @@ export interface ServerSummary {
 
 // --- Reads --------------------------------------------------------------------
 
+/** Ports for one server, ordered as the API surfaces them. */
 async function loadPorts(serverId: string) {
+  return loadPortsForMany([serverId]).then((m) => m.get(serverId) ?? []);
+}
+
+/**
+ * Ports for many servers in one query.
+ *
+ * The list endpoints fan out over every server a caller can see, and resolving
+ * ports per-server turned each list read into N+1 queries. Batching collapses
+ * that to one round trip regardless of fleet size — the `IN (...)` list is the
+ * server ids the caller already holds.
+ *
+ * Returns a Map keyed by server id so the caller can spread each row's ports
+ * without a second lookup. Ordering matches {@link loadPorts}: primary first,
+ * then additional, then by port number.
+ */
+async function loadPortsForMany(
+  serverIds: string[],
+): Promise<Map<string, ServerSummary["ports"]>> {
+  const byServer = new Map<string, ServerSummary["ports"]>();
+  if (serverIds.length === 0) return byServer;
+
   const rows = (await sql`
-    SELECT host_port, protocol, is_primary, is_additional, label
+    SELECT server_id, host_port, protocol, is_primary, is_additional, label
     FROM server_ports
-    WHERE server_id = ${serverId}
-    ORDER BY is_primary DESC, is_additional ASC, host_port ASC
+    WHERE server_id = ANY(${sql.array(serverIds, 2950)})
+    ORDER BY server_id, is_primary DESC, is_additional ASC, host_port ASC
   `) as {
+    server_id: string;
     host_port: number;
     protocol: string;
     is_primary: boolean;
@@ -148,35 +178,69 @@ async function loadPorts(serverId: string) {
     label: string | null;
   }[];
 
-  // host_port IS the port: bindings are identity mappings (host N → container
-  // N), so container_port — still stored for the table's primary key — is not
-  // part of the API surface.
-  return rows.map((row) => ({
-    port: row.host_port,
-    protocol: row.protocol,
-    isPrimary: row.is_primary,
-    isAdditional: row.is_additional,
-    label: row.label,
-  }));
+  for (const row of rows) {
+    let list = byServer.get(row.server_id);
+    if (!list) {
+      list = [];
+      byServer.set(row.server_id, list);
+    }
+    // host_port IS the port: bindings are identity mappings (host N → container
+    // N), so container_port — still stored for the table's primary key — is not
+    // part of the API surface.
+    list.push({
+      port: row.host_port,
+      protocol: row.protocol,
+      isPrimary: row.is_primary,
+      isAdditional: row.is_additional,
+      label: row.label,
+    });
+  }
+  return byServer;
 }
 
-async function toSummary(row: ServerRow): Promise<ServerSummary> {
+/**
+ * Build a summary from a row whose blueprint key and ports are already
+ * resolved — the list path, which JOINs the key and batches the ports.
+ */
+function toSummaryFromRow(
+  row: ServerRow,
+  ports: ServerSummary["ports"],
+): ServerSummary {
   return {
     id: row.id,
     name: row.name,
     ownerId: row.owner_id,
     nodeId: row.node_id,
     nodeHostname: row.node_hostname ?? null,
-    blueprintKey: await getBlueprintKeyById(row.blueprint_id),
+    blueprintKey: row.blueprint_key ?? null,
     status: row.status,
     cpuLimit: Number(row.cpu_limit),
     memoryLimitMb: row.memory_limit_mb,
     diskLimitMb: row.disk_limit_mb,
-    ports: await loadPorts(row.id),
+    ports,
     createdAt: row.created_at,
     suspensionReason: row.suspension_reason ?? null,
     suspendedAt: row.suspended_at ?? null,
   };
+}
+
+/**
+ * Build a summary from a bare row, resolving the blueprint key and ports.
+ *
+ * Used by the single-server reads ({@link getServer}, {@link loadServerRow}
+ * callers) where the per-server cost is one key lookup and one port query —
+ * not worth batching, and the key is not always JOINed in those paths. The
+ * list endpoints JOIN the key and batch the ports instead ({@link summariesFromRows}).
+ */
+async function toSummary(row: ServerRow): Promise<ServerSummary> {
+  // The list queries JOIN `blueprint_key`; the single-server read does not, so
+  // resolve it here when absent. `getBlueprintKeyById` is a one-row indexed lookup.
+  const blueprintKey =
+    row.blueprint_key ?? (await getBlueprintKeyById(row.blueprint_id));
+  return toSummaryFromRow(
+    { ...row, blueprint_key: blueprintKey ?? undefined },
+    await loadPorts(row.id),
+  );
 }
 
 /**
@@ -195,11 +259,13 @@ export async function countServersOnNode(nodeId: string): Promise<number> {
 /** Servers the user owns. Admins use {@link listAllServers} instead. */
 export async function listServersForOwner(ownerId: string): Promise<ServerSummary[]> {
   const rows = (await sql`
-    SELECT s.*, n.hostname AS node_hostname
-    FROM servers s JOIN nodes n ON n.id = s.node_id
+    SELECT s.*, n.hostname AS node_hostname, b.key AS blueprint_key
+    FROM servers s
+    JOIN nodes n ON n.id = s.node_id
+    JOIN blueprints b ON b.id = s.blueprint_id
     WHERE s.owner_id = ${ownerId} ORDER BY s.created_at DESC
   `) as ServerRow[];
-  return Promise.all(rows.map(toSummary));
+  return summariesFromRows(rows);
 }
 
 /**
@@ -213,33 +279,52 @@ export async function listServersForNode(
   nodeId: string,
 ): Promise<ServerSummary[]> {
   const rows = (await sql`
-    SELECT s.*, n.hostname AS node_hostname
-    FROM servers s JOIN nodes n ON n.id = s.node_id
+    SELECT s.*, n.hostname AS node_hostname, b.key AS blueprint_key
+    FROM servers s
+    JOIN nodes n ON n.id = s.node_id
+    JOIN blueprints b ON b.id = s.blueprint_id
     WHERE s.node_id = ${nodeId} ORDER BY s.created_at DESC
   `) as ServerRow[];
-  return Promise.all(rows.map(toSummary));
+  return summariesFromRows(rows);
 }
 
 /** Servers the user can see: owned plus any they are a subuser on. */
 export async function listAccessibleServers(userId: string): Promise<ServerSummary[]> {
   const rows = (await sql`
-    SELECT DISTINCT s.*, n.hostname AS node_hostname
+    SELECT DISTINCT s.*, n.hostname AS node_hostname, b.key AS blueprint_key
     FROM servers s
     JOIN nodes n ON n.id = s.node_id
+    JOIN blueprints b ON b.id = s.blueprint_id
     LEFT JOIN server_subusers su ON su.server_id = s.id
     WHERE s.owner_id = ${userId} OR su.user_id = ${userId}
     ORDER BY s.created_at DESC
   `) as ServerRow[];
-  return Promise.all(rows.map(toSummary));
+  return summariesFromRows(rows);
 }
 
 export async function listAllServers(): Promise<ServerSummary[]> {
   const rows = (await sql`
-    SELECT s.*, n.hostname AS node_hostname
-    FROM servers s JOIN nodes n ON n.id = s.node_id
+    SELECT s.*, n.hostname AS node_hostname, b.key AS blueprint_key
+    FROM servers s
+    JOIN nodes n ON n.id = s.node_id
+    JOIN blueprints b ON b.id = s.blueprint_id
     ORDER BY s.created_at DESC
   `) as ServerRow[];
-  return Promise.all(rows.map(toSummary));
+  return summariesFromRows(rows);
+}
+
+/**
+ * Resolve ports for a set of server rows in one batched query, then map to
+ * summaries. This is the shared fast path for the list endpoints: one query for
+ * the rows (with the blueprint key JOINed in) and one for every row's ports.
+ */
+async function summariesFromRows(
+  rows: ServerRow[],
+): Promise<ServerSummary[]> {
+  const portsByServer = await loadPortsForMany(rows.map((r) => r.id));
+  return rows.map((row) =>
+    toSummaryFromRow(row, portsByServer.get(row.id) ?? []),
+  );
 }
 
 async function loadServerRow(serverId: string): Promise<ServerRow> {
