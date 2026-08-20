@@ -87,6 +87,8 @@ interface ServerRow {
   updated_at: Date;
   /** Joined from `nodes.hostname` — the address players connect to. */
   node_hostname?: string;
+  /** Joined from `blueprints.key`, so list reads never re-query it per row. */
+  blueprint_key: string;
   /** Why the server was suspended, shown to the owner. Null when not suspended. */
   suspension_reason?: string | null;
   /** When the server was last suspended. Null when not suspended. */
@@ -159,6 +161,40 @@ async function loadPorts(serverId: string) {
   }));
 }
 
+/** Batch form of {@link loadPorts} for list reads — one query for every server. */
+async function loadPortsForServers(
+  serverIds: string[],
+): Promise<Map<string, ServerSummary["ports"]>> {
+  const rows = (await sql`
+    SELECT server_id, host_port, protocol, is_primary, is_additional, label
+    FROM server_ports
+    WHERE server_id = ANY(${sql.array(serverIds, 2950)})
+    ORDER BY is_primary DESC, is_additional ASC, host_port ASC
+  `) as {
+    server_id: string;
+    host_port: number;
+    protocol: string;
+    is_primary: boolean;
+    is_additional: boolean;
+    label: string | null;
+  }[];
+
+  const byServer = new Map<string, ServerSummary["ports"]>();
+  for (const row of rows) {
+    const port = {
+      port: row.host_port,
+      protocol: row.protocol,
+      isPrimary: row.is_primary,
+      isAdditional: row.is_additional,
+      label: row.label,
+    };
+    const existing = byServer.get(row.server_id);
+    if (existing) existing.push(port);
+    else byServer.set(row.server_id, [port]);
+  }
+  return byServer;
+}
+
 async function toSummary(row: ServerRow): Promise<ServerSummary> {
   return {
     id: row.id,
@@ -166,7 +202,7 @@ async function toSummary(row: ServerRow): Promise<ServerSummary> {
     ownerId: row.owner_id,
     nodeId: row.node_id,
     nodeHostname: row.node_hostname ?? null,
-    blueprintKey: await getBlueprintKeyById(row.blueprint_id),
+    blueprintKey: row.blueprint_key,
     status: row.status,
     cpuLimit: Number(row.cpu_limit),
     memoryLimitMb: row.memory_limit_mb,
@@ -176,6 +212,36 @@ async function toSummary(row: ServerRow): Promise<ServerSummary> {
     suspensionReason: row.suspension_reason ?? null,
     suspendedAt: row.suspended_at ?? null,
   };
+}
+
+/**
+ * Batch version of {@link toSummary} for list reads.
+ *
+ * `toSummary` costs one ports query per row; multiplied across a list that is
+ * an N+1 (2N extra round trips once the blueprint join below is in place, N
+ * without it). Every list caller has all its rows up front, so ports for the
+ * whole batch are loaded in a single query and matched back up in memory —
+ * the blueprint key comes along for free via the SQL join in each caller.
+ */
+async function toSummaries(rows: ServerRow[]): Promise<ServerSummary[]> {
+  if (rows.length === 0) return [];
+  const portsByServer = await loadPortsForServers(rows.map((row) => row.id));
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    ownerId: row.owner_id,
+    nodeId: row.node_id,
+    nodeHostname: row.node_hostname ?? null,
+    blueprintKey: row.blueprint_key,
+    status: row.status,
+    cpuLimit: Number(row.cpu_limit),
+    memoryLimitMb: row.memory_limit_mb,
+    diskLimitMb: row.disk_limit_mb,
+    ports: portsByServer.get(row.id) ?? [],
+    createdAt: row.created_at,
+    suspensionReason: row.suspension_reason ?? null,
+    suspendedAt: row.suspended_at ?? null,
+  }));
 }
 
 /**
@@ -194,11 +260,13 @@ export async function countServersOnNode(nodeId: string): Promise<number> {
 /** Servers the user owns. Admins use {@link listAllServers} instead. */
 export async function listServersForOwner(ownerId: string): Promise<ServerSummary[]> {
   const rows = (await sql`
-    SELECT s.*, n.hostname AS node_hostname
-    FROM servers s JOIN nodes n ON n.id = s.node_id
+    SELECT s.*, n.hostname AS node_hostname, b.key AS blueprint_key
+    FROM servers s
+    JOIN nodes n ON n.id = s.node_id
+    JOIN blueprints b ON b.id = s.blueprint_id
     WHERE s.owner_id = ${ownerId} ORDER BY s.created_at DESC
   `) as ServerRow[];
-  return Promise.all(rows.map(toSummary));
+  return toSummaries(rows);
 }
 
 /**
@@ -212,39 +280,46 @@ export async function listServersForNode(
   nodeId: string,
 ): Promise<ServerSummary[]> {
   const rows = (await sql`
-    SELECT s.*, n.hostname AS node_hostname
-    FROM servers s JOIN nodes n ON n.id = s.node_id
+    SELECT s.*, n.hostname AS node_hostname, b.key AS blueprint_key
+    FROM servers s
+    JOIN nodes n ON n.id = s.node_id
+    JOIN blueprints b ON b.id = s.blueprint_id
     WHERE s.node_id = ${nodeId} ORDER BY s.created_at DESC
   `) as ServerRow[];
-  return Promise.all(rows.map(toSummary));
+  return toSummaries(rows);
 }
 
 /** Servers the user can see: owned plus any they are a subuser on. */
 export async function listAccessibleServers(userId: string): Promise<ServerSummary[]> {
   const rows = (await sql`
-    SELECT DISTINCT s.*, n.hostname AS node_hostname
+    SELECT DISTINCT s.*, n.hostname AS node_hostname, b.key AS blueprint_key
     FROM servers s
     JOIN nodes n ON n.id = s.node_id
+    JOIN blueprints b ON b.id = s.blueprint_id
     LEFT JOIN server_subusers su ON su.server_id = s.id
     WHERE s.owner_id = ${userId} OR su.user_id = ${userId}
     ORDER BY s.created_at DESC
   `) as ServerRow[];
-  return Promise.all(rows.map(toSummary));
+  return toSummaries(rows);
 }
 
 export async function listAllServers(): Promise<ServerSummary[]> {
   const rows = (await sql`
-    SELECT s.*, n.hostname AS node_hostname
-    FROM servers s JOIN nodes n ON n.id = s.node_id
+    SELECT s.*, n.hostname AS node_hostname, b.key AS blueprint_key
+    FROM servers s
+    JOIN nodes n ON n.id = s.node_id
+    JOIN blueprints b ON b.id = s.blueprint_id
     ORDER BY s.created_at DESC
   `) as ServerRow[];
-  return Promise.all(rows.map(toSummary));
+  return toSummaries(rows);
 }
 
 async function loadServerRow(serverId: string): Promise<ServerRow> {
   const rows = (await sql`
-    SELECT s.*, n.hostname AS node_hostname
-    FROM servers s JOIN nodes n ON n.id = s.node_id
+    SELECT s.*, n.hostname AS node_hostname, b.key AS blueprint_key
+    FROM servers s
+    JOIN nodes n ON n.id = s.node_id
+    JOIN blueprints b ON b.id = s.blueprint_id
     WHERE s.id = ${serverId}
   `) as ServerRow[];
   const row = rows[0];
