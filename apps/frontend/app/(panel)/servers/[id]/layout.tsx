@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSession } from "@/components/session-provider";
-import { getServer } from "@/lib/api";
+import { getServer, getServerStats, type ServerStats } from "@/lib/api";
 import { formatRelative } from "@/lib/format";
 import { sectionAllowed } from "@/lib/permissions";
 import { isProvisioning } from "@/lib/server-status";
@@ -53,6 +53,7 @@ export default function ServerLayout({
   const isAdmin = user.role === "admin";
 
   const [server, setServer] = React.useState<ServerView | null>(null);
+  const [stats, setStats] = React.useState<ServerStats | null>(null);
   const [state, setState] = React.useState<"loading" | "ready" | "missing">(
     "loading",
   );
@@ -61,13 +62,22 @@ export default function ServerLayout({
     let cancelled = false;
     (async () => {
       try {
-        const result = await getServer(id);
+        // Fetch the record and a resource sample together rather than letting
+        // the data provider fetch stats only after the record resolves — the
+        // two are independent, so running them in parallel saves a round trip on
+        // every page load. A stats failure is not fatal (a stopped or not-yet-
+        // built server has no live sample); only the record decides ready/missing.
+        const [result, sample] = await Promise.all([
+          getServer(id),
+          getServerStats(id).catch(() => null),
+        ]);
         if (cancelled) return;
         if (!result) {
           setState("missing");
           return;
         }
         setServer(result);
+        setStats(sample);
         setState("ready");
       } catch {
         if (!cancelled) setState("missing");
@@ -121,7 +131,7 @@ export default function ServerLayout({
   const sectionGranted = sectionAllowed(active, server.viewer);
 
   return (
-    <ServerDataProvider initial={server}>
+    <ServerDataProvider initial={server} initialStats={stats}>
       <ServerShell isAdmin={isAdmin} sectionGranted={sectionGranted}>
         {children}
       </ServerShell>

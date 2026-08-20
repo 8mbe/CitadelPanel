@@ -120,14 +120,21 @@ export async function handleGetServer(
   // Console permission is the baseline "can look at this server" grant.
   const { access } = await requireServerPermission(request, id, "console");
 
-  // Best-effort: a node being unreachable should not break the detail view.
-  try {
-    await reconcileServerStatus(id);
-  } catch (error) {
-    console.error(`[servers] status reconcile failed for ${id}:`, error);
-  }
-
-  const server = await getServer(id);
+  // Reconcile the stored status against the node (a live docker inspect) at the
+  // same time as reading the record from the database — the node round trip and
+  // the DB reads are independent, so serializing them just adds the slower of
+  // the two to every detail load. `reconcileServerStatus` returns the
+  // authoritative status, which is written back over the record below, so the
+  // read racing the status write is harmless. A node being unreachable must not
+  // break the detail view, so the reconcile failure is swallowed to null.
+  const [reconciled, server] = await Promise.all([
+    reconcileServerStatus(id).catch((error) => {
+      console.error(`[servers] status reconcile failed for ${id}:`, error);
+      return null;
+    }),
+    getServer(id),
+  ]);
+  if (reconciled) server.status = reconciled;
   // Tell the caller what they can do here so the UI can hide sections they
   // hold no permission for. Owners/admins have an empty permission set — the
   // `kind` says they implicitly hold all of them.
