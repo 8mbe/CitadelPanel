@@ -22,7 +22,7 @@ import {
   payloadTooLarge,
   requireUuidParam,
 } from "../lib/http";
-import { isBlockedHost } from "../lib/ssrf";
+import { isBlockedUrlResolved } from "../lib/ssrf";
 import {
   copyServerFile,
   createServerDirectory,
@@ -358,7 +358,11 @@ export async function handlePullFromUrl(
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw badRequest('"url" must be an http(s) URL');
   }
-  if (isBlockedHost(url.hostname)) {
+  // Resolve the host and reject it if it (or anything it resolves to) is
+  // internal — the caller here is a server owner/subuser, not an admin, so the
+  // literal-only check is not enough. The agent re-checks the host and every
+  // redirect hop when it performs the fetch.
+  if (await isBlockedUrlResolved(url.hostname)) {
     throw badRequest("That host is not allowed.");
   }
 

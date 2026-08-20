@@ -13,10 +13,12 @@
 import { appendFile, readdir, rm, stat, mkdir, rename, cp } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 import { config } from "./config";
-import { badRequest, conflict, notFound, payloadTooLarge } from "./http";
+import { badRequest, conflict, HttpError, notFound, payloadTooLarge } from "./http";
+import { ssrfSafeFetch } from "./ssrf";
 import {
   resolveExistingServerPath,
   resolveServerPath,
+  resolveWritableServerPath,
   serverDataPath,
 } from "./paths";
 
@@ -119,9 +121,10 @@ export async function readFile(
 /**
  * Write a text file, creating parent directories as needed.
  *
- * The lexical guard is used rather than the symlink-checking one because the
- * target may legitimately not exist yet; the parent directory is what gets
- * created, and it is still inside the containment boundary.
+ * The write-safe resolver is used rather than the plain lexical one: the target
+ * may legitimately not exist yet, but a symlink planted in an existing parent
+ * directory could otherwise redirect the `mkdir`/write outside the containment
+ * boundary (see {@link resolveWritableServerPath}).
  */
 export async function writeFile(
   serverId: string,
@@ -134,7 +137,7 @@ export async function writeFile(
     );
   }
 
-  const target = resolveServerPath(serverId, userPath);
+  const target = await resolveWritableServerPath(serverId, userPath);
   if (target === serverDataPath(serverId)) {
     throw badRequest("Refusing to overwrite the server's data directory.");
   }
@@ -208,7 +211,7 @@ export async function createDirectory(
   serverId: string,
   userPath: string,
 ): Promise<void> {
-  const target = resolveServerPath(serverId, userPath);
+  const target = await resolveWritableServerPath(serverId, userPath);
   await mkdir(target, { recursive: true });
 }
 
@@ -310,11 +313,14 @@ export async function resolveForDownload(
  * data root. Shared by {@link uploadFile} and {@link pullFromUrl} so both code
  * paths apply the same guards before any bytes are written.
  */
-function resolveUploadTarget(serverId: string, userPath: string): string {
+async function resolveUploadTarget(
+  serverId: string,
+  userPath: string,
+): Promise<string> {
   if (userPath.includes("\0")) {
     throw badRequest("Path must not contain null bytes.");
   }
-  const target = resolveServerPath(serverId, userPath);
+  const target = await resolveWritableServerPath(serverId, userPath);
   if (target === serverDataPath(serverId)) {
     throw badRequest("Refusing to overwrite the server's data directory.");
   }
@@ -369,7 +375,7 @@ export async function uploadFile(
     );
   }
 
-  const target = resolveUploadTarget(serverId, userPath);
+  const target = await resolveUploadTarget(serverId, userPath);
   const staged = `${target}.upload-${process.pid}-${Date.now()}.tmp`;
 
   try {
@@ -410,9 +416,12 @@ export async function uploadFile(
  * Fetch a remote URL and save it into the server's data directory.
  *
  * The agent performs the fetch (rather than the panel) so the bytes cross the
- * network once, directly to where they need to land. The panel has already
- * validated the URL and applied its own SSRF guardrail; the agent still
- * re-checks the final size against the upload cap.
+ * network once, directly to where they need to land. The panel applies its own
+ * SSRF guardrail before forwarding, and the agent applies its own again here
+ * ({@link ssrfSafeFetch}) — resolving the host and re-checking every redirect
+ * hop, because the agent is where the request actually leaves the node and
+ * where redirects are followed. The agent still re-checks the final size
+ * against the upload cap.
  *
  * Same staged-write posture as {@link uploadFile}: a temp file is renamed
  * into place only after the full download succeeds, so a truncated pull never
@@ -423,14 +432,17 @@ export async function pullFromUrl(
   userPath: string,
   url: string,
 ): Promise<{ path: string; sizeBytes: number }> {
-  const target = resolveUploadTarget(serverId, userPath);
+  const target = await resolveUploadTarget(serverId, userPath);
   const staged = `${target}.pull-${process.pid}-${Date.now()}.tmp`;
 
   let response: Response;
   try {
-    response = await fetch(url, { redirect: "follow" });
+    response = await ssrfSafeFetch(url);
   } catch (error) {
     await rm(staged, { force: true });
+    // A guard rejection (HttpError) already carries a clear message; surface it
+    // as-is rather than wrapping it in "Could not fetch that URL".
+    if (error instanceof HttpError) throw error;
     const reason = error instanceof Error ? error.message : String(error);
     throw badRequest(`Could not fetch that URL: ${reason}`);
   }

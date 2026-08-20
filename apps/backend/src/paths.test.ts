@@ -15,8 +15,13 @@ import { join } from "node:path";
 // runs. It is imported here only to learn where it is.
 const root = (await import("../test-setup")).testRoot;
 
-const { isInside, resolveExistingServerPath, resolveServerPath, serverDataPath } =
-  await import("./paths");
+const {
+  isInside,
+  resolveExistingServerPath,
+  resolveServerPath,
+  resolveWritableServerPath,
+  serverDataPath,
+} = await import("./paths");
 
 const SERVER_ID = "11111111-2222-3333-4444-555555555555";
 
@@ -104,5 +109,36 @@ describe("resolveExistingServerPath", () => {
     await expect(
       resolveExistingServerPath(SERVER_ID, "/not-created-yet.txt"),
     ).resolves.toBe(join(root, SERVER_ID, "not-created-yet.txt"));
+  });
+});
+
+describe("resolveWritableServerPath", () => {
+  test("allows writing a brand-new file inside the data directory", async () => {
+    await expect(
+      resolveWritableServerPath(SERVER_ID, "/config/new.yml"),
+    ).resolves.toBe(join(root, SERVER_ID, "config/new.yml"));
+  });
+
+  test("rejects a write through a symlinked directory pointing outside", async () => {
+    // The write-side of the escape resolveExistingServerPath guards on the read
+    // side: the game server plants a symlink to a directory outside its own
+    // tree, then a later write to a path *under* that symlink would follow it.
+    // The target ("planted.txt") does not exist yet, so a lexical check passes
+    // and only the ancestor realpath catches it.
+    await mkdir(join(root, "outside-dir"), { recursive: true });
+    await symlink(
+      join(root, "outside-dir"),
+      join(root, SERVER_ID, "escape-dir"),
+    );
+
+    await expect(
+      resolveWritableServerPath(SERVER_ID, "/escape-dir/planted.txt"),
+    ).rejects.toThrow();
+  });
+
+  test("rejects lexical traversal for writes too", async () => {
+    await expect(
+      resolveWritableServerPath(SERVER_ID, "/../outside-secret.txt"),
+    ).rejects.toThrow();
   });
 });
