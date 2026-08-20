@@ -368,6 +368,54 @@ async function setStatus(serverId: string, status: ServerStatus): Promise<void> 
 
 // --- Environment variables ----------------------------------------------------
 
+/** One env var as its writer sees it: the value in the clear. */
+export interface EnvWrite {
+  key: string;
+  /** Plaintext. {@link writeEnvValues} encrypts it when `isSecret`. */
+  value: string;
+  isSecret: boolean;
+}
+
+/**
+ * Persist env vars: one statement, and encryption decided in one place.
+ *
+ * Both properties matter, and neither was true of the two loops this replaced.
+ *
+ * *One statement*, because provisioning writes a blueprint's whole env at once —
+ * a dozen or more variables — and a round trip each made that a visible part of
+ * how long creating a server took.
+ *
+ * *One place for encryption*, because the other writer (the owner's env form)
+ * did not encrypt. `loadEnvForContainer` decrypts every row flagged
+ * `is_secret`, so a plaintext value written under that flag is not a cosmetic
+ * inconsistency: it throws on decrypt the next time the container is built.
+ * `VELOCITY_FORWARDING_SECRET` is both `editable` and `secret`, so editing it
+ * was enough to leave a server that could no longer be rebuilt. Callers hand
+ * over plaintext and say whether it is secret; this decides what is stored.
+ */
+export async function writeEnvValues(
+  serverId: string,
+  entries: EnvWrite[],
+): Promise<void> {
+  if (entries.length === 0) return;
+
+  const keys = entries.map((e) => e.key);
+  const values = entries.map((e) => (e.isSecret ? encryptSecret(e.value) : e.value));
+  const secretFlags = entries.map((e) => e.isSecret);
+
+  await sql`
+    INSERT INTO server_env (server_id, key, value, is_secret)
+    SELECT ${serverId}, k, v, s
+    FROM UNNEST(
+      ${sql.array(keys)}::text[],
+      ${sql.array(values)}::text[],
+      ${sql.array(secretFlags)}::boolean[]
+    ) AS t(k, v, s)
+    ON CONFLICT (server_id, key) DO UPDATE SET
+      value = EXCLUDED.value, is_secret = EXCLUDED.is_secret
+  `;
+}
+
 /** Persist resolved env vars, encrypting the ones the preset marks secret. */
 async function storeEnv(
   serverId: string,
@@ -376,17 +424,14 @@ async function storeEnv(
 ): Promise<void> {
   const secrets = new Set(secretKeys);
 
-  for (const [key, value] of Object.entries(values)) {
-    const isSecret = secrets.has(key);
-    const stored = isSecret ? encryptSecret(value) : value;
-
-    await sql`
-      INSERT INTO server_env (server_id, key, value, is_secret)
-      VALUES (${serverId}, ${key}, ${stored}, ${isSecret})
-      ON CONFLICT (server_id, key) DO UPDATE SET
-        value = EXCLUDED.value, is_secret = EXCLUDED.is_secret
-    `;
-  }
+  await writeEnvValues(
+    serverId,
+    Object.entries(values).map(([key, value]) => ({
+      key,
+      value,
+      isSecret: secrets.has(key),
+    })),
+  );
 }
 
 /** Load env vars for display, masking secret values. */

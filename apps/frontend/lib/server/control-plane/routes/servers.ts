@@ -66,6 +66,8 @@ import {
   readInstallLog,
   reinstallServer,
   waitForProvisioning,
+  writeEnvValues,
+  type EnvWrite,
 } from "../services/serverManager";
 import {
   createServerLink,
@@ -452,7 +454,11 @@ export async function handleUpdateServerEnv(
 
   const blueprint = await getServerBlueprint(id);
 
-  const applied: string[] = [];
+  // Validate every key *before* writing any of them. Interleaving the two meant
+  // a request rejected on its third variable had already committed the first
+  // two — the owner got an error and a half-applied form. Nothing is written
+  // until the whole submission is known to be good.
+  const writes: EnvWrite[] = [];
   for (const [key, value] of Object.entries(updates as Record<string, unknown>)) {
     const field = blueprint.envSchema[key];
     if (!field) {
@@ -468,13 +474,14 @@ export async function handleUpdateServerEnv(
       throw badRequest(`"${key}" must be one of: ${field.options.join(", ")}`);
     }
 
-    await sql`
-      INSERT INTO server_env (server_id, key, value, is_secret)
-      VALUES (${id}, ${key}, ${value}, ${field.secret === true})
-      ON CONFLICT (server_id, key) DO UPDATE SET value = EXCLUDED.value
-    `;
-    applied.push(key);
+    writes.push({ key, value, isSecret: field.secret === true });
   }
+
+  // Plaintext in, storage decided by `writeEnvValues` — including encrypting the
+  // secret ones, which this handler used to skip. See its comment for why that
+  // mattered.
+  await writeEnvValues(id, writes);
+  const applied = writes.map((write) => write.key);
 
   await recordAuditFromRequest(request, {
     userId: user.id,
