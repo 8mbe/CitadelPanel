@@ -67,6 +67,9 @@ import { cn } from "@/lib/utils";
 /** How often to poll while a run is in flight. */
 const POLL_MS = 2000;
 
+/** How long to wait after a keystroke before asking the server to parse a cron. */
+const PREVIEW_DEBOUNCE_MS = 400;
+
 const PHASE_LABELS: Record<string, string> = {
   starting: "Starting",
   preparing_repository: "Preparing the S3 repository",
@@ -141,9 +144,14 @@ function DatabaseScheduleCard({
 
   // Computed server-side so it uses the panel's timezone and the same parser the
   // scheduler does — a schedule can never preview one thing and then do another.
-  // Debounced so typing does not fire a request per keystroke.
+  // Debounced so typing does not fire a request per keystroke, but not on first
+  // render: the stored schedule needs no debouncing, and waiting for one left
+  // the card blank for the delay every time the page opened.
+  const previewedOnce = React.useRef(false);
   React.useEffect(() => {
     let cancelled = false;
+    const delay = previewedOnce.current ? PREVIEW_DEBOUNCE_MS : 0;
+    previewedOnce.current = true;
     const timer = setTimeout(async () => {
       try {
         const result = await previewBackupSchedule(cron);
@@ -157,7 +165,7 @@ function DatabaseScheduleCard({
           setPreviewError(err instanceof ApiError ? err.message : "Invalid schedule.");
         }
       }
-    }, 400);
+    }, delay);
 
     return () => {
       cancelled = true;

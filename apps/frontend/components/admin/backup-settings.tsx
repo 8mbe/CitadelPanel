@@ -44,6 +44,9 @@ import { Switch } from "@/components/ui/switch";
 import { CRON_PRESETS } from "@/lib/cron";
 import { formatBytes } from "@/lib/format";
 
+/** How long to wait after a keystroke before asking the server to parse a cron. */
+const PREVIEW_DEBOUNCE_MS = 400;
+
 /**
  * Admin backup settings.
  *
@@ -389,9 +392,15 @@ function ScheduleCard({
 
   // The preview is computed server-side so it uses the panel's timezone and the
   // same parser the scheduler does — a schedule can never preview one thing and
-  // then do another. Debounced so typing does not fire a request per keystroke.
+  // then do another. Debounced so typing does not fire a request per keystroke —
+  // but not on the way in: there is nothing to debounce when the value is the
+  // stored schedule, and waiting made the card sit empty for the delay on every
+  // page load.
+  const previewedOnce = React.useRef(false);
   React.useEffect(() => {
     let cancelled = false;
+    const delay = previewedOnce.current ? PREVIEW_DEBOUNCE_MS : 0;
+    previewedOnce.current = true;
     const timer = setTimeout(async () => {
       try {
         const result = await previewBackupSchedule(cron);
@@ -405,7 +414,7 @@ function ScheduleCard({
           setPreviewError(err instanceof ApiError ? err.message : "Invalid schedule.");
         }
       }
-    }, 400);
+    }, delay);
 
     return () => {
       cancelled = true;

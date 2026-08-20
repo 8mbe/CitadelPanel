@@ -101,6 +101,58 @@ export async function handleListNodes(request: Request): Promise<Response> {
  * Sampling uses a short timeout so a dead node cannot hang the page; the
  * servers/ports/abuse data still renders without the agent being reachable.
  */
+/**
+ * Email per owner id, in one query.
+ *
+ * Matches the batched lookup the fleet-wide server list uses
+ * (`handleListAdminServers`); the two must not drift back apart, because the
+ * per-id version of this is what made the node page slow.
+ */
+async function loadOwnerEmails(
+  ownerIds: string[],
+): Promise<Map<string, string>> {
+  const byId = new Map<string, string>();
+  if (ownerIds.length === 0) return byId;
+
+  const rows = (await sql`
+    SELECT id, email FROM "user" WHERE id = ANY(${sql.array(ownerIds)})
+  `) as { id: string; email: string }[];
+  for (const row of rows) byId.set(row.id, row.email);
+  return byId;
+}
+
+/**
+ * One usage sample per server, from one request to the node's agent.
+ *
+ * A node that cannot be reached reports null usage for its servers rather than
+ * failing the page — the servers, ports and abuse data are all still real.
+ */
+async function sampleNodeUsage(
+  nodeId: string,
+  serverIds: string[],
+): Promise<
+  Map<string, { cpuPercent: number; memoryUsageMb: number; diskUsageMb: number }>
+> {
+  const byServer = new Map<
+    string,
+    { cpuPercent: number; memoryUsageMb: number; diskUsageMb: number }
+  >();
+  if (serverIds.length === 0) return byServer;
+
+  try {
+    for (const sample of await sampleNodeServers(nodeId, serverIds, 10_000)) {
+      byServer.set(sample.serverId, {
+        cpuPercent: sample.cpuPercent,
+        memoryUsageMb: sample.memoryUsageMb,
+        diskUsageMb: sample.diskUsageMb,
+      });
+    }
+  } catch {
+    // Node unreachable — its servers report null usage.
+  }
+  return byServer;
+}
+
 export async function handleGetNode(
   request: Request,
   nodeId: string,
@@ -108,50 +160,28 @@ export async function handleGetNode(
   await requireAdmin(request);
   const id = requireUuidParam(nodeId, "nodeId");
 
-  const node = await getNode(id);
-  if (!node) throw notFound("Node not found");
-
-  const [allocation, servers, abuse, portPool] = await Promise.all([
+  // Everything the detail page needs, in one wave. `getNode` joins it rather
+  // than gating it: the other five reads are keyed by node id and return empty
+  // for an id that does not exist, so the 404 below is just as correct after
+  // them as before — and this page no longer waits for the row before starting.
+  const [node, allocation, servers, abuse, portPool] = await Promise.all([
+    getNode(id),
     loadNodeCapacity(id),
     listServersForNode(id),
     getNodeAbuseSummary(id),
     listNodePortPool(id),
   ]);
+  if (!node) throw notFound("Node not found");
 
-  // Owner emails: mirror handleListAdminServers's lookup-per-owner pattern.
+  // Owner emails and the usage sample both depend on `servers` but not on each
+  // other, so they go together. The owner lookup is one query for every owner —
+  // it used to be one query *per* owner, which made this page's cost scale with
+  // how many different people had servers on the node.
   const ownerIds = [...new Set(servers.map((server) => server.ownerId))];
-  const ownersById = new Map<string, string>();
-  for (const ownerId of ownerIds) {
-    const rows = (await sql`
-      SELECT id, email FROM "user" WHERE id = ${ownerId}
-    `) as { id: string; email: string }[];
-    if (rows[0]) ownersById.set(rows[0].id, rows[0].email);
-  }
-
-  // One sample request to the node's agent, regardless of how many servers.
-  // A node that does not answer just reports null usage per server.
-  const usageByServer = new Map<
-    string,
-    { cpuPercent: number; memoryUsageMb: number; diskUsageMb: number }
-  >();
-
-  if (servers.length > 0) {
-    try {
-      for (const sample of await sampleNodeServers(
-        id,
-        servers.map((server) => server.id),
-        10_000,
-      )) {
-        usageByServer.set(sample.serverId, {
-          cpuPercent: sample.cpuPercent,
-          memoryUsageMb: sample.memoryUsageMb,
-          diskUsageMb: sample.diskUsageMb,
-        });
-      }
-    } catch {
-      // Node unreachable — its servers report null usage below.
-    }
-  }
+  const [ownersById, usageByServer] = await Promise.all([
+    loadOwnerEmails(ownerIds),
+    sampleNodeUsage(id, servers.map((server) => server.id)),
+  ]);
 
   const enriched = servers.map((server) => {
     const usage = usageByServer.get(server.id);

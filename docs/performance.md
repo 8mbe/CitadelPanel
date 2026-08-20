@@ -96,25 +96,50 @@ fleet list groups servers by node so each node's agent is asked exactly once
 loop is the failure mode this codebase keeps rediscovering — see the history of
 `summariesFromRows`.
 
+Batching also means one statement per *write* of a set. `writeEnvValues` upserts
+a whole env block through one `UNNEST`, because provisioning writes a
+blueprint's entire environment at once. It is also the single place that decides
+whether a value is encrypted — the owner's env form used to write secret-flagged
+values in the clear, which `loadEnvForContainer` then failed to decrypt on the
+next container build.
+
 ### Cache what is read constantly and written almost never
 
-Two caches exist purely to keep a query off the hot path. Both are correct
-because **every write path invalidates them explicitly**; the TTL is a backstop
-for a second panel process, not the mechanism.
+Three caches exist purely to keep a query off the hot path. All are correct
+because **every write path invalidates them explicitly**; the TTL is a backstop,
+not the mechanism.
 
 | Cache | Where | Invalidated by |
 | --- | --- | --- |
 | The whole `blueprints` table | `blueprints/registry.ts` | `invalidateBlueprintCache()` — called by the boot sync and by every write in `services/blueprintManager.ts` |
 | A node's decrypted credentials | `nodes/nodeRegistry.ts` | `invalidateNode()`, reached through `invalidateNodeConnection()` in `nodes/nodeApi.ts`, which the node update and delete routes call |
+| Resolved sessions | `auth/sessionCache.ts` | `invalidateSessionCache()`, from Better Auth's after-hook on every action that revokes a session |
 
 The node cache matters more than it looks: `getNodeWithSecrets` sat in front of
 *every* agent call — console attach, status reconcile, stats poll, file listing
 — so a page that touched its node four times paid for four reads and four AES
 decrypts of a row an admin last edited months ago.
 
+The session cache exists because of a gap that is easy to miss. Better Auth's
+cookie cache is meant to make `getSession` free, and it is — for five minutes.
+But the panel calls `auth.api.getSession({ headers })` and **discards the
+response**, so the `Set-Cookie` that would re-establish the cache never reaches
+the browser; only the sign-in response ever writes it. Every session older than
+its cookie cache — which is every session in real use — therefore paid two extra
+database round trips on *every* request, permanently. That was ~127 ms per
+request here.
+
+What makes caching sessions acceptable rather than reckless is that the parts
+that must not go stale are not cached: `authorizeSession` re-reads `banned` and
+`role` from the database on every single request, which is the same compensation
+the cookie cache already depends on. Revocation is immediate rather than
+TTL-bounded — signing out changes the cookie, so the key changes, and any
+server-side revocation clears the cache through the after-hook.
+
 **If you add a write to `blueprints` or `nodes`, invalidate.** A stale blueprint
 is a server built from the wrong image; a stale node is calls sent to an old
-address with an old token.
+address with an old token. **If you add an auth action that ends a session, add
+its path to `SESSION_REVOKING_PATHS`.**
 
 ### Resolve permission alongside the read, not before it
 
@@ -128,6 +153,30 @@ and the row is never surfaced — but the endpoint waits once instead of twice.
 That is worth doing where an endpoint is polled for as long as a page is open;
 it is not worth doing anywhere else.
 
+## Rule 3: a page is as slow as its deepest chain of fetches
+
+Endpoint latency is only half of it. A page that fetches A, waits, then fetches
+B pays both — and the browser is where that shows up, not the server log.
+
+The pattern to watch for is a component that renders a skeleton until its own
+fetch resolves, with the things that need *other* data as its children: those
+children cannot start until it finishes, even when their data is entirely
+independent. `/admin/backups` was four levels deep this way; the cards each take
+`settings` as a prop, so the storage read and the database list could not begin
+until the settings read came back.
+
+Two cheap habits keep this down:
+
+- **Do not debounce the first run.** The schedule cards waited 400 ms before
+  their first preview, which is a debounce for keystrokes being charged to a page
+  load where nothing had been typed. Delay changes, not the initial value.
+- **Measure in a browser, not with curl.** Load the page with CDP and count
+  `Network.requestWillBeSent`. Two cautions, both of which produced wrong
+  readings while this was written: React StrictMode double-fires effects in dev,
+  so every request appears twice and neither is a bug; and a page left open from
+  a previous measurement keeps polling, so close every existing target and let
+  the old page go quiet before counting.
+
 ## What this does not fix
 
 None of the above changes the cost of a single round trip. If the panel's
@@ -135,6 +184,21 @@ None of the above changes the cost of a single round trip. If the panel's
 query still pays that latency and the endpoints will be slow in proportion.
 Co-locating Postgres with the panel is worth more than any further query
 shaving.
+
+Known and not yet addressed:
+
+- **The server page's two-wave load.** `(panel)/servers/[id]/layout.tsx` is a
+  client component that gates its sections on `GET /api/servers/:id`, so every
+  section's own fetch starts only after that returns — about 300 ms of avoidable
+  serial wait. The fix is the one the panel layout already uses for the session:
+  resolve the record in a server component and seed the provider with it.
+- **`/admin/backups`.** Still two waves, because every card needs `settings`.
+- **Banning a user** suspends their servers one at a time, and each suspend stops
+  a container with a grace period. For an owner with many servers that request
+  can run for minutes.
+- **`GET /api/servers/:id/backups/snapshots`** is ~800 ms, nearly all of it the
+  agent starting a throwaway restic container and reaching S3. Not a panel
+  problem, but it is the slowest read in the product.
 
 ## Related
 
