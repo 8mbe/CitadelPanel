@@ -60,6 +60,9 @@ Follow the existing visual language exactly. Match the surrounding code — do n
 Existing docs:
 
 - `docs/first-time-setup.md` — the setup wizard and setup-gate latch.
+- `docs/docker.md` — the two images and the two compose files: which third of
+  `bun run setup` runs where (host, container boot, browser), why the build
+  context is the repo root, and why `/var/lib/citadel` is bind-mounted whole.
 - `docs/direct-console.md` — browser → agent WebSocket console, capability-token
   auth.
 - `docs/sftp.md` — per-(user,server) SFTP credentials, panel-callback auth.
