@@ -28,15 +28,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  UserCombobox,
-  toUserOption,
-  type UserOption,
-} from "@/components/admin/user-combobox";
+import { UserCombobox, type UserOption } from "@/components/admin/user-combobox";
 import {
   adminCreateServer,
   adminListNodes,
-  adminListUsers,
   ApiError,
   listBlueprints,
 } from "@/lib/api";
@@ -47,7 +42,9 @@ import type { BlueprintView, NodeView } from "@/lib/types";
  * Admin-only provisioning dialog. Ordinary users never see this control — a
  * fresh account simply has no servers until an admin creates one for it.
  *
- * Owners and game blueprints are loaded from the backend when the dialog opens.
+ * Game blueprints and nodes are loaded from the backend when the dialog opens;
+ * the owner starts empty and is searched for by name or email, so no account is
+ * ever provisioned against by accident.
  * On success it calls `onCreated` so the parent reloads its list.
  */
 export function CreateServerDialog({
@@ -56,7 +53,6 @@ export function CreateServerDialog({
   onCreated: () => void | Promise<void>;
 }) {
   const [open, setOpen] = React.useState(false);
-  const [initialUsers, setInitialUsers] = React.useState<UserOption[]>([]);
   const [blueprints, setBlueprints] = React.useState<BlueprintView[]>([]);
   const [nodes, setNodes] = React.useState<NodeView[]>([]);
   const [owner, setOwner] = React.useState<UserOption | null>(null);
@@ -78,18 +74,13 @@ export function CreateServerDialog({
     let cancelled = false;
     (async () => {
       try {
-        const [users, blueprintList, nodeList] = await Promise.all([
-          adminListUsers(),
+        const [blueprintList, nodeList] = await Promise.all([
           listBlueprints(),
           adminListNodes(),
         ]);
         if (cancelled) return;
-        setInitialUsers(users.map(toUserOption));
         setBlueprints(blueprintList);
         setNodes(nodeList.map((entry) => entry.node));
-        // Default the owner to the first non-admin, else the first account.
-        const defaultUser = users.find((u) => u.role === "user") ?? users[0];
-        setOwner((current) => current ?? (defaultUser ? toUserOption(defaultUser) : null));
         setBlueprintKey((current) => current || blueprintList[0]?.key || "");
       } catch (err) {
         if (!cancelled) {
@@ -149,6 +140,7 @@ export function CreateServerDialog({
       });
       setOpen(false);
       setName("");
+      setOwner(null);
       await onCreated();
     } catch (err) {
       setError(
@@ -181,14 +173,9 @@ export function CreateServerDialog({
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="cs-owner">Owner</FieldLabel>
-              <UserCombobox
-                id="cs-owner"
-                value={owner}
-                onChange={setOwner}
-                initialUsers={initialUsers}
-              />
+              <UserCombobox id="cs-owner" value={owner} onChange={setOwner} />
               <FieldDescription>
-                The user who will own and manage this server.
+                Search for the user who will own and manage this server.
               </FieldDescription>
             </Field>
             <Field>

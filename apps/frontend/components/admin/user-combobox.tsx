@@ -27,6 +27,9 @@ export function toUserOption(user: ApiUser): UserOption {
 /**
  * Owner picker that searches the user directory server-side as you type.
  *
+ * It starts empty — nothing is pre-selected, so an admin has to name the owner
+ * rather than accept whichever account happened to sort first.
+ *
  * A plain <Select> of every account does not survive scale; this queries
  * `adminListUsers(q)` (debounced) and lets Base UI's combobox handle keyboard
  * and a11y. `filter={null}` disables client-side filtering because the server
@@ -36,17 +39,15 @@ export function UserCombobox({
   id,
   value,
   onChange,
-  initialUsers = [],
   placeholder = "Search users by name or email…",
 }: {
   id?: string;
   value: UserOption | null;
   onChange: (user: UserOption | null) => void;
-  initialUsers?: UserOption[];
   placeholder?: string;
 }) {
   const [query, setQuery] = React.useState("");
-  const [items, setItems] = React.useState<UserOption[]>(initialUsers);
+  const [items, setItems] = React.useState<UserOption[]>([]);
   const [loading, setLoading] = React.useState(false);
 
   React.useEffect(() => {
