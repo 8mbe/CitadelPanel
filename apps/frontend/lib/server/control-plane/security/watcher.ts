@@ -156,8 +156,23 @@ async function loadWatchableServers(): Promise<RunningServerRow[]> {
   `) as RunningServerRow[];
 }
 
-async function resolveResourceProfile(blueprintId: string): Promise<ResourceProfile> {
-  return getResourceProfileById(blueprintId);
+/**
+ * Resolve every distinct blueprint's profile once, before scoring.
+ *
+ * Each server's scoring needs its blueprint's expected resource profile, and
+ * awaiting that inside the sample loop re-read the same handful of blueprints
+ * once per server on every sweep — a map lookup each time, but one awaited
+ * promise per server regardless. One entry per distinct blueprint turns the
+ * per-server cost back into what it looks like: a synchronous read.
+ */
+async function resolveResourceProfiles(
+  servers: RunningServerRow[],
+): Promise<Map<string, ResourceProfile>> {
+  const profiles = new Map<string, ResourceProfile>();
+  for (const blueprintId of new Set(servers.map((server) => server.blueprint_id))) {
+    profiles.set(blueprintId, await getResourceProfileById(blueprintId));
+  }
+  return profiles;
 }
 
 export interface SweepResult {
@@ -169,10 +184,104 @@ export interface SweepResult {
 }
 
 /**
+ * Sample and score every server on one node.
+ *
+ * Extracted from the sweep's serial loop so nodes can run concurrently: each
+ * node's agent is an independent machine, and waiting for one slow (or dead,
+ * up to its timeout) node before even asking the next stretched a sweep by the
+ * *sum* of node latencies. Errors are still contained here — an unreachable
+ * node logs and returns, and a server whose scoring throws costs only itself.
+ */
+async function sampleAndScoreNode(
+  node: Awaited<ReturnType<typeof listActiveNodesWithSecrets>>[number],
+  nodeServers: RunningServerRow[],
+  profilesByBlueprintId: Map<string, ResourceProfile>,
+  result: SweepResult,
+): Promise<void> {
+  // One request per node, not per container: sweep cost must not scale with
+  // fleet size, or a large node would stretch a sweep past its own interval.
+  let samples;
+  try {
+    samples = await sampleNodeServers(
+      node.id,
+      nodeServers.map((server) => server.id),
+    );
+    result.nodesScanned += 1;
+  } catch (error) {
+    result.nodesUnreachable += 1;
+    console.error(`[watcher] cannot reach agent on node ${node.name}:`, error);
+    return;
+  }
+
+  const serverById = new Map(nodeServers.map((server) => [server.id, server]));
+
+  for (const stats of samples) {
+    const server = serverById.get(stats.serverId);
+    // A sample for a server we did not ask about should be impossible; skip
+    // rather than trust it.
+    if (!server) continue;
+
+    try {
+      result.containersSampled += 1;
+
+      const observation = getOrCreateObservation(server.id, server.container_id);
+      applySample(observation, stats);
+
+      const resourceProfile =
+        profilesByBlueprintId.get(server.blueprint_id) ?? "bursty";
+      const scored = scoreObservation(toObservationWindow(observation), {
+        resourceProfile,
+      });
+
+      if (!shouldFlag(scored.totalScore, env.security.flagThreshold)) continue;
+
+      const flagged = await recordFlag({
+        serverId: server.id,
+        reason: scored.summary,
+        score: scored.totalScore,
+        signals: scored.signals,
+        observation: {
+          nodeId: node.id,
+          nodeName: node.name,
+          containerId: server.container_id,
+          cpuPercent: stats.cpuPercent,
+          memoryUsageMb: stats.memoryUsageMb,
+        },
+      });
+
+      if (flagged) result.serversFlagged += 1;
+
+      // Opt-in emergency action, off by default (plan.md 9.2).
+      if (
+        env.security.autoSuspendEnabled &&
+        shouldAutoSuspend(scored, env.security.autoSuspendThreshold)
+      ) {
+        await suspendServer(
+          server.id,
+          null,
+          `Automatic suspension: score ${scored.totalScore} — ${scored.summary}`,
+        );
+        result.serversAutoSuspended += 1;
+      }
+    } catch (error) {
+      console.error(`[watcher] error scoring server ${server.id}:`, error);
+    }
+  }
+}
+
+/**
+ * How many nodes one sweep samples at once. Small on purpose: each in-flight
+ * request holds a full stats batch on the agent, so this bounds the burst any
+ * one sweep puts on the fleet's agents without serialising the whole pass.
+ */
+const MAX_NODE_CONCURRENCY = 4;
+
+/**
  * Run one full detection pass across every active node.
  *
- * Errors are contained per node and per container: one bad node must not stop
- * the sweep, because that would be an easy way to blind the whole watcher.
+ * Nodes are sampled concurrently, up to {@link MAX_NODE_CONCURRENCY} at a
+ * time. Errors are contained per node and per container: one bad node must not
+ * stop the sweep, because that would be an easy way to blind the whole watcher.
  */
 export async function runSweep(): Promise<SweepResult> {
   const result: SweepResult = {
@@ -187,6 +296,9 @@ export async function runSweep(): Promise<SweepResult> {
     listActiveNodesWithSecrets(),
     loadWatchableServers(),
   ]);
+  // One profile per distinct blueprint, resolved before scoring so the sample
+  // loop never awaits a lookup. Reads from the blueprint cache: effectively free.
+  const profiles = await resolveResourceProfiles(servers);
 
   // Group by node so each node's client is built once per sweep.
   const serversByNode = new Map<string, RunningServerRow[]>();
@@ -196,78 +308,21 @@ export async function runSweep(): Promise<SweepResult> {
     serversByNode.set(server.node_id, list);
   }
 
-  for (const node of nodes) {
-    const nodeServers = serversByNode.get(node.id) ?? [];
-    if (nodeServers.length === 0) continue;
+  const work = nodes
+    .map((node) => ({ node, nodeServers: serversByNode.get(node.id) ?? [] }))
+    .filter(({ nodeServers }) => nodeServers.length > 0);
 
-    // One request per node, not per container: sweep cost must not scale with
-    // fleet size, or a large node would stretch a sweep past its own interval.
-    let samples;
-    try {
-      samples = await sampleNodeServers(
-        node.id,
-        nodeServers.map((server) => server.id),
-      );
-      result.nodesScanned += 1;
-    } catch (error) {
-      result.nodesUnreachable += 1;
-      console.error(`[watcher] cannot reach agent on node ${node.name}:`, error);
-      continue;
-    }
-
-    const serverById = new Map(nodeServers.map((server) => [server.id, server]));
-
-    for (const stats of samples) {
-      const server = serverById.get(stats.serverId);
-      // A sample for a server we did not ask about should be impossible; skip
-      // rather than trust it.
-      if (!server) continue;
-
-      try {
-        result.containersSampled += 1;
-
-        const observation = getOrCreateObservation(server.id, server.container_id);
-        applySample(observation, stats);
-
-        const scored = scoreObservation(toObservationWindow(observation), {
-          resourceProfile: await resolveResourceProfile(server.blueprint_id),
-        });
-
-        if (!shouldFlag(scored.totalScore, env.security.flagThreshold)) continue;
-
-        const flagged = await recordFlag({
-          serverId: server.id,
-          reason: scored.summary,
-          score: scored.totalScore,
-          signals: scored.signals,
-          observation: {
-            nodeId: node.id,
-            nodeName: node.name,
-            containerId: server.container_id,
-            cpuPercent: stats.cpuPercent,
-            memoryUsageMb: stats.memoryUsageMb,
-          },
-        });
-
-        if (flagged) result.serversFlagged += 1;
-
-        // Opt-in emergency action, off by default (plan.md 9.2).
-        if (
-          env.security.autoSuspendEnabled &&
-          shouldAutoSuspend(scored, env.security.autoSuspendThreshold)
-        ) {
-          await suspendServer(
-            server.id,
-            null,
-            `Automatic suspension: score ${scored.totalScore} — ${scored.summary}`,
-          );
-          result.serversAutoSuspended += 1;
-        }
-      } catch (error) {
-        console.error(`[watcher] error scoring server ${server.id}:`, error);
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(MAX_NODE_CONCURRENCY, work.length) },
+    async () => {
+      while (next < work.length) {
+        const job = work[next++];
+        await sampleAndScoreNode(job.node, job.nodeServers, profiles, result);
       }
-    }
-  }
+    },
+  );
+  await Promise.all(workers);
 
   // Drop state for servers that no longer exist, so the map cannot grow forever.
   const liveIds = new Set(servers.map((server) => server.id));
