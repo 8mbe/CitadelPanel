@@ -45,18 +45,6 @@ export function sectionFromPathname(pathname: string): ServerSectionKey {
 }
 
 /**
- * Whether a section renders the live CPU/memory/disk cards.
- *
- * The sample behind those cards is a real request to the node on every poll, so
- * it is fetched for the sections that show it and no others. Keep this in step
- * with wherever `ResourceStats` is rendered — the provider's poll is gated the
- * same way, at runtime, by `useLiveResourceStats`.
- */
-export function sectionShowsResourceStats(section: ServerSectionKey): boolean {
-  return section === "console";
-}
-
-/**
  * The section switcher for a server page. Horizontal underline tabs that
  * scroll sideways on narrow screens; one route per section so each has its own
  * URL.

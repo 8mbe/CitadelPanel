@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-import { getServer, getServerStats, type ServerStats } from "@/lib/api";
+import { getServer, getServerStats } from "@/lib/api";
 import { isProvisioning } from "@/lib/server-status";
 import type { ServerStatus, ServerView } from "@/lib/types";
 
@@ -32,39 +32,13 @@ const ServerDataContext = React.createContext<ServerDataValue | null>(null);
 
 export function ServerDataProvider({
   initial,
-  initialStats,
   children,
 }: {
   initial: ServerView;
-  /**
-   * A resource sample the layout fetched *alongside* the server record, so the
-   * first paint already shows CPU/memory/disk instead of zeroes waiting on the
-   * provider's own first poll. When present, the provider skips its immediate
-   * on-mount sample (the interval below still keeps them live) — the two fetches
-   * ran in parallel, so re-firing one here would just duplicate a request.
-   *
-   * Null when the section being opened does not show the sample, in which case
-   * there is nothing to seed and nothing polling it either.
-   */
-  initialStats?: ServerStats | null;
   children: React.ReactNode;
 }) {
-  const [server, setServer] = React.useState<ServerView>(() =>
-    initialStats
-      ? {
-          ...initial,
-          cpuPercent: Math.round(initialStats.cpuPercent),
-          memoryUsedMb: Math.round(initialStats.memoryUsageMb),
-          diskUsedMb: Math.round(initialStats.diskUsageMb),
-        }
-      : initial,
-  );
+  const [server, setServer] = React.useState<ServerView>(initial);
   const [status, setStatus] = React.useState<ServerStatus>(initial.status);
-
-  // True only until the first stats effect runs: it lets that first run skip the
-  // immediate sample when the layout already handed us one. A ref (not state) so
-  // flipping it never triggers a re-render.
-  const skipFirstImmediateSample = React.useRef(initialStats != null);
 
   const refresh = React.useCallback(async () => {
     const fresh = await getServer(initial.id);
@@ -162,14 +136,10 @@ export function ServerDataProvider({
       }
     };
 
-    // Skip the immediate sample only on the very first run, and only when the
-    // layout already seeded one. Any later run (a status change flipping the
-    // cadence) still samples right away so the cards react without a poll delay.
-    if (skipFirstImmediateSample.current) {
-      skipFirstImmediateSample.current = false;
-    } else {
-      void tick();
-    }
+    // Sample right away so the cards react without a poll delay, then keep the
+    // interval. Any later effect run (a status change flipping the cadence)
+    // samples immediately for the same reason.
+    void tick();
     const interval = setInterval(tick, pollIntervalMs);
     return () => {
       cancelled = true;
