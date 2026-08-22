@@ -429,6 +429,31 @@ export async function getServerStats(id: string): Promise<ServerStats | null> {
   return data.stats;
 }
 
+/**
+ * POST /api/servers/stats-batch — one live sample per named server.
+ *
+ * The dashboard polls this once per tick for all its tiles instead of once per
+ * server: the endpoint resolves access to every named id in one query and asks
+ * each node's agent exactly once, so a page of running servers costs one
+ * request per refresh rather than one per tile. Servers with no sample (not
+ * accessible, no container, or their node unreachable) are absent from the
+ * result.
+ */
+export async function getServersStatsBatch(
+  ids: string[],
+): Promise<Record<string, ServerStats>> {
+  if (ids.length === 0) return {};
+  const data = await request<{ stats: Record<string, ServerStats | null> }>(
+    "/api/servers/stats-batch",
+    { method: "POST", body: JSON.stringify({ ids }) },
+  );
+  const out: Record<string, ServerStats> = {};
+  for (const [id, stats] of Object.entries(data.stats)) {
+    if (stats) out[id] = stats;
+  }
+  return out;
+}
+
 /** GET /api/servers/:id/logs — recent console output as one string. */
 export async function getServerLogs(id: string, tail = 200): Promise<string> {
   const data = await request<{ logs: string }>(

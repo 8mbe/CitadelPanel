@@ -43,8 +43,10 @@ import {
 } from "../lib/http";
 import {
   accessAllowsOwnerOnly,
+  accessFromRow,
   isAdmin,
   resolveServerAccess,
+  type ServerAccessRow,
 } from "../auth/rbac";
 import { listBlueprints, getBlueprintByKey } from "../blueprints/registry";
 import { recordAuditFromRequest } from "../services/auditLog";
@@ -77,7 +79,12 @@ import {
 } from "../services/serverLinks";
 import { listAuditLogs } from "../services/auditLog";
 // (killServer kept at the end of the lifecycle-action group.)
-import { getServerLogs, getServerStats } from "../nodes/nodeServerApi";
+import {
+  getServerLogs,
+  getServerStats,
+  sampleNodeServers,
+  type ServerStatsSample,
+} from "../nodes/nodeServerApi";
 import { sql } from "../db/client";
 
 /** GET /api/blueprints — the blueprints a user can choose from. */
@@ -376,6 +383,88 @@ export async function handleGetServerStats(
 
   return json({ stats });
 }
+
+/**
+ * How many servers one batch stats request may name. The dashboard polls for
+ * every tile it is showing; anything larger is not a dashboard, it is a scan.
+ */
+const STATS_BATCH_LIMIT = 50;
+
+/**
+ * POST /api/servers/stats-batch — a live sample per named server.
+ *
+ * The dashboard's tiles poll every few seconds while any server is running,
+ * and the per-server endpoint costs one authenticated round trip each —
+ * an owner with ten servers paid ten requests per tick. This resolves the
+ * caller's access to every named server in ONE statement (the subuser grant
+ * LEFT JOINed on, same decision `resolveServerAccess` makes), groups the
+ * allowed ones by node so each node's agent is asked exactly once, and returns
+ * a map. Servers the caller cannot reach are simply absent — the same
+ * hide-existence rule the individual endpoint applies with its 404.
+ *
+ * Malformed ids are dropped rather than rejected: the client sends the ids it
+ * already has, and one stale id should not fail the whole refresh.
+ */
+export async function handleListServerStatsBatch(
+  request: Request,
+): Promise<Response> {
+  const user = await requireAuth(request);
+
+  const body = await parseJsonBody(request);
+  if (!Array.isArray(body.ids)) {
+    throw badRequest('"ids" must be an array of server ids.');
+  }
+  const ids = [
+    ...new Set(
+      body.ids.filter((id: unknown): id is string => typeof id === "string" && isUuid(id)),
+    ),
+  ];
+  if (ids.length === 0) return json({ stats: {} });
+  if (ids.length > STATS_BATCH_LIMIT) {
+    throw badRequest(`No more than ${STATS_BATCH_LIMIT} servers per request.`);
+  }
+
+  const rows = (await sql`
+    SELECT s.id, s.owner_id, s.node_id, s.container_id, su.permissions
+    FROM servers s
+    LEFT JOIN server_subusers su
+      ON su.server_id = s.id AND su.user_id = ${user.id}
+    WHERE s.id = ANY(${sql.array(ids)})
+  `) as (ServerAccessRow & { node_id: string; container_id: string | null })[];
+
+  // Group the servers this caller may see by node, so sampling stays at one
+  // agent request per node regardless of how many of their servers live there.
+  const serverIdsByNode = new Map<string, string[]>();
+  for (const row of rows) {
+    if (!accessFromRow(user, row)) continue;
+    const list = serverIdsByNode.get(row.node_id) ?? [];
+    list.push(row.id);
+    serverIdsByNode.set(row.node_id, list);
+  }
+
+  const samplesByServer = new Map<string, ServerStatsSample>();
+  await Promise.all(
+    [...serverIdsByNode].map(async ([nodeId, nodeServerIds]) => {
+      try {
+        for (const sample of await sampleNodeServers(nodeId, nodeServerIds, 10_000)) {
+          samplesByServer.set(sample.serverId, sample);
+        }
+      } catch {
+        // Node unreachable — its servers report no sample below, exactly as
+        // the per-server endpoint would fail one fetch for them.
+      }
+    }),
+  );
+
+  const stats: Record<string, ServerStatsSample | null> = {};
+  for (const row of rows) {
+    if (!accessFromRow(user, row)) continue;
+    stats[row.id] = samplesByServer.get(row.id) ?? null;
+  }
+
+  return json({ stats });
+}
+
 
 /**
  * Resolve the blueprint backing a server. Throws if the server or its blueprint

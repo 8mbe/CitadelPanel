@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/empty";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ApiError, getServerStats, listServers } from "@/lib/api";
+import { ApiError, getServersStatsBatch, listServers } from "@/lib/api";
 import { formatMbPair, formatUptime } from "@/lib/format";
 import type { ServerView } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -259,9 +259,9 @@ export function YourServers() {
 
   // Poll live resource samples for running servers so the tiles' CPU, memory,
   // and disk meters reflect current usage rather than the zeros the list
-  // endpoint seeds. One request per running server every 5s — the stats
-  // endpoint is per-server (no user-facing batch endpoint), and a typical user
-  // has a handful of servers. Stops re-arming once no servers are running.
+  // endpoint seeds. One batched request per tick regardless of how many servers
+  // are running: the endpoint resolves access to every id in one query and asks
+  // each node's agent exactly once. Stops re-arming once no servers are running.
   //
   // The effect depends on a stable signature of WHICH servers are running, not
   // the live `servers` array — otherwise each poll's state update would
@@ -278,34 +278,26 @@ export function YourServers() {
 
     let cancelled = false;
     const tick = async () => {
-      const results = await Promise.all(
-        ids.map(async (id) => {
-          try {
-            return [id, await getServerStats(id)] as const;
-          } catch {
-            return [id, null] as const;
-          }
-        }),
-      );
-      if (cancelled) return;
+      try {
+        const statsById = await getServersStatsBatch(ids);
+        if (cancelled || Object.keys(statsById).length === 0) return;
 
-      const byId = new Map(
-        results.filter(([, s]) => s !== null) as readonly (readonly [string, NonNullable<Awaited<ReturnType<typeof getServerStats>>>])[],
-      );
-      if (byId.size === 0) return;
-
-      setServers((prev) =>
-        prev.map((server) => {
-          const stats = byId.get(server.id);
-          if (!stats) return server;
-          return {
-            ...server,
-            cpuPercent: Math.round(stats.cpuPercent),
-            memoryUsedMb: Math.round(stats.memoryUsageMb),
-            diskUsedMb: Math.round(stats.diskUsageMb),
-          };
-        }),
-      );
+        setServers((prev) =>
+          prev.map((server) => {
+            const stats = statsById[server.id];
+            if (!stats) return server;
+            return {
+              ...server,
+              cpuPercent: Math.round(stats.cpuPercent),
+              memoryUsedMb: Math.round(stats.memoryUsageMb),
+              diskUsedMb: Math.round(stats.diskUsageMb),
+            };
+          }),
+        );
+      } catch {
+        // A dropped refresh is not worth surfacing — the next tick either
+        // succeeds or keeps failing quietly, as before.
+      }
     };
 
     void tick();
