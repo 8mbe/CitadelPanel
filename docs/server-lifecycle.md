@@ -288,6 +288,58 @@ The stale pointer is also cleared at the source: `recreateServerContainer` sets
 that fails halfway does not leave the row naming a container that no longer
 exists.
 
+## Deleting: the node has to confirm it
+
+`deleteServer` writes `deleting`, detaches the server's links, asks the node to
+remove the container (and, only when asked, the data directory), drops the
+server's provisioned databases, and then deletes the row — cascading away its
+ports, env, subusers and database records.
+
+The step that used to be best-effort is the node's. An unreachable node was
+logged and stepped over, and the row disappeared anyway. That is the orphan this
+module's write-the-record-first ordering exists to prevent, arrived at from the
+other end, and it is the worse half of the pair:
+
+- the container **keeps running** — a deleted server that still serves players
+  and still writes to a disk nobody is accounting for;
+- it still holds its published host ports, which the panel has just returned to
+  the node's pool and will hand to the next server that lands there
+  ([ports.md](ports.md));
+- and with the row gone, nothing in the panel can see any of it. Even the
+  server id needed to ask the agent about it is gone.
+
+So the node's confirmation is required. A failure aborts the delete: the status
+goes back to what it was, the row stays, and the 502 says what is still on the
+node and that a retry is the fix. Retrying costs nothing — the agent's delete
+treats a missing container, a missing network and a missing directory as already
+done, so a delete that failed halfway finishes on the second attempt.
+
+Two things are deliberately still best-effort:
+
+- **A row with no container** (`container_id IS NULL`, and no request to delete
+  data). There is nothing on that node that can run or hold a port, so a dead
+  node must not strand a failed provision as a row that cannot be deleted.
+  Asking to delete the data is *not* exempt: the directory can exist even when
+  the container never did.
+- **The database drops.** They run after the container call has already
+  succeeded, so a failure there is MariaDB's, not the node's, and what it leaves
+  behind is data at rest rather than a running container.
+
+### Forcing it, and the receipt
+
+A node that is never coming back — decommissioned hardware, a host that no
+longer exists — would otherwise leave rows that can never be deleted. `DELETE
+/api/servers/:id?force=true` is the way out, and it is **admin-only**: an owner
+deleting their own server does not get to decide to leave a running container on
+an operator's node. The UI does not offer it up front either; the checkbox
+appears in the admin delete dialog only after a delete has actually been
+refused.
+
+A forced delete records what it abandoned — the node id, the container id, any
+databases it could not drop — in the `server.delete` audit entry, and logs the
+same. Once the row is gone that entry is the only thing that knows what is still
+sitting on that node, and manual cleanup starts by reading it.
+
 ## Reinstalling: the rebuild that *is* destructive
 
 `reinstallServer` is the deliberate opposite of the section above. The healing
