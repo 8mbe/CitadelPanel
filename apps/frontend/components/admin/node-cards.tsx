@@ -54,9 +54,39 @@ import {
   adminProbeNodeConnection,
   adminTestNodeConnection,
   ApiError,
+  type NodeHealthResult,
 } from "@/lib/api";
 import { formatMb, formatRelative, nodeReachability } from "@/lib/format";
 import type { NodeAllocation, NodeView } from "@/lib/types";
+
+/**
+ * The one thing worth telling an admin about a *reachable* agent.
+ *
+ * A node can answer its health check and still be unable to host anything: no
+ * Docker socket, or no writable data root. Both used to be discovered as a
+ * failed server creation, so both are folded into one string the connection
+ * test can show — worst first, since an agent that cannot reach Docker will not
+ * get as far as needing the data root.
+ */
+function agentProblem(health: NodeHealthResult): string | undefined {
+  if (health.dockerSocket && !health.dockerSocket.reachable) {
+    return (
+      "This node's agent cannot reach Docker, so every container action will fail. " +
+      (health.dockerSocket.error ??
+        `The socket at ${health.dockerSocket.path} is unreachable.`)
+    );
+  }
+
+  if (health.dataRoot && !health.dataRoot.writable) {
+    return (
+      "This node cannot store server data yet, so provisioning will fail. " +
+      (health.dataRoot.error ??
+        `Its data root ${health.dataRoot.path} is not writable by the agent.`)
+    );
+  }
+
+  return undefined;
+}
 
 /**
  * Register-a-node dialog.
@@ -99,8 +129,8 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
         state: "ok";
         dockerVersion?: string;
         containersRunning?: number;
-        /** Set when the agent answered but cannot write its data root. */
-        dataRootError?: string;
+        /** Set when the agent answered but cannot actually host a server. */
+        nodeProblem?: string;
       }
     | { state: "unauthorized" }
     | { state: "error"; message: string }
@@ -145,13 +175,9 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
               dockerVersion: health.dockerVersion,
               containersRunning: health.containersRunning,
               // Caught here rather than at the first provision: a node whose
-              // data root the agent cannot write to answers health checks
-              // perfectly and then fails every server creation.
-              dataRootError:
-                health.dataRoot && !health.dataRoot.writable
-                  ? (health.dataRoot.error ??
-                    `Its data root ${health.dataRoot.path} is not writable by the agent.`)
-                  : undefined,
+              // Docker socket or data root the agent cannot use answers health
+              // checks perfectly and then fails every server creation.
+              nodeProblem: agentProblem(health),
             }
           : health.unauthorized
             ? { state: "unauthorized" }
@@ -479,18 +505,18 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                 <div
                   role="status"
                   className={
-                    probe.state === "ok" && !probe.dataRootError
+                    probe.state === "ok" && !probe.nodeProblem
                       ? "flex items-start gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm"
                       : probe.state === "unauthorized" ||
-                          (probe.state === "ok" && probe.dataRootError)
+                          (probe.state === "ok" && probe.nodeProblem)
                         ? "flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm"
                         : "flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
                   }
                 >
-                  {probe.state === "ok" && !probe.dataRootError ? (
+                  {probe.state === "ok" && !probe.nodeProblem ? (
                     <Check className="mt-0.5 size-4 shrink-0 text-emerald-500" />
                   ) : probe.state === "unauthorized" ||
-                    (probe.state === "ok" && probe.dataRootError) ? (
+                    (probe.state === "ok" && probe.nodeProblem) ? (
                     <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
                   ) : (
                     <TriangleAlert className="mt-0.5 size-4 shrink-0" />
@@ -514,11 +540,10 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                         {/* Amber, not red: the connection details are correct
                           and worth saving — it is the node that needs fixing
                           before it can host a server. */}
-                        {probe.dataRootError ? (
+                        {probe.nodeProblem ? (
                           <>
                             <br />
-                            This node cannot store server data yet, so
-                            provisioning will fail. {probe.dataRootError}
+                            {probe.nodeProblem}
                           </>
                         ) : null}
                       </>
@@ -634,8 +659,8 @@ export function NodeCard({
         reachable: true;
         dockerVersion?: string;
         containersRunning?: number;
-        /** Set only when the agent reports a data root it cannot write to. */
-        dataRootError?: string;
+        /** Set only when the agent reports something that stops it hosting. */
+        nodeProblem?: string;
       }
     | { reachable: false; error: string }
     | null
@@ -652,13 +677,10 @@ export function NodeCard({
               reachable: true,
               dockerVersion: health.dockerVersion,
               containersRunning: health.containersRunning,
-              // A writable data root is the difference between "connected" and
-              // "connected but every provision will fail".
-              dataRootError:
-                health.dataRoot && !health.dataRoot.writable
-                  ? (health.dataRoot.error ??
-                    `Its data root ${health.dataRoot.path} is not writable by the agent.`)
-                  : undefined,
+              // A usable Docker socket and a writable data root are the
+              // difference between "connected" and "connected but every
+              // provision will fail".
+              nodeProblem: agentProblem(health),
             }
           : { reachable: false, error: health.error ?? "No response from agent." },
       );
@@ -799,12 +821,12 @@ export function NodeCard({
           <div
             role="status"
             className={
-              result.reachable && !result.dataRootError
+              result.reachable && !result.nodeProblem
                 ? "flex items-start gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-2.5 text-xs"
                 : "flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs text-destructive"
             }
           >
-            {result.reachable && !result.dataRootError ? (
+            {result.reachable && !result.nodeProblem ? (
               <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-500" />
             ) : (
               <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
@@ -823,15 +845,12 @@ export function NodeCard({
                       {result.containersRunning === 1 ? "" : "s"} running
                     </>
                   ) : null}
-                  {/* Reachable but unable to store data: say so here, because
-                    the next thing this admin does is provision a server. */}
-                  {result.dataRootError ? (
+                  {/* Reachable but unable to host: say so here, because the
+                    next thing this admin does is provision a server. */}
+                  {result.nodeProblem ? (
                     <>
                       <br />
-                      <span className="text-destructive">
-                        Cannot store server data — provisioning will fail.
-                      </span>{" "}
-                      {result.dataRootError}
+                      <span className="text-destructive">{result.nodeProblem}</span>
                     </>
                   ) : null}
                 </>

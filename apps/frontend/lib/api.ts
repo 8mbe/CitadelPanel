@@ -2064,6 +2064,12 @@ export interface NodeHealthResult {
    * Absent when the agent does not report it.
    */
   dataRoot?: NodeDataRootStatus;
+  /**
+   * Whether the agent can reach its Docker daemon. A reachable agent with an
+   * unusable socket answers this probe while failing every power action, so it
+   * is shown alongside reachability. Absent when the agent does not report it.
+   */
+  dockerSocket?: NodeDockerSocketStatus;
   /** Present when the agent was probed but did not answer successfully. */
   error?: string;
   /**
@@ -2077,6 +2083,13 @@ export interface NodeHealthResult {
 export interface NodeDataRootStatus {
   path: string;
   writable: boolean;
+  error?: string;
+}
+
+/** The agent's report on its own Docker socket, including how to fix it. */
+export interface NodeDockerSocketStatus {
+  path: string;
+  reachable: boolean;
   error?: string;
 }
 

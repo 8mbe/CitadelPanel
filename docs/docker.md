@@ -119,6 +119,59 @@ step on a node. Register it afterwards from `/admin/nodes` (or the wizard's
 last step), which is where the panel learns the address and stores the token
 encrypted.
 
+### Socket access, and why the agent reports it
+
+An agent that cannot open the socket is not a broken agent: it boots, serves
+HTTP, answers `/v1/health`, and fails every container operation. Left
+undiagnosed it surfaced as one dockerode stack trace per container per stats
+sweep —
+
+```
+[agent] failed to sample server <id>: connect EACCES /var/run/docker.sock
+```
+
+— which names the library, not the fix. So the socket is treated the way the
+data root is (see `dataRoot.ts` and [performance.md](performance.md) for the
+same posture applied elsewhere): probed at boot, probed again on every
+`/v1/health`, never cached, and reported as a *status* rather than thrown.
+
+- `docker/socket.ts` pings the daemon, and on failure reads the socket's inode
+  and the process's own credentials to decide which of three things it is:
+  permissions (`EACCES`/`EPERM`), no socket at all (`ENOENT` — Docker is not
+  installed, or `DOCKER_SOCKET` points elsewhere), or a stopped daemon
+  (`ECONNREFUSED`).
+- `/v1/health` answers `status: "degraded"` with a `dockerSocket` object instead
+  of 500-ing out of `docker.info()`. The panel shows that on the node's admin
+  page and in the connection test, and `assertNodeReadyToProvision` refuses to
+  place a server on such a node — the same pre-flight the data root gets.
+- The agent stays up either way. A process that exits on a bad socket reads to
+  the panel as "node unreachable", which sends the operator after a network
+  fault when the problem is a group membership on the host.
+
+The permission case has a trap worth stating, because it makes a correct fix
+look like it did not work: **supplementary groups are fixed when a process
+starts.** `sudo usermod -aG docker $USER` changes `/etc/group`, not the groups
+of anything already running — so an agent (or a shell, or a dev-server process
+tree) started before that command keeps the old group set no matter how many
+times the command is repeated. A *new login session* is what applies it:
+
+```bash
+sudo usermod -aG docker "$(id -un)"   # once, per host
+newgrp docker                          # or log out and back in
+# then start the agent from that session
+```
+
+For a running process that must not be restarted, an ACL grants access
+immediately and resets when the daemon restarts:
+
+```bash
+sudo setfacl -m u:"$(id -un)":rw /var/run/docker.sock
+```
+
+Containerised agents dodge all of this: the compose file bind-mounts the socket
+and the agent runs as root inside its own namespace, which is why the image does
+not try to guess the host's docker gid.
+
 ### `/var/lib/citadel` is bind-mounted whole
 
 Not just `servers/`. The agent puts three things in that tree, and all of them
