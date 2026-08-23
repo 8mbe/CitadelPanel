@@ -186,6 +186,10 @@ function CodeEditor({
     };
     applyTheme();
     const stopObservingTheme = observeTheme(applyTheme);
+    // One retry a frame later: this module is code-split, so on a cold load it
+    // can execute before the stylesheet carrying the tokens has been applied,
+    // and a theme built from an empty palette would otherwise stick.
+    const retry = requestAnimationFrame(applyTheme);
 
     // A short editor (the "New file" modal's box) has no room for the chrome a
     // full-height one wants; measured once at create time because the places
@@ -256,6 +260,7 @@ function CodeEditor({
     ];
 
     return () => {
+      cancelAnimationFrame(retry);
       for (const subscription of subscriptions) subscription.dispose();
       stopObservingTheme();
       editor.getModel()?.dispose();

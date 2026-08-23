@@ -22,56 +22,115 @@ export const THEME_NAME = "citadel";
 
 // ---------------------------------------------------------------------------
 // CSS color -> hex
+//
+// This is harder than it looks, and getting it wrong is what made the editor
+// render light in dark mode the first time round.
+//
+// The variables are authored as `oklch()`, but that is not what a browser hands
+// back: Next's CSS transformer rewrites them to `lab()` (behind an `@supports`,
+// with a hex line underneath as the fallback), and `getComputedStyle` returns
+// whichever line won — a modern-colour function, not `rgb()`. Monaco wants plain
+// hex. So something has to convert, and it cannot be a hand-written
+// oklch/lab→sRGB implementation: the value could be any syntax an operator's
+// site theme uses, and the browser already knows all of them.
+//
+// The trick is to make the browser normalise into sRGB and then serialise:
+// `color-mix(in srgb, X, X)` is X, computed in sRGB, which every engine
+// serialises as `color(srgb …)` or `rgb()`. Canvas `fillStyle` does the same job
+// in one step, but its colour parser is not the CSS one everywhere — Firefox
+// accepts `lab()`, some Chrome versions do not — so it is the second attempt
+// rather than the first.
 // ---------------------------------------------------------------------------
 
-// Sentinel written before every probe: assigning an unparseable color to
-// `fillStyle` is a silent no-op, so a value that comes back unchanged tells us
-// the browser rejected it.
+// Written before every probe: an unparseable colour is a silent no-op in both
+// mechanisms, so a value that comes back unchanged means "rejected".
 const SENTINEL = "#010203";
-
-let probe: CanvasRenderingContext2D | null | undefined;
-
-function probeContext(): CanvasRenderingContext2D | null {
-  if (probe === undefined) probe = document.createElement("canvas").getContext("2d");
-  return probe;
-}
+const SENTINEL_RGB = "rgb(1, 2, 3)";
 
 function hexByte(n: number): string {
   return Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
 }
 
-/**
- * Resolve any CSS color to the `#rrggbb`/`#rrggbbaa` literal Monaco requires.
- *
- * The tokens are `oklch()` and an operator's overrides can be any syntax the
- * browser accepts, so rather than shipping an oklch→sRGB implementation this
- * hands the string to a canvas: `fillStyle` parses with the full CSS color
- * grammar and always reads back as hex or `rgb()`/`rgba()`.
- */
-export function cssColorToHex(value: string, fallback: string): string {
-  const ctx = probeContext();
-  const input = value.trim();
-  if (!ctx || !input) return fallback;
-
-  ctx.fillStyle = SENTINEL;
-  try {
-    ctx.fillStyle = input;
-  } catch {
-    return fallback;
-  }
-  const out = ctx.fillStyle;
-  if (typeof out !== "string") return fallback;
-  if (out === SENTINEL && input.toLowerCase() !== SENTINEL) return fallback;
-  if (out.startsWith("#")) return out;
-
-  const match = /^rgba?\(([^)]+)\)$/.exec(out);
-  if (!match) return fallback;
-  const parts = match[1]!.split(/[,\s/]+/).filter(Boolean).map(Number);
-  const [r, g, b] = parts;
-  if (r === undefined || g === undefined || b === undefined) return fallback;
-  const alpha = parts.length > 3 ? parts[3]! : 1;
+function toHex(r: number, g: number, b: number, a: number): string {
   const rgb = `#${hexByte(r)}${hexByte(g)}${hexByte(b)}`;
-  return alpha >= 1 ? rgb : `${rgb}${hexByte(alpha * 255)}`;
+  return a >= 1 ? rgb : `${rgb}${hexByte(a * 255)}`;
+}
+
+/** Parse the forms a browser serialises a resolved sRGB colour into. */
+function parseResolved(value: string): string | null {
+  const input = value.trim();
+  if (/^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(input)) return input.toLowerCase();
+
+  // `rgb(1 2 3)`, `rgb(1, 2, 3)`, `rgba(1, 2, 3, 0.5)` — channels are 0-255.
+  const legacy = /^rgba?\(([^)]+)\)$/i.exec(input);
+  if (legacy) {
+    const parts = legacy[1]!.split(/[,\s/]+/).filter(Boolean).map(Number);
+    if (parts.length < 3 || parts.some(Number.isNaN)) return null;
+    return toHex(parts[0]!, parts[1]!, parts[2]!, parts[3] ?? 1);
+  }
+
+  // `color(srgb 0.1 0.09 0.09 / 0.5)` — channels are 0-1 and may be out of
+  // gamut, which `hexByte` clamps.
+  const modern = /^color\(\s*srgb\s+([^)]+)\)$/i.exec(input);
+  if (modern) {
+    const parts = modern[1]!.split(/[\s/]+/).filter(Boolean).map(Number);
+    if (parts.length < 3 || parts.some(Number.isNaN)) return null;
+    return toHex(parts[0]! * 255, parts[1]! * 255, parts[2]! * 255, parts[3] ?? 1);
+  }
+  return null;
+}
+
+let cssProbe: HTMLElement | null = null;
+
+function cssProbeElement(): HTMLElement | null {
+  if (cssProbe?.isConnected) return cssProbe;
+  if (typeof document === "undefined" || !document.body) return null;
+  cssProbe = document.createElement("span");
+  cssProbe.setAttribute("aria-hidden", "true");
+  cssProbe.style.cssText =
+    "position:absolute;width:0;height:0;overflow:hidden;pointer-events:none";
+  document.body.appendChild(cssProbe);
+  return cssProbe;
+}
+
+/** Let CSS resolve the colour into sRGB, whatever syntax it arrived in. */
+function resolveViaCss(value: string): string | null {
+  const el = cssProbeElement();
+  if (!el) return null;
+  el.style.color = SENTINEL;
+  el.style.color = `color-mix(in srgb, ${value}, ${value})`;
+  const computed = getComputedStyle(el).color;
+  if (!computed || computed === SENTINEL_RGB) return null;
+  return parseResolved(computed);
+}
+
+let canvasProbe: CanvasRenderingContext2D | null | undefined;
+
+/** Fallback for engines whose `color-mix` support lags their colour parser. */
+function resolveViaCanvas(value: string): string | null {
+  if (canvasProbe === undefined) {
+    canvasProbe = document.createElement("canvas").getContext("2d");
+  }
+  if (!canvasProbe) return null;
+  canvasProbe.fillStyle = SENTINEL;
+  try {
+    canvasProbe.fillStyle = value;
+  } catch {
+    return null;
+  }
+  const out = canvasProbe.fillStyle;
+  if (typeof out !== "string" || out === SENTINEL) return null;
+  return parseResolved(out);
+}
+
+/**
+ * Resolve any CSS colour to the `#rrggbb`/`#rrggbbaa` literal Monaco requires,
+ * or `null` if this browser could not make sense of it.
+ */
+export function cssColorToHex(value: string): string | null {
+  const input = value.trim();
+  if (!input) return null;
+  return resolveViaCss(input) ?? resolveViaCanvas(input) ?? parseResolved(input);
 }
 
 /** Replace a hex color's alpha channel (Monaco has no `color-mix()`). */
@@ -79,7 +138,7 @@ function alpha(hex: string, value: number): string {
   return `${hex.slice(0, 7)}${hexByte(value * 255)}`;
 }
 
-/** Perceived lightness of an opaque hex color, used to pick Monaco's base. */
+/** Perceived lightness of an opaque hex color. */
 function isDark(hex: string): boolean {
   const r = parseInt(hex.slice(1, 3), 16) / 255;
   const g = parseInt(hex.slice(3, 5), 16) / 255;
@@ -87,52 +146,74 @@ function isDark(hex: string): boolean {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5;
 }
 
+/**
+ * Is the panel currently dark?
+ *
+ * Asked of the `<html>` class first, and only measured from the resolved card
+ * colour if the class says nothing. The class is the one signal that cannot be
+ * lost to a colour-parsing failure, so a browser this file cannot read colours
+ * in still gets Monaco's own *dark* theme in dark mode rather than a white
+ * editor in a black panel.
+ */
+function panelIsDark(card: string | null): boolean {
+  const classes = document.documentElement.classList;
+  if (classes.contains("dark") || classes.contains("site-dark")) return true;
+  if (classes.contains("light") || classes.contains("site-light")) return false;
+  return card ? isDark(card) : false;
+}
+
 // ---------------------------------------------------------------------------
 // Theme
 // ---------------------------------------------------------------------------
 
-/**
- * Fallbacks are only reached if a variable is missing entirely (a stylesheet
- * that has not landed yet), so they are the light palette's plain values.
- */
-const TOKENS = {
-  background: "#ffffff",
-  foreground: "#292524",
-  card: "#ffffff",
-  cardForeground: "#292524",
-  popover: "#ffffff",
-  popoverForeground: "#292524",
-  muted: "#f5f5f4",
-  mutedForeground: "#78716c",
-  accent: "#f5f5f4",
-  accentForeground: "#292524",
-  primary: "#be123c",
-  border: "#e7e5e4",
-  input: "#e7e5e4",
-  ring: "#a8a29e",
-  destructive: "#dc2626",
-  syntaxKeyword: "#be123c",
-  syntaxString: "#15803d",
-  syntaxConstant: "#a16207",
-  syntaxComment: "#78716c",
-  syntaxFunction: "#1d4ed8",
-  syntaxType: "#7e22ce",
-  syntaxTag: "#be123c",
-  syntaxAttribute: "#a16207",
-} as const;
+/** The variables the theme is built from, in `--kebab-case` order-insensitive form. */
+const TOKEN_NAMES = [
+  "background",
+  "foreground",
+  "card",
+  "cardForeground",
+  "popover",
+  "popoverForeground",
+  "muted",
+  "mutedForeground",
+  "accent",
+  "accentForeground",
+  "primary",
+  "border",
+  "input",
+  "ring",
+  "destructive",
+  "syntaxKeyword",
+  "syntaxString",
+  "syntaxConstant",
+  "syntaxComment",
+  "syntaxFunction",
+  "syntaxType",
+  "syntaxTag",
+  "syntaxAttribute",
+] as const;
 
-type TokenName = keyof typeof TOKENS;
+type TokenName = (typeof TOKEN_NAMES)[number];
 
 /** `syntaxKeyword` -> `--syntax-keyword`, `cardForeground` -> `--card-foreground`. */
 function cssVarName(token: TokenName): string {
   return `--${token.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
 }
 
-function readTokens(): Record<TokenName, string> {
+/**
+ * Read every token, or return `null` if the palette could not be read at all.
+ *
+ * All-or-nothing on purpose: half a palette is worse than none, because the
+ * missing half would have to be invented and Monaco would end up with this
+ * panel's dark background under stock light token colours.
+ */
+function readTokens(): Record<TokenName, string> | null {
   const style = getComputedStyle(document.documentElement);
   const out = {} as Record<TokenName, string>;
-  for (const token of Object.keys(TOKENS) as TokenName[]) {
-    out[token] = cssColorToHex(style.getPropertyValue(cssVarName(token)), TOKENS[token]);
+  for (const token of TOKEN_NAMES) {
+    const hex = cssColorToHex(style.getPropertyValue(cssVarName(token)));
+    if (!hex) return null;
+    out[token] = hex;
   }
   return out;
 }
@@ -147,7 +228,19 @@ function readTokens(): Record<TokenName, string> {
  */
 export function buildTheme(): editor.IStandaloneThemeData {
   const c = readTokens();
-  const dark = isDark(c.card);
+  const dark = panelIsDark(c?.card ?? null);
+
+  // Nothing readable: hand Monaco its own theme of the right polarity rather
+  // than a palette we made up. Say so — silently rendering a stock theme is
+  // exactly the kind of failure that gets reported as "the editor ignores my
+  // theme" with nothing to go on.
+  if (!c) {
+    console.warn(
+      "[code-editor] could not resolve the panel's CSS colour tokens; " +
+        `falling back to Monaco's stock ${dark ? "dark" : "light"} theme.`,
+    );
+    return { base: dark ? "vs-dark" : "vs", inherit: true, rules: [], colors: {} };
+  }
 
   return {
     base: dark ? "vs-dark" : "vs",

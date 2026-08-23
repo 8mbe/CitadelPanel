@@ -108,12 +108,40 @@ The colour keys it fills in are VS Code's own, which is what makes the find
 widget, the suggest list, the hover and the context menu look like the panel's
 other popovers instead of like a different application embedded in the page.
 
-The conversion in between is the one trick: the tokens are `oklch()` and an
-operator's overrides can be any syntax the browser accepts, so rather than
-shipping an oklch→sRGB implementation, `cssColorToHex()` assigns the value to a
-canvas `fillStyle` and reads it back — canvas parses the full CSS colour grammar
-and always serialises to hex or `rgba()`. Alpha is composed by hand
-(`#rrggbbaa`), because Monaco has no `color-mix()`.
+The conversion in between is where this first went wrong, and the failure is
+worth writing down because nothing about it is guessable.
+
+The tokens are authored as `oklch()`, but that is not what comes back out.
+Next's CSS transformer rewrites them to `lab()` (emitting a hex line underneath
+as a fallback, which is dead weight for a custom property — both declarations
+are valid token streams, so the last one always wins). So
+`getComputedStyle().getPropertyValue('--card')` hands back
+`lab(9.03835% 1.15298 1.92955)`, and Monaco wants `#1c1917`.
+
+The first attempt used a canvas: assign to `fillStyle`, read it back, because
+canvas parses the full CSS colour grammar and serialises to hex. It does — in
+Firefox. Chrome accepts `lab()` and **serialises it straight back as `lab()`**,
+so every token failed to parse, fell back to a built-in default, and the editor
+rendered light in dark mode. Two engines, same API, different serialisation.
+
+So `cssColorToHex()` asks CSS instead, and only falls back to canvas:
+
+1. Set `color: color-mix(in srgb, <value>, <value>)` on a hidden probe element
+   and read the computed value. Mixing a colour with itself is that colour,
+   resolved in sRGB, which every engine serialises as `color(srgb …)` or
+   `rgb()`. Alpha survives.
+2. Canvas `fillStyle`, for anything the first step cannot express.
+3. The value as-is, if it was already hex or `rgb()`.
+
+A sentinel colour is written before each probe so a rejected value is
+distinguishable from a successful one, and the parser accepts all three
+serialisations. Alpha on the *output* side is composed by hand (`#rrggbbaa`),
+because Monaco has no `color-mix()`.
+
+If the palette cannot be read at all, `buildTheme()` returns Monaco's own theme
+with `base` chosen from the `<html>` class rather than a palette it invented —
+the class is the one signal a colour-parsing bug cannot take away, so the worst
+case is stock VS Code dark in a dark panel, and it logs a warning saying so.
 
 ## Binary files
 
