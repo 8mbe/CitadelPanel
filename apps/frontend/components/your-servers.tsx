@@ -33,7 +33,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Progress } from "@/components/ui/progress";
+import { UsageMeter } from "@/components/usage-meter";
 import { ApiError, getServersStatsBatch, listServers } from "@/lib/api";
 import { formatMbPair, formatUptime } from "@/lib/format";
 import type { ServerView } from "@/lib/types";
@@ -75,7 +75,7 @@ function Meter({
       >
         {value}
       </span>
-      <Progress value={percent} className="mt-0.5 w-full" />
+      <UsageMeter value={percent} label={label} className="mt-0.5" />
     </div>
   );
 }

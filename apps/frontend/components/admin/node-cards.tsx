@@ -49,6 +49,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { UsageMeter } from "@/components/usage-meter";
 import {
   adminCreateNode,
   adminProbeNodeConnection,
@@ -766,6 +767,11 @@ export function NodeCard({
 
         <Separator />
 
+        {/*
+          Allocation, not live use: these bars say how much of the node is
+          already promised to servers, so a full one means nothing more can be
+          scheduled here. Same thresholds as everywhere else.
+        */}
         <div className="grid gap-2 text-xs">
           <div className="flex justify-between text-muted-foreground">
             <span>Memory allocated</span>
@@ -773,24 +779,14 @@ export function NodeCard({
               {formatMb(allocation?.memoryAllocatedMb ?? 0)} · {memPct}%
             </span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-primary"
-              style={{ width: `${memPct}%` }}
-            />
-          </div>
+          <UsageMeter value={memPct} label="Memory allocated" />
           <div className="flex justify-between text-muted-foreground">
             <span>Disk allocated</span>
             <span className="tabular-nums">
               {formatMb(allocation?.diskAllocatedMb ?? 0)} · {diskPct}%
             </span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-primary"
-              style={{ width: `${diskPct}%` }}
-            />
-          </div>
+          <UsageMeter value={diskPct} label="Disk allocated" />
         </div>
 
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">

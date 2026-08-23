@@ -53,10 +53,24 @@ function PortRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+      {/*
+        The badge says what kind of port this number is, so it reads beside the
+        number rather than pinned to the far edge of the row. Only the remove
+        button earns that edge, where a destructive action is easy to avoid.
+      */}
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="font-mono text-sm tabular-nums">
-          {port.port}
-          <span className="text-muted-foreground"> · TCP + UDP</span>
+        <span className="flex items-center gap-2">
+          <span className="font-mono text-sm tabular-nums">
+            {port.port}
+            <span className="text-muted-foreground"> · TCP + UDP</span>
+          </span>
+          {port.isPrimary ? (
+            <Badge variant="default">Primary</Badge>
+          ) : port.isAdditional ? (
+            <Badge variant="secondary">Additional</Badge>
+          ) : (
+            <Badge variant="outline">Blueprint</Badge>
+          )}
         </span>
         {port.label && (
           <span className="truncate text-xs text-muted-foreground">
@@ -64,27 +78,19 @@ function PortRow({
           </span>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {port.isPrimary ? (
-          <Badge variant="default">Primary</Badge>
-        ) : port.isAdditional ? (
-          <Badge variant="secondary">Additional</Badge>
-        ) : (
-          <Badge variant="outline">Blueprint</Badge>
-        )}
-        {port.isAdditional && onRemove && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Remove port"
-            disabled={removing}
-            onClick={onRemove}
-          >
-            {removing ? <Spinner /> : <Trash2 />}
-          </Button>
-        )}
-      </div>
+      {port.isAdditional && onRemove && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Remove port"
+          disabled={removing}
+          onClick={onRemove}
+          className="shrink-0"
+        >
+          {removing ? <Spinner /> : <Trash2 />}
+        </Button>
+      )}
     </div>
   );
 }
@@ -266,7 +272,8 @@ export function PortsTab({ serverId }: { serverId: string }) {
             container, so a running server restarts briefly.
           </FieldDescription>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <Field className="flex-1">
+            {/* A label is a word or two, so the input is sized for one. */}
+            <Field className="sm:w-64">
               <FieldLabel htmlFor="port-label">
                 Label{" "}
                 <span className="text-muted-foreground/70">(optional)</span>
