@@ -428,7 +428,7 @@ export async function handleListServerStatsBatch(
     FROM servers s
     LEFT JOIN server_subusers su
       ON su.server_id = s.id AND su.user_id = ${user.id}
-    WHERE s.id = ANY(${sql.array(ids)})
+    WHERE s.id = ANY(${sql.array(ids, 2950)})
   `) as (ServerAccessRow & { node_id: string; container_id: string | null })[];
 
   // Group the servers this caller may see by node, so sampling stays at one
