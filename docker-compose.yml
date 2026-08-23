@@ -3,6 +3,15 @@
 # Next.js is the only public web service and owns auth, users, setup, PostgreSQL
 # metadata, and all browser-facing APIs. The Bun backend is a node-only service:
 # it owns Docker and server files and is reachable only from Next.js.
+#
+# Generate secrets on the HOST first, because compose interpolates them before
+# any container exists:
+#
+#   bun run env:init        # writes .env (or copy .env.example and fill it in)
+#   docker compose up -d --build
+#
+# Schema migrations run inside the frontend container on every boot, and the
+# admin account is claimed in the browser at /setup. See docs/docker.md.
 
 services:
   postgres:
@@ -24,8 +33,9 @@ services:
 
   frontend:
     build:
-      context: ./apps/frontend
-      dockerfile: Dockerfile
+      # Repo root: the workspace lockfile is what pins the install.
+      context: .
+      dockerfile: apps/frontend/Dockerfile
     restart: unless-stopped
     depends_on:
       postgres:
@@ -52,8 +62,8 @@ services:
 
   backend:
     build:
-      context: ./apps/backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/backend/Dockerfile
     restart: unless-stopped
     environment:
       NODE_TOKEN: ${AGENT_TOKEN:?AGENT_TOKEN is required}
@@ -67,14 +77,29 @@ services:
       # from an https:// page as mixed content). Mount certs and set both paths.
       AGENT_TLS_CERT: ${AGENT_TLS_CERT:-}
       AGENT_TLS_KEY: ${AGENT_TLS_KEY:-}
+      # SFTP server (custom ssh2, own listener in the same process). 0 disables.
+      # Fixed inside the container; remap the published port below if 8022 is
+      # taken on the host.
+      SFTP_PORT: 8022
     ports:
       # Published so browsers can open the direct console WebSocket. In a homelab
       # this is fine on localhost/LAN; in production put it behind a TLS-
       # terminating reverse proxy (Caddy/Nginx) rather than exposing 8081 bare.
       - "8081:8081"
+      # SFTP. Reachable by the operator's SFTP clients, so keep it on a trusted
+      # interface. Auth is delegated to the panel, but the transport has no TLS
+      # proxy in front of it here.
+      - "${SFTP_PORT:-8022}:8022"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/citadel/servers:/var/lib/citadel/servers
+      # The whole /var/lib/citadel tree, not just servers/: the agent also puts
+      # the SFTP host key and the backup staging directory alongside the data
+      # root, and both have to be real host paths. The host key so client
+      # fingerprints survive a restart, the staging directory because restic
+      # runs in a sibling container that bind-mounts it from the host.
+      # Identical on both sides on purpose: the path the agent reports is the
+      # path the daemon mounts into game containers.
+      - /var/lib/citadel:/var/lib/citadel
       # Uncomment to provide TLS material for the agent's wss:// server.
       # - ./certs:/certs:ro
     networks:

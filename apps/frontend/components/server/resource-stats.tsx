@@ -9,12 +9,18 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
-import { useServerStatus } from "@/components/server/server-data-context";
+import { UsageMeter } from "@/components/usage-meter";
+import {
+  useLiveResourceStats,
+  useServerStatus,
+} from "@/components/server/server-data-context";
 import { formatMb } from "@/lib/format";
 import type { ServerView } from "@/lib/types";
 
 export function ResourceStats({ server }: { server: ServerView }) {
+  // These cards are the only thing on a server page that reads the live sample,
+  // so the `/stats` poll runs while they are mounted and stops when they are not.
+  useLiveResourceStats();
   const [status] = useServerStatus();
   const running = status === "running";
   const active = running || status === "starting";
@@ -46,7 +52,7 @@ export function ResourceStats({ server }: { server: ServerView }) {
               {server.cpuLimit} vCPU{server.cpuLimit === 1 ? "" : "s"}
             </span>
           </div>
-          <Progress value={cpuPct} className="w-full" />
+          <UsageMeter value={cpuPct} label="CPU load" />
         </CardContent>
       </Card>
 
@@ -63,7 +69,7 @@ export function ResourceStats({ server }: { server: ServerView }) {
             <span>Limit</span>
             <span className="tabular-nums">{formatMb(server.memoryLimitMb)}</span>
           </div>
-          <Progress value={memPct} className="w-full" />
+          <UsageMeter value={memPct} label="Memory used" />
         </CardContent>
       </Card>
 
@@ -80,7 +86,7 @@ export function ResourceStats({ server }: { server: ServerView }) {
             <span>Quota</span>
             <span className="tabular-nums">{formatMb(server.diskLimitMb)}</span>
           </div>
-          <Progress value={diskPct} className="w-full" />
+          <UsageMeter value={diskPct} label="Disk used" />
         </CardContent>
       </Card>
     </div>

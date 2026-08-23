@@ -6,7 +6,7 @@
  * the endpoint/mapping declaration. Isomorphic by construction: types only,
  * no server or browser dependencies.
  *
- * Endpoint and field names follow https://docs.modrinth.com/ — search facets
+ * Endpoint and field names follow https://docs.modrinth.com/. Search facets
  * are AND-ed groups (`project_type`, `categories` for loaders, `versions` for
  * game versions); version lists are filtered with the `loaders` /
  * `game_versions` query params and return newest-first.
@@ -18,6 +18,11 @@ export const MODRINTH_PROVIDER_SPEC: BlueprintPluginsSpec["provider"] = {
   id: "modrinth",
   baseUrl: "https://api.modrinth.com",
   downloadHosts: ["cdn.modrinth.com"],
+  // The site (not the API) plus the shape of a project page, so the plugins
+  // tab can offer "open on Modrinth". Modrinth canonicalises the type segment
+  // itself, so a plugin project reached as /mod/... simply redirects.
+  siteUrl: "https://modrinth.com",
+  projectPath: "/{projectType}/{slug}",
   facets: [
     { source: "projectType", prefix: "project_type:" },
     { source: "loaders", prefix: "categories:" },

@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
  *      there is no HTML string for a `<script>` or an `onerror=` attribute to
  *      ride in on. The author is an admin, but "the admin is trusted" is a weak
  *      place to put the only barrier between a settings field and script
- *      execution on the sign-in page — and these documents are served to
+ *      execution on the sign-in page, and these documents are served to
  *      unauthenticated visitors.
  *   2. **The supported syntax is the point.** Legal documents need headings,
  *      paragraphs, lists, emphasis, links, and rules. They do not need tables,

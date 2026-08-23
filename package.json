@@ -11,6 +11,8 @@
     "test:e2e": "bun test e2e/",
     "typecheck": "bun run --cwd apps/backend typecheck && bun run --cwd apps/frontend typecheck",
     "setup": "bun run --cwd apps/frontend setup",
+    "env:init": "bun run --cwd apps/frontend env:init",
+    "migrate": "bun run --cwd apps/frontend migrate",
     "setup-db": "bun run --cwd apps/backend setup-db",
     "rescue": "bun run --cwd apps/frontend rescue",
     "compose:up": "docker compose up -d --build",

@@ -2,7 +2,7 @@
  * Pure row→view mapping for the admin API-key surface.
  *
  * Split from `apiKeys.ts` (which owns the queries) so the mapping is testable
- * without dragging in `db/client.ts` — the same arrangement as
+ * without dragging in `db/client.ts`, the same arrangement as
  * `dbExplorerSql.ts` vs `dbExplorer.ts`. Nothing here touches the database or
  * any secret: the hashed `key` column is never part of `ApiKeyRow`.
  */
@@ -31,7 +31,7 @@ export interface ApiKeyAdminView {
   name: string | null;
   /**
    * Display prefix. Panel-configured keys carry an explicit `prefix`; keys the
-   * plugin minted without one store `start` (first ~6 chars) instead — fall
+   * plugin minted without one store `start` (first ~6 chars) instead. Fall
    * back to it so every row shows something.
    */
   prefix: string | null;

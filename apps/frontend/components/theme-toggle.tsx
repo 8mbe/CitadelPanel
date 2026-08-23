@@ -24,8 +24,8 @@ import {
  * from the first frame, and the palette fallback matches the default theme for
  * the server-rendered markup that has no class yet.
  *
- * The menu contents may use `useTheme()` freely — a closed menu renders nothing,
- * so by the time there is a checkmark to draw the client is hydrated.
+ * The menu contents may use `useTheme()` freely, since a closed menu renders
+ * nothing, so by the time there is a checkmark to draw the client is hydrated.
  */
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme();

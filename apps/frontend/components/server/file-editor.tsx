@@ -1,7 +1,15 @@
 "use client";
 
 import * as React from "react";
-import { ArrowLeft, Download, FileWarning, Save, WrapText } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronRight,
+  Download,
+  FileWarning,
+  Home,
+  Save,
+  WrapText,
+} from "lucide-react";
 
 import { ApiError, downloadServerFiles, readServerFile } from "@/lib/api";
 import { formatBytes, formatRelative } from "@/lib/format";
@@ -43,6 +51,15 @@ function posixBasename(path: string): string {
   return idx === -1 ? trimmed : trimmed.slice(idx + 1);
 }
 
+/** Split a path into breadcrumb segments: "/a/b" -> [{name:"a", path:"/a"}, …]. */
+function pathSegments(path: string): { name: string; path: string }[] {
+  const parts = path.split("/").filter(Boolean);
+  return parts.map((name, index) => ({
+    name,
+    path: `/${parts.slice(0, index + 1).join("/")}`,
+  }));
+}
+
 /**
  * Heuristic "is this actually text" check, run on what the server decoded as
  * UTF-8. The agent's read endpoint decodes everything as text (a small .jar
@@ -67,24 +84,26 @@ const isApple =
  * Full-width in-place file editor (replaces the file list while open).
  *
  * Editing goes through the same panel endpoints the old textarea dialog used;
- * the upgrades are CodeMirror (syntax highlighting, search, …), dirty tracking
- * with Ctrl/Cmd+S and a discard guard, and a binary-file check so non-text
- * files can't be lossily rewritten as UTF-8.
+ * the upgrades are Monaco (syntax highlighting, find/replace, folding, …),
+ * dirty tracking with Ctrl/Cmd+S and a discard guard, and a binary-file check
+ * so non-text files can't be lossily rewritten as UTF-8.
  *
  * This module is lazy-loaded by files-manager.tsx; it statically imports the
- * (heavy) CodeEditor so CodeMirror stays out of the main bundle.
+ * (heavy) CodeEditor so Monaco stays out of the main bundle.
  */
 export default function FileEditor({
   serverId,
   entry,
   busy,
-  onBack,
+  onNavigate,
   onSave,
 }: {
   serverId: string;
   entry: FileEntry;
   busy: boolean;
-  onBack: () => void;
+  /** Leave the editor for a directory listing (the file's parent, or any
+   *  ancestor the user clicks in the breadcrumb). */
+  onNavigate: (dir: string) => void;
   onSave: (contents: string) => Promise<void>;
 }) {
   const [status, setStatus] = React.useState<"loading" | "ready" | "binary" | "error">(
@@ -96,14 +115,16 @@ export default function FileEditor({
   const [languageName, setLanguageName] = React.useState("Plain text");
   const [wrap, setWrap] = React.useState(false);
   const [cursor, setCursor] = React.useState({ line: 1, column: 1 });
-  const [confirmDiscard, setConfirmDiscard] = React.useState(false);
+  // The directory the user asked to leave for, held while the discard prompt is
+  // open. `null` means no prompt is showing.
+  const [pendingDir, setPendingDir] = React.useState<string | null>(null);
 
   const basename = posixBasename(entry.path);
   const parent = posixParent(entry.path);
   const dirty = status === "ready" && contents !== savedContents;
 
   // The parent renders this component with key={entry.path}, so each file
-  // gets a fresh instance — no state reset is needed when the path changes,
+  // gets a fresh instance, so no state reset is needed when the path changes,
   // which keeps this effect free of synchronous setState calls.
   React.useEffect(() => {
     let cancelled = false;
@@ -148,7 +169,9 @@ export default function FileEditor({
     }
   }, [dirty, busy, contents, onSave]);
 
-  const requestBack = () => (dirty ? setConfirmDiscard(true) : onBack());
+  /** Every way out of the editor goes through here, so the discard guard can
+   *  never be skipped by adding a new navigation affordance. */
+  const requestLeave = (dir: string) => (dirty ? setPendingDir(dir) : onNavigate(dir));
 
   const download = async () => {
     try {
@@ -176,24 +199,42 @@ export default function FileEditor({
           type="button"
           variant="ghost"
           size="icon-sm"
-          onClick={requestBack}
+          onClick={() => requestLeave(parent)}
           disabled={busy}
           aria-label="Back to files"
         >
           <ArrowLeft className="size-4" />
         </Button>
-        <div className="min-w-0 flex-1 truncate text-sm">
-          <span className="text-muted-foreground">
-            {parent === "/" ? "/" : `${parent}/`}
-          </span>
-          <span className="font-medium">{basename}</span>
+        <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto text-sm">
+          <button
+            type="button"
+            onClick={() => requestLeave("/")}
+            className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <Home className="size-3.5" />
+            <span className="sr-only sm:not-sr-only">Root</span>
+          </button>
+          {pathSegments(parent).map((seg) => (
+            <React.Fragment key={seg.path}>
+              <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/50" />
+              <button
+                type="button"
+                onClick={() => requestLeave(seg.path)}
+                className="max-w-[12rem] shrink-0 truncate rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                {seg.name}
+              </button>
+            </React.Fragment>
+          ))}
+          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/50" />
+          <span className="truncate px-1.5 py-0.5 font-medium">{basename}</span>
           {dirty && (
             <span
-              className="ml-2 inline-block size-1.5 translate-y-px rounded-full bg-primary"
+              className="size-1.5 shrink-0 rounded-full bg-primary"
               title="Unsaved changes"
             />
           )}
-        </div>
+        </nav>
         <Button
           type="button"
           variant="ghost"
@@ -225,7 +266,7 @@ export default function FileEditor({
             </EmptyMedia>
             <EmptyTitle>This file cannot be edited in the browser</EmptyTitle>
             <EmptyDescription>
-              {basename} does not look like text — saving it here would
+              {basename} does not look like text, so saving it here would
               corrupt it. Download it to edit locally, or use SFTP.
             </EmptyDescription>
           </EmptyHeader>
@@ -234,7 +275,7 @@ export default function FileEditor({
               <Download className="size-4" />
               Download
             </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={onBack}>
+            <Button type="button" variant="ghost" size="sm" onClick={() => onNavigate(parent)}>
               Back to files
             </Button>
           </div>
@@ -248,7 +289,7 @@ export default function FileEditor({
             <EmptyTitle>Could not read this file</EmptyTitle>
             <EmptyDescription>{error}</EmptyDescription>
           </EmptyHeader>
-          <Button type="button" variant="outline" size="sm" onClick={onBack}>
+          <Button type="button" variant="outline" size="sm" onClick={() => onNavigate(parent)}>
             Back to files
           </Button>
         </Empty>
@@ -274,7 +315,7 @@ export default function FileEditor({
         <span className="tabular-nums">{formatBytes(sizeBytes)}</span>
         <span>{languageName}</span>
         {contents.length > 1_000_000 && (
-          <span className="text-foreground">Large file — editing may be slow</span>
+          <span className="text-foreground">Large file, editing may be slow</span>
         )}
         <span className="ml-auto hidden sm:inline">
           {dirty ? (
@@ -288,8 +329,8 @@ export default function FileEditor({
         </span>
       </div>
 
-      {/* Discard guard — closing with unsaved changes must never lose work. */}
-      <Dialog open={confirmDiscard} onOpenChange={(open) => !open && setConfirmDiscard(false)}>
+      {/* Discard guard. Closing with unsaved changes must never lose work. */}
+      <Dialog open={pendingDir !== null} onOpenChange={(open) => !open && setPendingDir(null)}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>Discard changes?</DialogTitle>
@@ -298,15 +339,16 @@ export default function FileEditor({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setConfirmDiscard(false)}>
+            <Button type="button" variant="outline" onClick={() => setPendingDir(null)}>
               Keep editing
             </Button>
             <Button
               type="button"
               variant="destructive"
               onClick={() => {
-                setConfirmDiscard(false);
-                onBack();
+                const dir = pendingDir ?? parent;
+                setPendingDir(null);
+                onNavigate(dir);
               }}
             >
               Discard changes

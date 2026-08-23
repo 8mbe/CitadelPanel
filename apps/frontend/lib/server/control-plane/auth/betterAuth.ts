@@ -15,6 +15,7 @@ import { APIError, createAuthMiddleware } from "better-auth/api";
 import { authPool, sql } from "../db/client";
 import { env } from "../config/env";
 import { CAPTCHA_HEADER, verifyCaptcha } from "../security/captcha";
+import { invalidateSessionCache } from "./sessionCache";
 import { sendMail } from "../services/mail";
 import {
   getBranding,
@@ -88,7 +89,7 @@ const CAPTCHA_PROTECTED_PATHS = new Set([
  *
  * The plugin takes its provider and secret at construction time from the
  * environment. Ours are chosen by the operator in the setup wizard and stored in
- * `panel_settings`, so they are not known when this module is evaluated — and a
+ * `panel_settings`, so they are not known when this module is evaluated, and a
  * change must take effect without a restart. The hook reads current settings per
  * request (cached in `services/settings`), which the plugin cannot do.
  *
@@ -122,7 +123,7 @@ const captchaHook = async (ctx: {
  * Enforce "verified email required to sign in" as a runtime knob.
  *
  * Better Auth's own `emailAndPassword.requireEmailVerification` is a static
- * config flag — set once at startup. The operator needs to toggle this from the
+ * config flag, set once at startup. The operator needs to toggle this from the
  * admin settings without a redeploy, so it lives in `panel_settings` and is
  * enforced here, on `/sign-in/email`, before the credential check runs.
  *
@@ -132,7 +133,7 @@ const captchaHook = async (ctx: {
  *
  * Runs before the password is verified, so a rejected sign-in never reveals
  * whether the password was correct. The user is told to verify their email,
- * not that their credentials are wrong — which is also what Better Auth's own
+ * not that their credentials are wrong, which is also what Better Auth's own
  * gate does.
  */
 const verificationGateHook = async (ctx: {
@@ -158,8 +159,8 @@ const verificationGateHook = async (ctx: {
 
   const user = rows[0];
   // An unknown email is left for the sign-in handler to reject with the usual
-  // "invalid email or password" — surfacing "not verified" here would leak that
-  // the account exists.
+  // "invalid email or password", because surfacing "not verified" here would
+  // leak that the account exists.
   if (user && !user.emailVerified) {
     throw new APIError("FORBIDDEN", {
       message:
@@ -175,15 +176,15 @@ const verificationGateHook = async (ctx: {
  *
  * The admin plugin already blocks banned sessions via its `session.create.before`
  * hook, but with a generic `bannedUserMessage` (a static string that cannot carry
- * per-user detail). This hook runs earlier — on `/sign-in/email`, before the
- * password is verified — so it can read the banned user's row and throw a
+ * per-user detail). This hook runs earlier, on `/sign-in/email` and before the
+ * password is verified, so it can read the banned user's row and throw a
  * message the login page renders verbatim. Running before credential check also
  * avoids revealing whether the password was correct (same property as the
  * verification gate). An expired ban is cleared and allowed through.
  *
  * Note on ordering: plugin `databaseHooks` run before config `databaseHooks`, so
- * a session-create hook here would lose the race to the plugin's generic throw —
- * which is why the ban check lives in this `before` hook instead.
+ * a session-create hook here would lose the race to the plugin's generic
+ * throw. That is why the ban check lives in this `before` hook instead.
  */
 const banCheckHook = async (ctx: {
   path: string;
@@ -204,7 +205,7 @@ const banCheckHook = async (ctx: {
   }[];
 
   const user = rows[0];
-  // Unknown email is left for the sign-in handler to reject normally — surfacing
+  // Unknown email is left for the sign-in handler to reject normally, because
   // a ban status here would leak that the account exists.
   if (!user?.banned) return;
 
@@ -235,7 +236,7 @@ const banCheckHook = async (ctx: {
 
 /**
  * The three email flows Better Auth needs a sender for. Each reads the live
- * `mail` settings on call — these are functions, not static config, so an admin
+ * `mail` settings on call. These are functions, not static config, so an admin
  * switching SMTP host or turning email on takes effect immediately. When mail
  * is not configured, `sendMail` is a no-op and the panel runs without email.
  *
@@ -273,8 +274,8 @@ async function sendResetPassword({
   await sendMail({
     to: user.email,
     subject: "Reset your password",
-    text: `Reset your password by opening this link:\n\n${url}\n\nIf you did not request a password reset, you can ignore this message — your password has not been changed.`,
-    html: `<p>Reset your password by opening this link:</p><p><a href="${url}">${url}</a></p><p style="color:#666">If you did not request a password reset, you can ignore this message — your password has not been changed.</p>`,
+    text: `Reset your password by opening this link:\n\n${url}\n\nIf you did not request a password reset, you can ignore this message. Your password has not been changed.`,
+    html: `<p>Reset your password by opening this link:</p><p><a href="${url}">${url}</a></p><p style="color:#666">If you did not request a password reset, you can ignore this message. Your password has not been changed.</p>`,
   });
 }
 
@@ -299,8 +300,8 @@ async function sendChangeEmailConfirmation({
   await sendMail({
     to: user.email,
     subject: "Confirm your new email address",
-    text: `A request was made to change the email on your ${siteName} account to ${newEmail}.\n\nConfirm this change by opening this link:\n\n${url}\n\nIf you did not request this change, ignore this message — your email will not be changed.`,
-    html: `<p>A request was made to change the email on your ${siteName} account to <strong>${newEmail}</strong>.</p><p>Confirm this change by opening this link:</p><p><a href="${url}">${url}</a></p><p style="color:#666">If you did not request this change, ignore this message — your email will not be changed.</p>`,
+    text: `A request was made to change the email on your ${siteName} account to ${newEmail}.\n\nConfirm this change by opening this link:\n\n${url}\n\nIf you did not request this change, ignore this message. Your email will not be changed.`,
+    html: `<p>A request was made to change the email on your ${siteName} account to <strong>${newEmail}</strong>.</p><p>Confirm this change by opening this link:</p><p><a href="${url}">${url}</a></p><p style="color:#666">If you did not request this change, ignore this message. Your email will not be changed.</p>`,
   });
 }
 
@@ -333,8 +334,8 @@ async function sendTwoFactorOtp({
  * Refuse self-service sign-up when the operator has closed registration.
  *
  * This hook is the gate, not the hidden tab on the login form. Anything that can
- * POST to `/sign-up/email` — curl, an old cached page, a script — hits it, which
- * is the only way "invite-only" means anything.
+ * POST to `/sign-up/email` hits it, whether that is curl, an old cached page or
+ * a script, which is the only way "invite-only" means anything.
  *
  * `isRegistrationOpen` exempts the bootstrap window (no admin exists yet), so an
  * operator who disables registration and then wipes the user table can still
@@ -372,6 +373,42 @@ const beforeHook = createAuthMiddleware(async (ctx) => {
   await banCheckHook(ctx);
 });
 
+/**
+ * Auth actions that take a session away, and so must drop the panel's cached
+ * copy of it.
+ *
+ * The panel caches resolved sessions for a few seconds so that a session whose
+ * cookie cache has lapsed does not re-read the database on every request (see
+ * `invalidateSessionCache`'s definition for why that gap exists). Signing out
+ * clears the cookie, so the cache would miss anyway. But revoking a session
+ * *from somewhere else* does not touch the victim's cookie, and banning a user
+ * revokes their sessions server-side. Those must take effect now, not when a TTL
+ * happens to lapse.
+ */
+const SESSION_REVOKING_PATHS = new Set([
+  "/sign-out",
+  "/revoke-session",
+  "/revoke-sessions",
+  "/revoke-other-sessions",
+  "/admin/ban-user",
+  "/admin/revoke-user-session",
+  "/admin/revoke-user-sessions",
+  "/admin/impersonate-user",
+  "/admin/stop-impersonating",
+  "/delete-user",
+  "/change-password",
+]);
+
+/**
+ * Runs after every auth action. Clearing the whole cache rather than one entry
+ * is deliberate: it is a performance cache, the actions above are rare, and
+ * mapping a revoked session back to its cache key would mean reproducing the
+ * key derivation here.
+ */
+const afterHook = createAuthMiddleware(async (ctx) => {
+  if (SESSION_REVOKING_PATHS.has(ctx.path)) invalidateSessionCache();
+});
+
 export const auth = betterAuth({
   database: authPool,
   secret: env.authSecret,
@@ -383,8 +420,8 @@ export const auth = betterAuth({
   plugins: [
     // API keys that authenticate the same /api/* surface the session cookie
     // does. With `enableSessionForAPIKeys`, the plugin's before-hook turns a
-    // valid key into the owner's session on every `auth.api.*` call — which is
-    // how the BFF's `requireAuth`/`requireAdmin` guards resolve sessions — so a
+    // valid key into the owner's session on every `auth.api.*` call, which is
+    // how the BFF's `requireAuth`/`requireAdmin` guards resolve sessions, so a
     // user key works against every panel route with no guard changes and can
     // never escalate to admin (the mock session carries the owner's real role,
     // re-checked by `requireAdmin`). The plugin reads the `x-api-key` header;
@@ -393,16 +430,16 @@ export const auth = betterAuth({
     apiKey({
       enableSessionForAPIKeys: true,
       apiKeyHeaders: ["x-api-key"],
-      // The plugin defaults to 10 requests per 24 hours per key — fine for
-      // production, but the e2e suite issues hundreds of requests per key and
+      // The plugin defaults to 10 requests per 24 hours per key, which is fine
+      // for production, but the e2e suite issues hundreds of requests per key and
       // would blow the budget on the first run. Gated on the same env knob as
       // Better Auth's own limiter below, so `RATE_LIMIT_ENABLED=false` opts out
       // of both in one shot.
       rateLimit: { enabled: env.rateLimitEnabled },
     }),
     // The admin plugin owns the `role` field (replacing the manual
-    // additionalField we used to declare — identical schema: string, not user-
-    // settable, defaults to "user") and adds ban support: `banned`,
+    // additionalField we used to declare, with an identical schema: string, not
+    // user-settable, defaults to "user") and adds ban support: `banned`,
     // `banReason`, `banExpires` columns on `user`. `auth.api.banUser` revokes
     // every session the user holds, and the plugin's `session.create.before`
     // hook blocks a banned user from signing in (auto-clearing an expired ban).
@@ -442,8 +479,8 @@ export const auth = betterAuth({
     revokeSessionsOnPasswordReset: true,
   },
 
-  // Email verification. `sendOnSignUp` sends a verify link on registration —
-  // only meaningful when mail is configured (otherwise `sendMail` is a no-op
+  // Email verification. `sendOnSignUp` sends a verify link on registration, and
+  // is only meaningful when mail is configured (otherwise `sendMail` is a no-op
   // and the user simply stays unverified, which is fine in no-mail mode).
   // `autoSignInAfterVerification` signs the user in once they click the link.
   emailVerification: {
@@ -454,7 +491,7 @@ export const auth = betterAuth({
 
   user: {
     // `role` is no longer declared here as an additionalField: the admin plugin
-    // owns it (same schema — string, not user-settable, defaults to "user").
+    // owns it (same schema: string, not user-settable, defaults to "user").
     // `promoteFirstUserToAdmin` below still promotes the first account.
     changeEmail: {
       enabled: true,
@@ -473,7 +510,7 @@ export const auth = betterAuth({
       // Account deletion is gated on 0 servers by the BFF route
       // (POST /api/account/delete) before this endpoint is ever reached, and
       // always supplies the password for immediate deletion. No email
-      // confirmation round-trip — the password is the confirmation.
+      // confirmation round-trip, because the password is the confirmation.
     },
   },
 
@@ -482,8 +519,8 @@ export const auth = betterAuth({
     updateAge: 60 * 60 * 24, // refresh once per day
     // Serve the session from a signed cookie for up to 5 minutes rather than
     // hitting the database on every request. Every `/api/*` call resolves the
-    // session (see auth/middleware.ts), so without this each one — including the
-    // status/stats polls a single open page fires every few seconds — costs a
+    // session (see auth/middleware.ts), so without this each one, including the
+    // status/stats polls a single open page fires every few seconds, costs a
     // session+user DB read. The cookie is signed, so it cannot be forged; the
     // only staleness it introduces is the session lifetime itself, and the two
     // things that must react immediately (a ban, a role change) are re-read from
@@ -523,6 +560,9 @@ export const auth = betterAuth({
     // One composed before-hook runs the captcha gate then the email-verification
     // gate; each no-ops early when its path/conditions do not match.
     before: beforeHook,
+    // And one after-hook, which drops the panel's session cache whenever an
+    // action has taken a session away.
+    after: afterHook,
   },
 
   databaseHooks: {

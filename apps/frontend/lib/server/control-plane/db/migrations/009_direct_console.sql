@@ -13,7 +13,7 @@
 -- upgrade so the live session's per-command callbacks keep resolving.
 --
 -- `user_id` is TEXT (not UUID) to match Better Auth's string user ids and the
--- existing `audit_logs.user_id` column it joins against — the audit row the
+-- existing `audit_logs.user_id` column it joins against. The audit row the
 -- agent's callback writes must FK-reference the same user.
 --
 -- `nodes.console_url` is the optional public/browser address for the direct

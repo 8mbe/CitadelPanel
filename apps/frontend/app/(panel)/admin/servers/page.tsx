@@ -117,7 +117,7 @@ export default function AdminServersPage() {
           <p className="text-sm text-muted-foreground">
             {loading
               ? "Loading servers…"
-              : `Every server on the panel. ${running} of ${servers.length} running. Users cannot create servers themselves — provision one for them here.`}
+              : `Every server on the panel. ${running} of ${servers.length} running. Users cannot create servers themselves, so provision one for them here.`}
           </p>
         </div>
         <CreateServerDialog onCreated={refresh} />
@@ -203,7 +203,7 @@ export default function AdminServersPage() {
                       <TableCell className="text-right tabular-nums">
                         {server.cpuPercent !== null
                           ? `${Math.round(server.cpuPercent)}%`
-                          : "—"}
+                          : "Unknown"}
                       </TableCell>
                       <TableCell>
                         <DropdownMenu>
@@ -306,7 +306,7 @@ export default function AdminServersPage() {
   );
 }
 
-/** Unsuspend inline from the row menu — no extra input needed. */
+/** Unsuspend inline from the row menu. No extra input needed. */
 async function handleUnsuspend(
   server: AdminServerSummary,
   refresh: () => void,
@@ -380,7 +380,7 @@ function SuspendServerForm({
 
   const confirm = async () => {
     if (!reason.trim()) {
-      setError("Give a reason — the owner sees it.");
+      setError("Give a reason. The owner sees it.");
       return;
     }
     setSubmitting(true);
@@ -461,17 +461,23 @@ function DeleteServerForm({
   onDeleted: () => void;
 }) {
   const [deleteData, setDeleteData] = React.useState(false);
+  const [force, setForce] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // Forcing is only offered once a delete has actually been refused by the node.
+  // It is the answer to a node that is gone for good, not a checkbox to tick on
+  // the way past a node that is merely restarting.
+  const [canForce, setCanForce] = React.useState(false);
 
   const confirm = async () => {
     setSubmitting(true);
     setError(null);
     try {
-      await deleteServer(target.id, deleteData);
+      await deleteServer(target.id, deleteData, force);
       onDeleted();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to delete server.");
+      setCanForce(true);
     } finally {
       setSubmitting(false);
     }
@@ -498,11 +504,24 @@ function DeleteServerForm({
           </FieldLabel>
         </Field>
         {error && <p className="text-sm text-destructive">{error}</p>}
+        {canForce && (
+          <Field orientation="horizontal">
+            <Checkbox
+              id="delete-force"
+              checked={force}
+              onCheckedChange={(checked) => setForce(checked === true)}
+            />
+            <FieldLabel htmlFor="delete-force" className="font-normal">
+              Force: delete the panel&apos;s record anyway, leaving the container
+              and files on the node
+            </FieldLabel>
+          </Field>
+        )}
         <DialogFooter>
           <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
           <Button variant="destructive" onClick={confirm} disabled={submitting}>
             {submitting && <Spinner />}
-            Delete server
+            {force ? "Force delete" : "Delete server"}
           </Button>
         </DialogFooter>
       </DialogContent>

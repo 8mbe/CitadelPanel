@@ -47,7 +47,7 @@ export interface SiteThemeToken {
  * A curated subset of `globals.css`, not all of it. The `--chart-*` and
  * `--sidebar-*` blocks are omitted because nothing in the panel consumes them
  * yet, and `--syntax-*` because the editor's highlighting is a legibility
- * concern rather than a branding one — it follows the base palette.
+ * concern rather than a branding one, so it follows the base palette.
  */
 export const SITE_THEME_TOKENS: readonly SiteThemeToken[] = [
   {

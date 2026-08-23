@@ -257,7 +257,7 @@ export interface NodeAbuseSummary {
  *
  * INNER JOINs `servers`: deleting a server does not cascade `suspicious_activity`
  * (only ports/env/subusers/databases), so a flag can outlive its server. Those
- * orphans belong to no node and are excluded here automatically — they are
+ * orphans belong to no node and are excluded here automatically. They are
  * still visible in the global review queue.
  */
 export async function getNodeAbuseSummary(

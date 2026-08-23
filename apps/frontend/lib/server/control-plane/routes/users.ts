@@ -2,7 +2,7 @@
  * Current-user routes.
  *
  * Account creation, login and logout are handled entirely by Better Auth's own
- * mounted handler — these endpoints only expose panel-specific profile data.
+ * mounted handler. These endpoints only expose panel-specific profile data.
  */
 
 import { requireAuth } from "../auth/middleware";
@@ -16,50 +16,41 @@ import {
 } from "../lib/http";
 import { sql } from "../db/client";
 import { recordAuditFromRequest } from "../services/auditLog";
-import { countUnreviewed } from "../security/suspiciousList";
+import { loadMeProfile } from "../services/me";
 
-/** GET /api/me — the caller's identity and role. */
+/** GET /api/me. Returns the caller's identity and role. */
 export async function handleGetMe(request: Request): Promise<Response> {
   const user = await requireAuth(request);
 
-  // The auth middleware resolves only { id, email, role }; the display name
-  // lives on the Better Auth user row, so fetch it here. `name` may be null for
-  // accounts created before a name was required.
-  const profile = (await sql`
-    SELECT name, "twoFactorEnabled" FROM "user" WHERE id = ${user.id}
-  `) as { name: string | null; twoFactorEnabled: boolean | null }[];
-
-  const counts = (await sql`
-    SELECT
-      (SELECT COUNT(*)::int FROM servers WHERE owner_id = ${user.id}) AS owned_servers,
-      (SELECT COUNT(*)::int FROM server_subusers WHERE user_id = ${user.id}) AS subuser_servers
-  `) as { owned_servers: number; subuser_servers: number }[];
-
-  // Only admins get the review queue badge.
-  const pendingReviews = user.role === "admin" ? await countUnreviewed() : undefined;
+  // Shared with the SSR session resolver (see lib/server/session.ts), so the
+  // payload is identical whether `/api/me` answers from this route or from the
+  // panel layout's server-side read.
+  const profile = await loadMeProfile(user);
 
   return json({
     user: {
       id: user.id,
       email: user.email,
-      name: profile[0]?.name ?? null,
+      name: profile.name,
       role: user.role,
-      twoFactorEnabled: profile[0]?.twoFactorEnabled ?? false,
-      ownedServers: counts[0]?.owned_servers ?? 0,
-      subuserServers: counts[0]?.subuser_servers ?? 0,
-      ...(pendingReviews !== undefined ? { pendingReviews } : {}),
+      twoFactorEnabled: profile.twoFactorEnabled,
+      ownedServers: profile.ownedServers,
+      subuserServers: profile.subuserServers,
+      ...(profile.pendingReviews !== undefined
+        ? { pendingReviews: profile.pendingReviews }
+        : {}),
     },
   });
 }
 
 /**
- * POST /api/account/delete — delete the caller's own account.
+ * POST /api/account/delete. Deletes the caller's own account.
  *
  * Two guards, both deliberate:
  *
  *  - The caller must own **zero** servers. `servers.owner_id` cascades on user
  *    deletion (`001_initial_schema.sql`), so allowing a delete with owned
- *    servers would silently destroy those servers — and their data. The gate is
+ *    servers would silently destroy those servers and their data. The gate is
  *    checked here, server-side, so a tampered client cannot bypass it. (An admin
  *    who wants a user gone reassigns or deletes their servers first.)
  *  - The caller must re-supply their password. Account deletion is irreversible,
@@ -83,7 +74,7 @@ export async function handleDeleteAccount(request: Request): Promise<Response> {
 
   if ((owned[0]?.count ?? 0) > 0) {
     throw conflict(
-      "Delete your servers before deleting your account. An account that owns servers cannot be removed — doing so would delete those servers and their data.",
+      "Delete your servers before deleting your account. An account that owns servers cannot be removed, because doing so would delete those servers and their data.",
     );
   }
 
@@ -115,7 +106,7 @@ export async function handleDeleteAccount(request: Request): Promise<Response> {
   }
 
   // The deletion succeeded only if Better Auth says so. A wrong password comes
-  // back as a 4xx with a JSON body — pass that through verbatim.
+  // back as a 4xx with a JSON body, so pass that through verbatim.
   const payload = (await result.json().catch(() => null)) as
     | { success?: boolean; message?: string }
     | null;

@@ -3,7 +3,7 @@
  *
  * `deletePaths` is the one file operation that takes a caller-supplied list, so
  * what matters is the failure shape: a selection must be deleted whole or not
- * at all. A batch that half-completes is the worst outcome — the panel would
+ * at all. A batch that half-completes is the worst outcome. The panel would
  * refresh its listing into a state the user never chose, with no error saying
  * which entries survived.
  */
@@ -13,8 +13,8 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 // The data root is a temp directory prepared by the test preload
-// (test-setup.ts) before any test module — and therefore any config import —
-// runs. It is imported here only to learn where it is.
+// (test-setup.ts) before any test module runs, and therefore before any config
+// import runs. It is imported here only to learn where it is.
 const root = (await import("../test-setup")).testRoot;
 
 const { deletePaths } = await import("./files");
@@ -27,7 +27,7 @@ const serverDir = join(root, SERVER_ID);
 /** Path inside this server's data directory. */
 const inServer = (rel: string) => join(serverDir, rel);
 
-/** Null when the path no longer exists — the assertions only need that much. */
+/** Null when the path no longer exists. The assertions only need that much. */
 const exists = (abs: string) =>
   stat(abs).then(
     () => true,
@@ -64,7 +64,7 @@ async function expectRefused(paths: string[]) {
 }
 
 describe("deletePaths", () => {
-  test("removes every path in the batch — files and directory trees alike", async () => {
+  test("removes every path in the batch, files and directory trees alike", async () => {
     await deletePaths(SERVER_ID, [
       "/server.properties",
       "/plugins",

@@ -21,9 +21,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
  * The second-factor verification form.
  *
  * After correct credentials, Better Auth set a short-lived 2FA cookie (not a
- * session). This form completes the flow by calling one of three verify
- * endpoints — TOTP, email OTP, or backup code — each of which exchanges that
- * 2FA cookie for a real session cookie. On success the browser is sent to the
+ * session). This form completes the flow by calling the verify endpoint for
+ * TOTP, email OTP, or a backup code. Each of the three exchanges that 2FA
+ * cookie for a real session cookie. On success the browser is sent to the
  * `next` path (or the panel root).
  *
  * Email OTP is only offered when the panel has mail configured (the plugin

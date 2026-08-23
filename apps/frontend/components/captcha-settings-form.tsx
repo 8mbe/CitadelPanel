@@ -27,7 +27,7 @@ import { Switch } from "@/components/ui/switch";
  * The `secretKey` is write-only: the backend stores it encrypted and can never
  * return it, so when an existing secret is already stored the field shows a
  * placeholder and an empty submission is read as "leave it unchanged". This is
- * why the parent passes `hasStoredSecret` — the form itself cannot tell whether
+ * why the parent passes `hasStoredSecret`. The form itself cannot tell whether
  * a secret exists.
  */
 
@@ -94,7 +94,7 @@ export function toCaptchaPayload(
     provider: value.provider,
     siteKey: value.siteKey.trim() || null,
     // An empty secret field means "unchanged" when one is already stored, but
-    // "clear it" is never needed here — disabling keeps the stored keys.
+    // "clear it" is never needed here, since disabling keeps the stored keys.
     secretKey:
       value.secretKey.trim() !== ""
         ? value.secretKey.trim()
@@ -187,7 +187,7 @@ export function CaptchaSettingsForm({
                   onChange={(e) => set("secretKey", e.target.value)}
                   placeholder={
                     hasStoredSecret
-                      ? "Stored — leave blank to keep unchanged"
+                      ? "Stored, leave blank to keep unchanged"
                       : "Server-side key, kept encrypted"
                   }
                   autoComplete="off"

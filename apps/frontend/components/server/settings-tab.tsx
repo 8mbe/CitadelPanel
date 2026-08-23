@@ -47,13 +47,13 @@ function Allocation({ label, value }: { label: string; value: string }) {
  *
  * The permission model (plan.md section 5) shapes this page: an owner manages
  * their server but never sizes it. Resource limits stay admin-only and are not
- * shown here — there is no owner-facing API to change them, and showing inputs
+ * shown here. There is no owner-facing API to change them, and showing inputs
  * would promise something the backend would refuse. Environment variables the
  * blueprint marks `editable` are the one exception: the owner (and subusers with
  * `settings`) may override those after creation.
  *
  * Reinstalling is the one destructive action on this page, and it sits at the
- * bottom of General rather than in a tab of its own — a tab would be a place to
+ * bottom of General rather than in a tab of its own. A tab would be a place to
  * arrive at, and this is a thing to scroll past. It renders for owners and
  * admins only, so a subuser with `settings` can retune the game without being
  * able to erase it.
@@ -66,10 +66,21 @@ export function SettingsTab() {
 
   return (
     <Tabs defaultValue="general">
-      <TabsList className="grid w-full grid-cols-3">
-        <TabsTrigger value="general">General</TabsTrigger>
-        <TabsTrigger value="environment">Environment</TabsTrigger>
-        <TabsTrigger value="connections">Connections</TabsTrigger>
+      {/*
+        Sized to its three labels, not to the page. Stretched across a
+        full-width panel the same three words sat in three near-empty slots,
+        which read as a segmented control with nothing in it.
+      */}
+      <TabsList>
+        <TabsTrigger value="general" className="px-3">
+          General
+        </TabsTrigger>
+        <TabsTrigger value="environment" className="px-3">
+          Environment
+        </TabsTrigger>
+        <TabsTrigger value="connections" className="px-3">
+          Connections
+        </TabsTrigger>
       </TabsList>
       <TabsContent value="general" className="mt-4 flex flex-col gap-4">
         <Card>
@@ -77,12 +88,16 @@ export function SettingsTab() {
             <CardTitle>General</CardTitle>
             <CardDescription>Server identity.</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-3">
+          {/*
+            Capped, not full-bleed: three short facts stretched to the width of
+            the page put each value a thousand pixels from its own label.
+          */}
+          <CardContent className="flex max-w-md flex-col gap-3">
             <Allocation label="Name" value={server.name} />
             <Allocation label="Game" value={server.blueprintKey} />
             <Allocation
               label="Primary port"
-              value={server.primaryPort > 0 ? String(server.primaryPort) : "—"}
+              value={server.primaryPort > 0 ? String(server.primaryPort) : "None"}
             />
           </CardContent>
         </Card>
@@ -204,7 +219,7 @@ function EnvironmentCard({ serverId }: { serverId: string }) {
       setEdits({});
       setNote(null);
     } catch (err) {
-      // 403 means the caller lacks `settings` — hide the card rather than
+      // 403 means the caller lacks `settings`, so hide the card rather than
       // show an error. Anything else is a real failure worth surfacing.
       if (err instanceof ApiError && err.status === 403) {
         setDenied(true);

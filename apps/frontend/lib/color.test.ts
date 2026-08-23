@@ -1,8 +1,8 @@
 /**
  * Tests for the colour parser and the OKLCh conversion.
  *
- * The parser is the site theme's security boundary — everything it accepts gets
- * re-emitted into a `<style>` element as numbers — so the rejection cases carry
+ * The parser is the site theme's security boundary. Everything it accepts gets
+ * re-emitted into a `<style>` element as numbers, so the rejection cases carry
  * as much weight as the happy path. The conversion tests pin the anchors
  * (black, white, the primaries) and the round trip rather than every digit,
  * which is what a hand-written matrix can actually promise.

@@ -16,17 +16,24 @@ import { ApiError, killServer, restartServer, startServer, stopServer } from "@/
  * (starting/stopping) is shown while the request is in flight, then reconciled
  * to whatever the backend reports.
  *
- * Rendered only for viewers holding `start_stop` — for anyone else the row is
+ * Rendered only for viewers holding `start_stop`. For anyone else the row is
  * absent rather than disabled, since there is nothing they could do with it.
  * The backend rejects the calls regardless; this is presentation.
  *
- * Kill: whenever the server is in a graceful stop (status `stopping` — whether
- * this client initiated it or not), the Stop button morphs into a red Kill. It
- * is disabled for a short grace window after the transition starts (so the
- * graceful shutdown gets a fair chance), then arms — at which point clicking it
- * sends SIGKILL to force the container down immediately. Kill is the escape
- * hatch for a container wedged in a graceful stop; it is never shown while the
- * server is simply running.
+ * Emphasis follows the status rather than the button: the filled button is
+ * whichever action the server can actually take right now (Start when it is
+ * down, Restart when it is up). A fixed emphasis meant a running server showed
+ * a loud, disabled Start above two quiet outlines that were the only things
+ * that worked.
+ *
+ * Kill: whenever the server is in a graceful stop or restart (status
+ * `stopping`, whether this client initiated it or not), the Stop button morphs
+ * into a red Kill that sends SIGKILL and forces the container down immediately.
+ * It is live the moment it appears: being *in* a stop already means the graceful
+ * path had its chance, and a stop can finish in a couple of seconds, so a button
+ * that arms on a timer is disabled for most of the window it exists in. Kill is
+ * the escape hatch for a container wedged in a graceful stop; it is never shown
+ * while the server is simply running.
  */
 export function PowerControls() {
   const { server, status, setStatus, refresh } = useServerData();
@@ -34,33 +41,29 @@ export function PowerControls() {
   // Separate from `pending`: a graceful stop can block on Docker for a long time
   // (a game server saving its world), and Kill is the escape hatch for exactly
   // that situation. If Kill shared `pending`, it would stay disabled for the
-  // whole graceful stop — defeating its purpose.
+  // whole graceful stop, defeating its purpose.
   const [killPending, setKillPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   const stopping = status === "stopping";
-  // Kill arms a few seconds into a graceful stop, so the graceful path gets a
-  // real chance before the user reaches for the destructive option.
-  const [killArmed, setKillArmed] = React.useState(false);
-  React.useEffect(() => {
-    if (!stopping) {
-      setKillArmed(false);
-      return;
-    }
-    const t = setTimeout(() => setKillArmed(true), 3000);
-    return () => clearTimeout(t);
-  }, [stopping]);
 
-  // After the hooks: a viewer without `start_stop` gets no controls at all.
+  // A viewer without `start_stop` gets no controls at all.
   if (!viewerAllows(server.viewer, "start_stop")) return null;
 
   const isBusy =
     pending ||
     ["starting", "stopping", "installing", "creating"].includes(status);
-  // A suspended server is never startable by its owner — the layout replaces
+  // A suspended server is never startable by its owner. The layout replaces
   // the whole shell with a notice, and the backend rejects it regardless.
   const canStart = ["stopped", "error"].includes(status);
   const canStop = status === "running";
+
+  // The filled button is whichever action is live right now, so the loudest
+  // thing in the header is never the one that cannot be pressed. `canStart` and
+  // `canStop` are mutually exclusive, so this never promotes two at once, and
+  // mid-transition it promotes neither, which is the truth.
+  const emphasise = (live: boolean) =>
+    live && !isBusy ? ("default" as const) : ("outline" as const);
 
   const act = async (
     optimistic: "starting" | "stopping",
@@ -98,6 +101,7 @@ export function PowerControls() {
     <div className="flex flex-col items-end gap-1">
       <div className="flex flex-wrap items-center gap-2">
         <Button
+          variant={emphasise(canStart)}
           onClick={() => act("starting", startServer)}
           disabled={!canStart || isBusy}
           size="sm"
@@ -106,7 +110,7 @@ export function PowerControls() {
           Start
         </Button>
         <Button
-          variant="secondary"
+          variant={emphasise(canStop)}
           onClick={() => act("stopping", restartServer)}
           disabled={!canStop || isBusy}
           size="sm"
@@ -116,18 +120,14 @@ export function PowerControls() {
         </Button>
         {stopping ? (
           // The server is in a graceful stop (whether or not this client is the
-          // one that initiated it). Offer Kill as the escape hatch once the grace
-          // window elapses, so a wedged shutdown can always be forced.
+          // one that initiated it), so Kill is the escape hatch for a shutdown
+          // that wedges. Only the request in flight disables it.
           <Button
             variant="destructive"
             onClick={kill}
-            disabled={!killArmed || killPending}
+            disabled={killPending}
             size="sm"
-            title={
-              killArmed
-                ? "Force-stop the container immediately (SIGKILL). The server will not get a chance to save."
-                : "Kill becomes available shortly if the graceful stop doesn't finish…"
-            }
+            title="Force-stop the container immediately (SIGKILL). The server will not get a chance to save."
           >
             <OctagonX />
             Kill

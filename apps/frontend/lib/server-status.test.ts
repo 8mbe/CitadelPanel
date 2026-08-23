@@ -35,7 +35,7 @@ test("every other status is not", () => {
   }
 });
 
-test("a failed provision is not provisioning — it needs an admin, not a wait", () => {
+test("a failed provision is not provisioning, it needs an admin, not a wait", () => {
   // The distinction the shell depends on: `error` leaves the owner with a
   // reachable (if broken) server rather than an installing screen forever.
   expect(isProvisioning("error")).toBe(false);

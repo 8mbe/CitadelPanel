@@ -6,7 +6,7 @@
  * Sourced from the runtime's own tz database via `Intl.supportedValuesOf` when
  * the browser exposes it, so the list matches what the backend will accept
  * (both validate against the same underlying database). A curated fallback keeps
- * the control usable on older engines that lack `supportedValuesOf` — it is not
+ * the control usable on older engines that lack `supportedValuesOf`. It is not
  * exhaustive, but the field also accepts a typed value the backend validates.
  */
 

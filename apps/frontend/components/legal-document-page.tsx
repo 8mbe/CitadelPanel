@@ -17,7 +17,7 @@ import { getLegalAvailability, getSiteSettings } from "@/lib/server/site-setting
  *
  * Unauthenticated: a privacy policy the reader has to sign in to read is not a
  * privacy policy. An unpublished (empty) document `notFound()`s rather than
- * rendering an empty page, which is also how a policy is withdrawn — clearing
+ * rendering an empty page, which is also how a policy is withdrawn. Clearing
  * the editor removes both the page and the footer link.
  *
  * The Markdown is rendered to React nodes by `components/markdown.tsx`, never

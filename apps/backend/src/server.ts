@@ -9,10 +9,10 @@
  * The one exception is the direct-console WebSocket (`/v1/sessions/:token/console`),
  * which a *browser* opens after the panel mints it a short-lived, single-use
  * capability token. The agent validates that token (and the per-command audit it
- * implies) by calling back to the panel — see `consoleAudit.ts`. The token, not
+ * implies) by calling back to the panel. See `consoleAudit.ts`. The token, not
  * the long-lived bearer, is what authorizes that one path.
  *
- * Routes are keyed by **server id**, never container id or host path — see
+ * Routes are keyed by **server id**, never container id or host path. See
  * `servers.ts` for why that indirection is load-bearing.
  */
 
@@ -20,7 +20,9 @@ import { requireAuth } from "./auth";
 import { config } from "./config";
 import { validateConsoleSession, recordConsoleCommand } from "./consoleAudit";
 import { probeDataRoot, reportDataRootAtBoot } from "./dataRoot";
-import { readDaemonInfo } from "./docker/client";
+import { docker, readDaemonInfo, reportContainerRuntimeAtBoot } from "./docker/client";
+import { reportUsernsAtBoot } from "./docker/userns";
+import { probeDockerSocket, reportDockerSocketAtBoot } from "./docker/socket";
 import { probePorts, type PortProtocol } from "./docker/ports";
 import {
   getNodeDbInfo,
@@ -28,6 +30,33 @@ import {
   dropServerDatabase,
   runServerDatabaseSql,
 } from "./docker/database";
+import {
+  hasRunningJob,
+  NODE_DATABASES_SUBJECT,
+  readJob,
+  serverSubject,
+} from "./backup/jobs";
+import {
+  checkRepository,
+  deleteSnapshot,
+  listSnapshots,
+  repositorySize,
+  startDatabaseBackup,
+  startDatabaseRestore,
+  startServerBackup,
+  startServerRestore,
+} from "./backup/run";
+import {
+  parseDatabaseNames,
+  parseDbAdmin,
+  parseExclude,
+  parseKeepMax,
+  parseReason,
+  parseRepoTarget,
+  parseSnapshotId,
+  parseSubject,
+} from "./backup/wire";
+import { removeOrphanedToolContainers } from "./backup/toolContainer";
 import { createSftpServer } from "./sftp";
 import {
   copyPath,
@@ -44,6 +73,7 @@ import {
 } from "./files";
 import {
   badRequest,
+  conflict,
   json,
   noContent,
   parseJsonBody,
@@ -111,7 +141,7 @@ const queryOf = (request: Request) => new URL(request.url).searchParams;
 function sanitizeDownloadName(suggested: string | null, fallback: string): string {
   const raw = suggested && suggested.trim().length > 0 ? suggested : fallback;
   // Remove anything that isn't a printable ASCII char, dot, dash, underscore, or
-  // space — and strip path separators so the name can't escape the attachment.
+  // space, then strip path separators so the name can't escape the attachment.
   const cleaned = raw.replace(/[^\w .-]/g, "").replace(/\s+/g, " ").trim();
   const name = cleaned.length > 0 ? cleaned : "download";
   return name.slice(0, 200);
@@ -125,7 +155,7 @@ function sanitizeDownloadName(suggested: string | null, fallback: string): strin
 const MAX_HISTORY_LINES = 100;
 
 /**
- * Per-input character cap, matching the HTTP `/command` route's 4096 limit — a
+ * Per-input character cap, matching the HTTP `/command` route's 4096 limit. A
  * single WS frame longer than this is almost certainly a client bug, not a
  * command, and is dropped rather than written to stdin.
  */
@@ -137,8 +167,8 @@ const MAX_INPUT_CHARS = 4_096;
  * Validate a container-create body.
  *
  * Strict because these values become Docker resource limits and bind mounts.
- * `hostDataPath` and `name` are deliberately absent from the accepted shape —
- * the agent derives both, so a caller cannot influence what gets mounted.
+ * `hostDataPath` and `name` are deliberately absent from the accepted shape.
+ * The agent derives both, so a caller cannot influence what gets mounted.
  */
 function parseCreateRequest(body: Record<string, unknown>): CreateContainerRequest {
   const image = body.image;
@@ -195,7 +225,7 @@ function parseCreateRequest(body: Record<string, unknown>): CreateContainerReque
       })
     : undefined;
 
-  // A uid or uid:gid only — never a username. The panel is trusted, but this is
+  // A uid or uid:gid only, never a username. The panel is trusted, but this is
   // a privilege pin, so a name like "root" here would defeat the purpose of
   // running the container non-root.
   const user =
@@ -204,8 +234,8 @@ function parseCreateRequest(body: Record<string, unknown>): CreateContainerReque
     throw badRequest('"user" must be a "uid" or "uid:gid" of digits only.');
   }
 
-  // Extra networks (e.g. node_db_net) are optional. Only strings survive — the
-  // agent validates each is a plausible Docker network name.
+  // Extra networks (e.g. node_db_net) are optional. Only strings survive, and
+  // the agent validates each is a plausible Docker network name.
   const extraNetworks = Array.isArray(body.extraNetworks)
     ? body.extraNetworks.map((entry) => {
         if (typeof entry !== "string" || entry.length === 0) {
@@ -298,7 +328,7 @@ function timeoutOf(body: Record<string, unknown>): number | undefined {
  * The attachment is held here rather than in a module map so it is released
  * when the socket closes, with no keyed cleanup to get wrong. `userId` and
  * `token` come from the panel's session-validation response and ride the socket
- * only so per-command audit callbacks can attribute input — they are never
+ * only so per-command audit callbacks can attribute input. They are never
  * re-read for authorization (that was settled at the WS handshake).
  */
 interface ConsoleSocket {
@@ -320,7 +350,7 @@ const server = Bun.serve<ConsoleSocket, never>({
     : {}),
 
   // A console SSE stream is quiet for as long as the game server is idle, and
-  // Bun closes idle connections after ~10s by default — which killed the live
+  // Bun closes idle connections after ~10s by default, which killed the live
   // console mid-session. `0` disables the idle timeout so an SSE stream stays
   // open until the browser closes it (the abort then propagates to dockerode).
   // The keepalive pings in `sseWrap` still help intermediaries (proxies) that
@@ -340,17 +370,26 @@ const server = Bun.serve<ConsoleSocket, never>({
      */
     "/v1/health": {
       GET: route(async () => {
-        const [info, dataRoot] = await Promise.all([
-          readDaemonInfo(),
+        // The socket is probed first and separately: `readDaemonInfo` throws on
+        // an unusable daemon, and letting that through would answer the panel
+        // with "Internal agent error", the least useful of the possible
+        // diagnoses. A node whose Docker is unreachable is degraded, not
+        // broken, and it can still say exactly what to fix (see `socket.ts`).
+        const [dockerSocket, dataRoot] = await Promise.all([
+          probeDockerSocket(),
           probeDataRoot(),
         ]);
+
+        const info = dockerSocket.reachable ? await readDaemonInfo() : undefined;
+
         return json({
-          status: "ok",
-          dockerVersion: info.serverVersion,
-          containersRunning: info.containersRunning,
-          capacity: { ncpu: info.ncpu, memTotalMb: info.memTotalMb },
+          status: dockerSocket.reachable ? "ok" : "degraded",
+          dockerVersion: info?.serverVersion,
+          containersRunning: info?.containersRunning,
+          capacity: info ? { ncpu: info.ncpu, memTotalMb: info.memTotalMb } : undefined,
           serverDataRoot: config.serverDataRoot,
           dataRoot,
+          dockerSocket,
         });
       }),
     },
@@ -380,7 +419,7 @@ const server = Bun.serve<ConsoleSocket, never>({
     /**
      * Probes whether host ports are bindable right now, for the panel's
      * port-pool reservation and allocation flows. A taken port is a result
-     * (`free: false`), never an error — only malformed input 400s.
+     * (`free: false`), never an error. Only malformed input 400s.
      */
     "/v1/ports/free": {
       POST: route(async (request) => {
@@ -412,10 +451,10 @@ const server = Bun.serve<ConsoleSocket, never>({
     // node MariaDB. The admin credentials arrive in the request body (the panel
     // decrypts them from `nodes.db_admin_password_encrypted`); the agent never
     // stores them. SQL is executed by `docker exec`-ing the mariadb client
-    // inside the node DB container — see `docker/database.ts`.
+    // inside the node DB container. See `docker/database.ts`.
 
     /**
-     * GET /v1/database/info — report the node DB container's IP and port.
+     * GET /v1/database/info. Reports the node DB container's IP and port.
      *
      * The panel uses this to show the host address when a server owner creates
      * a database, and to verify the node DB is set up before offering the
@@ -434,7 +473,7 @@ const server = Bun.serve<ConsoleSocket, never>({
     },
 
     /**
-     * POST /v1/servers/:id/database — create a database + scoped user.
+     * POST /v1/servers/:id/database. Creates a database + scoped user.
      *
      * Body: { adminUser, adminPassword, dbPassword }
      *
@@ -506,7 +545,7 @@ const server = Bun.serve<ConsoleSocket, never>({
     },
 
     /**
-     * POST /v1/servers/:id/database/query — run explorer SQL as the scoped user.
+     * POST /v1/servers/:id/database/query. Runs explorer SQL as the scoped user.
      *
      * Body: { dbName, dbUser, dbPassword, sql }
      *
@@ -515,7 +554,7 @@ const server = Bun.serve<ConsoleSocket, never>({
      * per-database user, whose grants cover exactly one database, so MariaDB
      * contains whatever the panel composes. The panel builds every statement
      * from structured explorer operations (validated identifiers, hex-encoded
-     * values) — the browser never sends SQL. Results come back as parsed
+     * values). The browser never sends SQL. Results come back as parsed
      * `--xml` output; see `docker/database.ts` for why XML over batch mode.
      */
     "/v1/servers/:id/database/query": {
@@ -553,11 +592,11 @@ const server = Bun.serve<ConsoleSocket, never>({
     // The panel calls these when a server owner connects two of their servers
     // that live on this node, so one game (a proxy, a plugin) can reach the
     // other by its stable container name instead of a public host:port. The
-    // pair gets its own ICC-enabled bridge network — see `docker/hardening.ts`
+    // pair gets its own ICC-enabled bridge network. See `docker/hardening.ts`
     // for why links are pairwise, never one shared network per node.
 
     /**
-     * POST /v1/servers/:id/links — attach two linked servers' containers to
+     * POST /v1/servers/:id/links. Attaches two linked servers' containers to
      * their pairwise network.
      *
      * Body: { targetId }
@@ -581,8 +620,8 @@ const server = Bun.serve<ConsoleSocket, never>({
     },
 
     /**
-     * DELETE /v1/servers/:id/links/:targetId — detach both containers from
-     * the pair's network and remove it. Idempotent: a missing container or
+     * DELETE /v1/servers/:id/links/:targetId. Detaches both containers from
+     * the pair's network and removes it. Idempotent: a missing container or
      * network is already-unlinked, not an error.
      */
     "/v1/servers/:id/links/:targetId": {
@@ -665,7 +704,7 @@ const server = Bun.serve<ConsoleSocket, never>({
       }),
     },
 
-    // Force-stop (SIGKILL) — the escape hatch for a container stuck in a
+    // Force-stop (SIGKILL), the escape hatch for a container stuck in a
     // graceful stop/restart. No body, no grace period.
     "/v1/servers/:id/kill": {
       POST: route(async (request) => {
@@ -700,7 +739,7 @@ const server = Bun.serve<ConsoleSocket, never>({
      *
      * `request.signal` is forwarded to dockerode, so when the browser closes
      * the EventSource the abort propagates back and releases the daemon's log
-     * stream — no leaked attach.
+     * stream, with no leaked attach.
      */
     "/v1/servers/:id/logs/stream": {
       GET: route(async (request) => {
@@ -846,7 +885,7 @@ const server = Bun.serve<ConsoleSocket, never>({
     // panel sequences multiple uploads client-side, which keeps each request's
     // failure isolated and lets the browser show per-file progress.
     //
-    // The body is never buffered whole — `uploadFile` pumps it chunk by chunk
+    // The body is never buffered whole. `uploadFile` pumps it chunk by chunk
     // into a sibling temp file, then `rename`s it into place, so a partial
     // upload never surfaces as a truncated file to the game server. The size
     // cap is enforced both up front (via content-length) and during the stream
@@ -900,8 +939,8 @@ const server = Bun.serve<ConsoleSocket, never>({
 
     // --- File manager: download ----------------------------------------------
     //
-    // GET ?path= streams a single file's raw bytes, or — for a directory or
-    // multiple paths—a zip archive. The `paths` query parameter is a
+    // GET ?path= streams a single file's raw bytes. A directory, or multiple
+    // paths, comes back as a zip archive. The `paths` query parameter is a
     // newline-delimited list for the multi-select case; a single `path` is the
     // common case. The panel proxies the response body straight through, so
     // large downloads never buffer in the panel's memory.
@@ -953,10 +992,11 @@ const server = Bun.serve<ConsoleSocket, never>({
         const { ZipArchive } = await import("archiver");
         const archive = new ZipArchive({ zlib: { level: 5 } });
         for (const entry of resolved) {
-          // `archive.directory` only works on directories — it calls scandir
-          // internally, which throws ENOTDIR on a file. Use `archive.file` for
-          // files and `archive.directory` for folders, naming each entry with
-          // its basename so the zip's top level isn't a single nested dir.
+          // `archive.directory` only works on directories, because it calls
+          // scandir internally, which throws ENOTDIR on a file. Use
+          // `archive.file` for files and `archive.directory` for folders,
+          // naming each entry with its basename so the zip's top level isn't
+          // a single nested dir.
           if (entry.info.isDirectory) {
             archive.directory(entry.absPath, entry.info.name);
           } else {
@@ -989,6 +1029,227 @@ const server = Bun.serve<ConsoleSocket, never>({
         });
       }),
     },
+
+    // --- Backups --------------------------------------------------------------
+    //
+    // restic-to-S3 backups, run by the agent in throwaway containers. The panel
+    // supplies the S3 credentials and the repository password on every call and
+    // the agent persists neither, the same posture the database routes take with
+    // the MariaDB admin credential.
+    //
+    // Two scopes, deliberately separate (see `docs/backups.md`):
+    //   - `servers/:id`: that server's data directory. Owner-triggered.
+    //   - `databases`:   every database on THIS node. Admin-triggered, and the
+    //                     only backup route that accepts the root-equivalent
+    //                     MariaDB admin credential.
+    //
+    // Backup and restore are *asynchronous*: they take minutes to hours, so the
+    // route registers a job and returns its id, and the panel polls for status
+    // and drains the job's log. The snapshot quota is enforced inside the job,
+    // before the new snapshot is written. Listing, deleting and measuring are
+    // synchronous metadata operations.
+
+    /**
+     * POST /v1/backups/servers/:id. Backs up a server's files. 202 with a job id.
+     *
+     * Body: { repo: { s3, password }, keepMax, reason, exclude[] }
+     *
+     * Files only. Databases are backed up at node scope. See below.
+     */
+    "/v1/backups/servers/:id": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+
+        // One job per subject at a time: two restics on one repository contend on
+        // its lock, and a backup racing a restore would snapshot half-restored data.
+        if (hasRunningJob(serverSubject(serverId))) {
+          throw conflict(
+            "A backup or restore is already running for this server on this node.",
+          );
+        }
+
+        const jobId = startServerBackup(serverId, {
+          repo: parseRepoTarget(body, "server", serverId),
+          keepMax: parseKeepMax(body),
+          reason: parseReason(body),
+          exclude: parseExclude(body),
+        });
+
+        return json({ jobId }, 202);
+      }),
+    },
+
+    /**
+     * POST /v1/backups/servers/:id/restore. Restores a server's files.
+     *
+     * The panel stops the server before calling and starts it again afterwards:
+     * it owns the container lifecycle and the status the owner sees.
+     */
+    "/v1/backups/servers/:id/restore": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+
+        if (hasRunningJob(serverSubject(serverId))) {
+          throw conflict(
+            "A backup or restore is already running for this server on this node.",
+          );
+        }
+
+        const jobId = startServerRestore(serverId, {
+          repo: parseRepoTarget(body, "server", serverId),
+          snapshotId: parseSnapshotId(body.snapshotId),
+        });
+
+        return json({ jobId }, 202);
+      }),
+    },
+
+    /**
+     * POST /v1/backups/databases. Backs up every database on this node.
+     *
+     * Body: { repo, nodeId, databases[], admin: { user, password }, keepMax, reason }
+     *
+     * Admin-scoped: dumping every tenant's database needs the node's MariaDB
+     * admin credential, so this is the one backup route that takes one. `nodeId`
+     * addresses the repository; the agent does not know its own node id, since
+     * that identity belongs to the panel's registry.
+     */
+    "/v1/backups/databases": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+
+        if (hasRunningJob(NODE_DATABASES_SUBJECT)) {
+          throw conflict(
+            "A database backup or restore is already running on this node.",
+          );
+        }
+
+        const nodeId = requireServerId(
+          typeof body.nodeId === "string" ? body.nodeId : undefined,
+        );
+
+        const jobId = startDatabaseBackup({
+          repo: parseRepoTarget(body, "node", nodeId),
+          databases: parseDatabaseNames(body),
+          admin: parseDbAdmin(body),
+          keepMax: parseKeepMax(body),
+          reason: parseReason(body),
+        });
+
+        return json({ jobId }, 202);
+      }),
+    },
+
+    /**
+     * POST /v1/backups/databases/restore. Restores this node's databases.
+     *
+     * Each dump is imported with `CREATE DATABASE IF NOT EXISTS` first, because
+     * the reason to run this is usually that the databases are gone. The panel
+     * re-provisions the scoped users and grants from its own encrypted records.
+     */
+    "/v1/backups/databases/restore": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+
+        if (hasRunningJob(NODE_DATABASES_SUBJECT)) {
+          throw conflict(
+            "A database backup or restore is already running on this node.",
+          );
+        }
+
+        const nodeId = requireServerId(
+          typeof body.nodeId === "string" ? body.nodeId : undefined,
+        );
+
+        const jobId = startDatabaseRestore({
+          repo: parseRepoTarget(body, "node", nodeId),
+          snapshotId: parseSnapshotId(body.snapshotId),
+          databases: parseDatabaseNames(body),
+          admin: parseDbAdmin(body),
+        });
+
+        return json({ jobId }, 202);
+      }),
+    },
+
+    /**
+     * GET /v1/backups/jobs/:jobId. Polls a job of either scope.
+     *
+     * `?afterSeq=N` returns only log lines newer than N, so the panel drains the
+     * log incrementally instead of re-reading it on every poll.
+     */
+    "/v1/backups/jobs/:jobId": {
+      GET: route(async (request) => {
+        const jobId = (request as ParamRequest<"jobId">).params.jobId;
+        const afterSeq = Number(queryOf(request).get("afterSeq") ?? "0");
+        return json(readJob(jobId, Number.isFinite(afterSeq) ? afterSeq : 0));
+      }),
+    },
+
+    /**
+     * POST /v1/backups/snapshots. Lists a repository's snapshots.
+     *
+     * Body: { scope, id, repo }
+     *
+     * POST rather than GET because the S3 credentials and repository password
+     * travel in the body; putting them in a query string would put them in every
+     * access log between the panel and the node.
+     */
+    "/v1/backups/snapshots": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+        const { scope, id } = parseSubject(body);
+        const snapshots = await listSnapshots(parseRepoTarget(body, scope, id));
+        return json({ snapshots });
+      }),
+    },
+
+    /** POST /v1/backups/forget. Deletes one snapshot and reclaims its space. */
+    "/v1/backups/forget": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+        const { scope, id } = parseSubject(body);
+        await deleteSnapshot(
+          parseRepoTarget(body, scope, id),
+          parseSnapshotId(body.snapshotId),
+        );
+        return noContent();
+      }),
+    },
+
+    /**
+     * POST /v1/backups/size. Deduplicated bytes a repository occupies.
+     *
+     * Backs the admin page's storage line. `null` means the size could not be
+     * read, which is deliberately distinct from `0` (a repository that genuinely
+     * holds nothing). Reporting an unreadable repository as empty would
+     * understate the fleet's usage, the one number this exists to get right.
+     */
+    "/v1/backups/size": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+        const { scope, id } = parseSubject(body);
+        return json({ sizeBytes: await repositorySize(parseRepoTarget(body, scope, id)) });
+      }),
+    },
+
+    /**
+     * POST /v1/backups/check. Verifies S3 from this node.
+     *
+     * Backs the admin settings page's "test connection" button. A repository that
+     * does not exist yet is a success: that is the expected state before the first
+     * backup, and initialising one to prove connectivity would leave debris in the
+     * operator's bucket.
+     */
+    "/v1/backups/check": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+        const { scope, id } = parseSubject(body);
+        return json(await checkRepository(parseRepoTarget(body, scope, id)));
+      }),
+    },
   },
 
   /**
@@ -1000,8 +1261,8 @@ const server = Bun.serve<ConsoleSocket, never>({
    *
    * The upgrade happens synchronously (Bun's `server.upgrade` must run before
    * the fetch Response is committed), carrying the token in `ws.data`. The token
-   * is then validated against the panel in the `open` handler — before any
-   * container attach — and the socket is closed if the panel rejects it. This
+   * is then validated against the panel in the `open` handler, before any
+   * container attach, and the socket is closed if the panel rejects it. This
    * keeps the upgrade on the documented synchronous path while still enforcing
    * validation before any access. The long-lived bearer is NOT used here: the
    * capability token is the sole credential, which is what lets a browser (which
@@ -1115,7 +1376,7 @@ const server = Bun.serve<ConsoleSocket, never>({
      *
      * The capability token was validated at `open`, so the caller is authorized
      * for this server; the per-command audit is recorded via the panel callback
-     * (`recordConsoleCommand`) — fire-and-forget, so input latency never depends
+     * (`recordConsoleCommand`), fire-and-forget, so input latency never depends
      * on the audit trail.
      */
     message(ws, message) {
@@ -1138,7 +1399,8 @@ const server = Bun.serve<ConsoleSocket, never>({
 
       // Attribute the command to the token's user via the panel's audit table.
       // `void`: a console command must never block on (or fail because of) the
-      // audit trail — the callback swallows its own errors (see consoleAudit.ts).
+      // audit trail, and the callback swallows its own errors (see
+      // consoleAudit.ts).
       void recordConsoleCommand(ws.data.token, ws.data.serverId, line);
 
       attachment.write(line);
@@ -1160,26 +1422,44 @@ const server = Bun.serve<ConsoleSocket, never>({
 
 const scheme = config.tlsCert && config.tlsKey ? "https" : "http";
 console.log(`[agent] CitadelPanel node agent listening on ${scheme}://0.0.0.0:${server.port}`);
-console.log(`[agent] docker socket: ${config.dockerSocket}`);
+
+// Prints the socket and, when the daemon cannot be reached, which of the two
+// usual causes it is and the command that fixes it. Runs before the data-root
+// report because an agent that cannot reach Docker can do nothing at all.
+await reportDockerSocketAtBoot();
 
 // Prints the data root and, when it is not writable, the command that fixes it.
 // Runs after `Bun.serve` so a slow or broken filesystem cannot delay the agent
 // accepting requests (see `dataRoot.ts` on why this does not exit).
 await reportDataRootAtBoot();
 
+// Detect userns-remap and cache the uid/gid offsets every file write consults;
+// also the one place a "remapped daemon, non-root agent" misconfiguration is
+// called out. See docker/userns.ts.
+await reportUsernsAtBoot(docker);
+
+// When CONTAINER_RUNTIME names a runtime this daemon does not have, say so
+// once here instead of failing every container create.
+await reportContainerRuntimeAtBoot();
+
+// A backup container that outlived the process holds a restic repository lock,
+// which fails every later backup of that subject. Boot is the only moment when
+// none of ours is running, so it is where they get swept.
+await removeOrphanedToolContainers();
+
 // --- SFTP server ------------------------------------------------------------
 //
 // Starts on its own TCP port (default 8022), in this same process. Auth is
-// delegated to the panel via `sftpAuth.ts` — the same callback posture the
-// direct console uses — so `PANEL_URL` is required. Without it the SFTP server
+// delegated to the panel via `sftpAuth.ts`, the same callback posture the
+// direct console uses, so `PANEL_URL` is required. Without it the SFTP server
 // still starts but every auth attempt is rejected (the panel cannot be reached
 // to validate the credential), and we log that clearly so an operator knows
 // why connections fail.
 if (config.sftpPort > 0) {
   if (!config.panelUrl) {
     console.warn(
-      `[agent] SFTP server will start on port ${config.sftpPort} but PANEL_URL is not set — ` +
-        "all SFTP logins will be rejected. Set PANEL_URL to enable SFTP auth.",
+      `[agent] SFTP server will start on port ${config.sftpPort} but PANEL_URL is not set. ` +
+        "All SFTP logins will be rejected. Set PANEL_URL to enable SFTP auth.",
     );
   }
   try {
@@ -1188,7 +1468,7 @@ if (config.sftpPort > 0) {
     console.log(`[agent] SFTP server listening on 0.0.0.0:${config.sftpPort}`);
   } catch (error) {
     // A failure to start the SFTP server (host-key generation, port in use)
-    // must not take down the HTTP/WS agent — lifecycle routes still work.
+    // must not take down the HTTP/WS agent. Lifecycle routes still work.
     console.error(
       "[agent] SFTP server failed to start:",
       error instanceof Error ? error.message : error,

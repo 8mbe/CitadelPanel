@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-import { getServer, getServerStats, type ServerStats } from "@/lib/api";
+import { getServer, getServerStats } from "@/lib/api";
 import { isProvisioning } from "@/lib/server-status";
 import type { ServerStatus, ServerView } from "@/lib/types";
 
@@ -11,8 +11,8 @@ import type { ServerStatus, ServerView } from "@/lib/types";
  *
  * The server layout loads one {@link ServerView} and shares it with every
  * section (console, players, settings, …) through this context, so each section
- * route does not re-fetch. Live status is mutable here — power controls flip it
- * and the header/console read it — while the rest of the record is refreshed
+ * route does not re-fetch. Live status is mutable here, because power controls
+ * flip it and the header/console read it. The rest of the record is refreshed
  * from the backend on demand.
  */
 interface ServerDataValue {
@@ -21,42 +21,24 @@ interface ServerDataValue {
   setStatus: (status: ServerStatus) => void;
   /** Re-fetch the server record (e.g. after an env or resource change). */
   refresh: () => Promise<void>;
+  /**
+   * Register interest in the live resource sample. Returns the unsubscribe.
+   * Use {@link useLiveResourceStats} rather than calling this directly.
+   */
+  watchStats: () => () => void;
 }
 
 const ServerDataContext = React.createContext<ServerDataValue | null>(null);
 
 export function ServerDataProvider({
   initial,
-  initialStats,
   children,
 }: {
   initial: ServerView;
-  /**
-   * A resource sample the layout fetched *alongside* the server record, so the
-   * first paint already shows CPU/memory/disk instead of zeroes waiting on the
-   * provider's own first poll. When present, the provider skips its immediate
-   * on-mount sample (the interval below still keeps them live) — the two fetches
-   * ran in parallel, so re-firing one here would just duplicate a request.
-   */
-  initialStats?: ServerStats | null;
   children: React.ReactNode;
 }) {
-  const [server, setServer] = React.useState<ServerView>(() =>
-    initialStats
-      ? {
-          ...initial,
-          cpuPercent: Math.round(initialStats.cpuPercent),
-          memoryUsedMb: Math.round(initialStats.memoryUsageMb),
-          diskUsedMb: Math.round(initialStats.diskUsageMb),
-        }
-      : initial,
-  );
+  const [server, setServer] = React.useState<ServerView>(initial);
   const [status, setStatus] = React.useState<ServerStatus>(initial.status);
-
-  // True only until the first stats effect runs: it lets that first run skip the
-  // immediate sample when the layout already handed us one. A ref (not state) so
-  // flipping it never triggers a re-render.
-  const skipFirstImmediateSample = React.useRef(initialStats != null);
 
   const refresh = React.useCallback(async () => {
     const fresh = await getServer(initial.id);
@@ -66,31 +48,64 @@ export function ServerDataProvider({
     }
   }, [initial.id]);
 
-  // While the server is still being built, re-read the record itself rather
-  // than a resource sample: there is no container to sample, and the thing worth
-  // knowing is when the provision ends. This is what lets the shell's installing
-  // gate fall away on its own — an owner who opened the page mid-install gets
-  // their server without reloading, and an admin watching the install log sees
-  // the console take over. Provisioning is minutes long, so 5s is plenty.
+  // While the server is mid-transition, re-read the record itself rather than a
+  // resource sample: what matters is when the transition ends, not what the CPU
+  // is doing.
+  //
+  // Provisioning (`creating`/`installing`) is the long case: there is no
+  // container to sample, and this poll is what lets the shell's installing gate
+  // fall away on its own. An owner who opened the page mid-install gets their
+  // server without reloading, and an admin watching the install log sees the
+  // console take over. Minutes long, so 5s is plenty.
+  //
+  // `starting`/`stopping` are the short case, and they need the *other* cadence.
+  // A stop is seconds, and it is the window in which the power controls offer
+  // Kill, and a page that opened during someone else's stop has to see the stop
+  // land, or it sits on a Kill button for a server that is already down.
+  const recordPollMs = isProvisioning(status)
+    ? 5000
+    : status === "starting" || status === "stopping"
+      ? 2000
+      : null;
+
   React.useEffect(() => {
-    if (!isProvisioning(status)) return;
+    if (recordPollMs === null) return;
 
     let cancelled = false;
     const interval = setInterval(() => {
       if (!cancelled) void refresh().catch(() => undefined);
-    }, 5000);
+    }, recordPollMs);
 
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [status, refresh]);
+  }, [recordPollMs, refresh]);
+
+  // How many mounted components are actually showing the resource sample.
+  //
+  // This provider wraps the whole server page, but the stats cards live in one
+  // section (the console). Polling unconditionally meant every other tab, files,
+  // settings, backups and activity, sat there sampling CPU on a timer for
+  // numbers nobody was looking at. Consumers declare their interest through
+  // {@link useLiveResourceStats}, and the poll below runs only while at least one
+  // of them is mounted.
+  const [statsWatchers, setStatsWatchers] = React.useState(0);
+
+  const watchStats = React.useCallback(() => {
+    setStatsWatchers((n) => n + 1);
+    return () => setStatsWatchers((n) => n - 1);
+  }, []);
+
+  // Only whether anyone is watching, not how many: a second consumer mounting
+  // must not tear down and restart the running interval.
+  const statsWanted = statsWatchers > 0;
 
   // Poll a live resource sample so the stats cards and status stay current
   // without a manual refresh.
   //
   // Cadence depends on status: while running, sample every 5s for CPU/mem/disk.
-  // While stopped or errored, keep sampling every 30s — disk usage is a
+  // While stopped or errored, keep sampling every 30s. Disk usage is a
   // property of the data directory and still changes offline (world saves,
   // manual file edits), and the agent reports it even with the container
   // stopped. CPU/mem come back zeroed in that case, which is correct. Other
@@ -103,7 +118,7 @@ export function ServerDataProvider({
         : null;
 
   React.useEffect(() => {
-    if (pollIntervalMs === null) return;
+    if (pollIntervalMs === null || !statsWanted) return;
 
     let cancelled = false;
     const tick = async () => {
@@ -121,24 +136,26 @@ export function ServerDataProvider({
       }
     };
 
-    // Skip the immediate sample only on the very first run, and only when the
-    // layout already seeded one. Any later run (a status change flipping the
-    // cadence) still samples right away so the cards react without a poll delay.
-    if (skipFirstImmediateSample.current) {
-      skipFirstImmediateSample.current = false;
-    } else {
-      void tick();
-    }
+    // Sample right away so the cards react without a poll delay, then keep the
+    // interval. Any later effect run (a status change flipping the cadence)
+    // samples immediately for the same reason.
+    void tick();
     const interval = setInterval(tick, pollIntervalMs);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [status, pollIntervalMs, initial.id]);
+  }, [status, pollIntervalMs, statsWanted, initial.id]);
 
   const value = React.useMemo<ServerDataValue>(
-    () => ({ server: { ...server, status }, status, setStatus, refresh }),
-    [server, status, refresh],
+    () => ({
+      server: { ...server, status },
+      status,
+      setStatus,
+      refresh,
+      watchStats,
+    }),
+    [server, status, refresh, watchStats],
   );
 
   return (
@@ -154,6 +171,20 @@ export function useServerData(): ServerDataValue {
     throw new Error("useServerData must be used inside a ServerDataProvider");
   }
   return ctx;
+}
+
+/**
+ * Declare that this component is displaying the live resource sample.
+ *
+ * The provider polls `/stats` only while at least one component has said this,
+ * so the poll follows what is on screen rather than running for the whole time
+ * a server page is open. Call it from the component that renders the numbers.
+ * Keeping the declaration next to the display is what stops the two drifting
+ * apart when a section moves.
+ */
+export function useLiveResourceStats(): void {
+  const { watchStats } = useServerData();
+  React.useEffect(() => watchStats(), [watchStats]);
 }
 
 /**

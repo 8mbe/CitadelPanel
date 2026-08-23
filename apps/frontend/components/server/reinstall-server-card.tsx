@@ -34,9 +34,10 @@ import { isProvisioning } from "@/lib/server-status";
  *
  * Written out rather than summarised as "resets the server" because the two
  * halves are the whole decision: everything the owner *made* is in the first
- * list, and everything that would make them hesitate for the wrong reason —
- * losing their address, their database, the people they share the server with —
- * is in the second. Both lists are shown before the confirmation, not after it.
+ * list, and the second holds everything that would make them hesitate for the
+ * wrong reason, such as losing their address, their database, or the people
+ * they share the server with. Both lists are shown before the confirmation,
+ * not after it.
  */
 const DELETED = [
   "Worlds and save data",
@@ -57,7 +58,7 @@ const KEPT = [
  * Reinstall the server from its blueprint: the destructive action on the
  * settings page.
  *
- * Owner-or-admin only, matching the endpoint — a subuser with `settings` can
+ * Owner-or-admin only, matching the endpoint. A subuser with `settings` can
  * change env vars but cannot erase the server. Two confirmations stand between
  * the button and the request, and they are deliberately different in kind: the
  * first is a page of consequences to read, the second asks for the server's name
@@ -162,7 +163,7 @@ function FileList({
  *
  * Step one restates the consequence in one sentence and offers a way out; step
  * two asks for the checkbox *and* the server's name. Nothing is sent until both
- * are satisfied — and the backend refuses the request on its own if the name is
+ * are satisfied, and the backend refuses the request on its own if the name is
  * wrong, so a client that skipped this dialog gains nothing.
  */
 function ReinstallDialog({ onClose }: { onClose: () => void }) {
@@ -230,7 +231,7 @@ function ReinstallDialog({ onClose }: { onClose: () => void }) {
 
             <p className="text-sm text-muted-foreground">
               The server will be stopped, wiped, and rebuilt. That takes a few
-              minutes, and it comes back stopped — you start it when you are
+              minutes, and it comes back stopped. You start it when you are
               ready for players on it.
             </p>
 

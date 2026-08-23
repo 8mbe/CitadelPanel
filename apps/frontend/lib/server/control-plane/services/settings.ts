@@ -1,5 +1,5 @@
 /**
- * Panel settings — runtime configuration held in `panel_settings`.
+ * Panel settings, the runtime configuration held in `panel_settings`.
  *
  * These are the knobs an admin turns in the UI (timezone, captcha), as opposed
  * to the boot-critical values in `.env`. The split matters: anything the backend
@@ -8,7 +8,7 @@
  * Reads are cached in-process because the captcha config is consulted on every
  * sign-in and sign-up. The cache is invalidated on write, and its TTL bounds how
  * long a second panel replica can serve stale settings after the first one
- * changed them — a few seconds of staleness on a timezone or captcha toggle is
+ * changed them. A few seconds of staleness on a timezone or captcha toggle is
  * acceptable; a per-request round trip on every auth call is not.
  */
 
@@ -43,7 +43,7 @@ export interface StoredCaptchaSettings {
   secretKeyEncrypted: string | null;
   /**
    * Self-hosted verification base URL. Only meaningful for `cap`, which is
-   * self-hosted and therefore has no fixed provider endpoint — Turnstile and
+   * self-hosted and therefore has no fixed provider endpoint. Turnstile and
    * reCAPTCHA verify against known Cloudflare/Google URLs.
    */
   apiEndpoint: string | null;
@@ -180,7 +180,7 @@ export async function getCaptchaSettings(): Promise<StoredCaptchaSettings> {
  *
  * `enabled` is reported false unless the config is actually usable. A provider
  * with no site key would render a broken widget, and a widget the user cannot
- * solve locks them out of sign-in entirely — worse than no captcha.
+ * solve locks them out of sign-in entirely, worse than no captcha.
  */
 export async function getPublicCaptchaSettings(): Promise<PublicCaptchaSettings> {
   const captcha = await getCaptchaSettings();
@@ -235,7 +235,7 @@ export async function setCaptchaSettings(
   const apiEndpoint =
     update.apiEndpoint === undefined ? current.apiEndpoint : update.apiEndpoint;
 
-  // An omitted secretKey keeps the existing ciphertext — the plaintext is never
+  // An omitted secretKey keeps the existing ciphertext. The plaintext is never
   // readable again, so a settings form cannot round-trip it.
   const secretKeyEncrypted =
     update.secretKey === undefined
@@ -280,7 +280,7 @@ export async function setCaptchaSettings(
  * Mirrors the captcha pattern deliberately: a provider picked at runtime and
  * stored here, with secrets encrypted at rest. Better Auth's email callbacks
  * (`sendVerificationEmail`, `sendResetPassword`, `sendChangeEmailConfirmation`)
- * are functions, so they can read this on each send — a change in the admin UI
+ * are functions, so they can read this on each send. A change in the admin UI
  * takes effect immediately, with no restart, which the static `emailVerification`
  * config options could not offer.
  *
@@ -354,7 +354,7 @@ export async function getMailSettings(): Promise<StoredMailSettings> {
 
 /**
  * Mail config for the browser, reporting only that a secret exists (never the
- * value). `enabled` is reported false unless the config is actually usable — a
+ * value). `enabled` is reported false unless the config is actually usable. A
  * half-entered provider must never be treated as "mail is on".
  */
 export async function getPublicMailSettings(): Promise<PublicMailSettings> {
@@ -418,7 +418,7 @@ export interface MailUpdate {
 /**
  * Update the mail configuration.
  *
- * Enabling requires a complete, usable config — checked here so the setup
+ * Enabling requires a complete, usable config, checked here so the setup
  * wizard, admin settings page, and the runtime `isMailUsable` check all agree.
  * Disabling keeps the stored secrets so toggling back on does not mean
  * re-entering them.
@@ -485,8 +485,8 @@ export async function setMailSettings(
  *
  * This is a runtime knob rather than Better Auth's static `requireEmailVerification`
  * option precisely so an admin can toggle it without a redeploy. It is only
- * meaningful when mail is configured — there is no way to verify an email
- * without a way to send one — so the hook also checks `isMailUsable`.
+ * meaningful when mail is configured. There is no way to verify an email
+ * without a way to send one, so the hook also checks `isMailUsable`.
  */
 export interface VerificationPolicy {
   requireVerifiedSignIn: boolean;
@@ -521,7 +521,7 @@ export async function setVerificationPolicy(
  *
  * `maxAdditionalPortsPerServer` caps how many *additional* (non-blueprint, non
  * -primary) port mappings an owner may add to a single server. Blueprint ports
- * assigned at creation are never counted against this — only ports the owner
+ * assigned at creation are never counted against this, only ports the owner
  * adds afterwards through the settings page.
  *
  * A panel-wide knob (rather than per-owner or per-blueprint) on purpose: it is a
@@ -595,13 +595,13 @@ export async function setServerLimits(
 // --- AI assistant -------------------------------------------------------------
 
 /**
- * AI assistant configuration — an OpenAI-compatible chat endpoint the panel
+ * AI assistant configuration: an OpenAI-compatible chat endpoint the panel
  * calls server-side to help users read their console output.
  *
  * Mirrors the captcha/mail pattern deliberately: a provider picked at runtime
  * and stored here, with the API key encrypted at rest. The panel composes every
  * prompt (logs, game, version, the user's question) and the browser only sends
- * the free-text question — so the prompt is never client-controlled, the same
+ * the free-text question, so the prompt is never client-controlled, the same
  * "panel-composed, never browser-supplied" posture the database explorer takes
  * with SQL. The API key never reaches the browser; the public view reports only
  * that one is stored.
@@ -647,7 +647,7 @@ export async function getAiSettings(): Promise<StoredAiSettings> {
 
 /**
  * AI config for the browser, reporting only that a key exists (never the
- * value). `enabled` is reported false unless the config is actually usable — a
+ * value). `enabled` is reported false unless the config is actually usable. A
  * half-entered provider must never be treated as "AI is on".
  */
 export async function getPublicAiSettings(): Promise<PublicAiSettings> {
@@ -689,7 +689,7 @@ export interface AiUpdate {
 /**
  * Update the AI configuration.
  *
- * Enabling requires a complete, usable config — checked here so the setup
+ * Enabling requires a complete, usable config, checked here so the setup
  * wizard, admin settings page, and the runtime `isAiUsable` check all agree.
  * Disabling keeps the stored key so toggling back on does not mean re-entering
  * it.
@@ -736,7 +736,7 @@ export async function setAiSettings(
  *
  * "CitadelPanel" is the default, not a constant. An operator running this for a
  * hosting brand renames it here once and every surface follows, because the name
- * is read from settings rather than hardcoded per component — which is also why
+ * is read from settings rather than hardcoded per component. That is also why
  * the header no longer carries a fixed product glyph beside it.
  */
 export interface BrandingSettings {
@@ -789,7 +789,7 @@ export async function setBranding(
 // --- Site theme ---------------------------------------------------------------
 
 /**
- * The operator's palette — the third option in the theme switcher, next to the
+ * The operator's palette, the third option in the theme switcher, next to the
  * fixed light and dark ones.
  *
  * Stored as a base plus a sparse set of token overrides rather than a complete
@@ -799,7 +799,7 @@ export async function setBranding(
  *
  * `normalizeSiteTheme` runs on the way out as well as on the way in. The value
  * ends up inside a `<style>` element, and a row written by an older version of
- * the panel — or by hand — has never been through this validator, so the read
+ * the panel, or by hand, has never been through this validator, so the read
  * path cannot assume the write path cleaned it. See `lib/site-theme.ts`.
  */
 export async function getThemeSettings(): Promise<SiteThemeSettings> {
@@ -832,7 +832,7 @@ export async function setThemeSettings(
  *
  * Turning this off makes the panel invite-only in the only way that matters:
  * the sign-up endpoint refuses. The login form hides its "Create account" tab
- * too, but that is cosmetic — the gate is the Better Auth before-hook in
+ * too, but that is cosmetic. The gate is the Better Auth before-hook in
  * `auth/betterAuth.ts`, which every client shares.
  *
  * The bootstrap window is exempt: while no admin exists, sign-up must work or a
@@ -994,7 +994,7 @@ export async function setSeoSettings(
  *
  * Two providers, both script-tag-only: Plausible (cookieless, self-hostable)
  * and Google Analytics 4. Neither needs a server-side secret, so unlike captcha
- * or mail there is nothing here to encrypt — the measurement id and domain are
+ * or mail there is nothing here to encrypt. The measurement id and domain are
  * public by construction, visible in the page source of any site using them.
  *
  * The panel never proxies analytics traffic. When `enabled` is false no script
@@ -1043,7 +1043,7 @@ export async function getAnalyticsSettings(): Promise<AnalyticsSettings> {
 
 /**
  * True when the stored config can actually emit a working snippet. A provider
- * chosen but left unconfigured must not be treated as "analytics is on" — it
+ * chosen but left unconfigured must not be treated as "analytics is on". It
  * would inject a script tag that 404s on every page load.
  */
 export function isAnalyticsUsable(analytics: AnalyticsSettings): boolean {
@@ -1196,6 +1196,281 @@ export async function setLegalDocument(
   };
   await writeSetting("legal", next satisfies LegalSettings, updatedBy);
   return next;
+}
+
+// --- Backups ------------------------------------------------------------------
+
+/**
+ * S3 backup configuration.
+ *
+ * Panel-wide rather than per-server, and per-node not at all: one bucket holds the
+ * fleet's snapshots (one restic repository per server and per node inside it, see
+ * `docs/backups.md`), and an operator configures the destination once.
+ *
+ * The two scopes are configured separately because they are different jobs owned
+ * by different people. Server **file** backups are taken by server owners and
+ * capped per server; **database** backups sweep every database on a node and are
+ * taken by administrators. An operator commonly wants one running and not the
+ * other, so they get their own schedules and their own limits.
+ *
+ * The secret access key lives inside this setting but is AES-256-GCM encrypted
+ * before it is written, so as with captcha, mail and AI, nothing in the stored
+ * value may be handed to a client as-is.
+ */
+export interface StoredBackupSettings {
+  enabled: boolean;
+  /** Bare S3 host with optional port, no scheme. The scheme comes from `useTls`. */
+  endpoint: string | null;
+  /**
+   * Whether nodes reach the endpoint over TLS.
+   *
+   * Defaults to true, and is a field of its own rather than part of `endpoint`, so
+   * plaintext is always a deliberate choice somebody made and never something you
+   * arrive at by pasting a URL. It has to be possible though: a self-hosted
+   * Garage, MinIO or SeaweedFS on a LAN usually has no certificate, which is the
+   * normal case for an operator self-hosting this panel.
+   */
+  useTls: boolean;
+  /**
+   * Signing region. Not cosmetic, because it is part of the SigV4 signature, so a
+   * wrong value fails authentication rather than being ignored. Self-hosted servers pick
+   * their own: Garage defaults to `garage`, MinIO accepts anything.
+   */
+  region: string;
+  bucket: string | null;
+  /** Key prefix inside the bucket; `servers/` and `nodes/` nest below it. */
+  prefix: string;
+  accessKeyId: string | null;
+  secretAccessKeyEncrypted: string | null;
+  storage: BackupStorageLimits;
+  servers: ServerBackupPolicy;
+  databases: DatabaseBackupPolicy;
+}
+
+/**
+ * How much storage backups may use.
+ *
+ * `quotaBytes` is enforced: once the measured total reaches it, new backups are
+ * refused with an explanation rather than the operator discovering the overage on
+ * an invoice. `capacityBytes` is display-only, because S3 exposes no capacity API.
+ * The size of the operator's storage plan is something only they can tell us, so
+ * the admin page shows it as context beside used and allowed rather than
+ * pretending to have discovered it. Zero means unset for both.
+ */
+export interface BackupStorageLimits {
+  quotaBytes: number;
+  capacityBytes: number;
+}
+
+/** Server file backups: when, how many, and what to leave out. */
+export interface ServerBackupPolicy {
+  /** Five-field cron, in the panel timezone. Empty = manual backups only. */
+  schedule: string;
+  /**
+   * Snapshots kept per server. A new backup deletes the oldest to stay inside
+   * this. 0 means unlimited.
+   */
+  maxPerServer: number;
+  /**
+   * Data-directory-relative glob patterns to leave out of every server snapshot.
+   * Admin-controlled: excluding regenerable data shrinks every snapshot on every
+   * server, which is a fleet-wide decision rather than a per-owner one.
+   */
+  exclude: string[];
+  /**
+   * How many servers the scheduler backs up at once.
+   *
+   * Every concurrent backup is a restic container reading a disk and saturating
+   * upstream bandwidth, so this is a throttle on the fleet, not a performance
+   * dial. Two keeps a large fleet moving overnight without making the games
+   * unplayable while it does.
+   */
+  concurrency: number;
+}
+
+/** Node database backups: when, and how many per node. */
+export interface DatabaseBackupPolicy {
+  /** Five-field cron, in the panel timezone. Empty = manual backups only. */
+  schedule: string;
+  /** Snapshots kept per node. 0 means unlimited. */
+  maxPerNode: number;
+}
+
+/** Backup config safe to hand to a browser: no secret key, just "is one stored?". */
+export interface PublicBackupSettings {
+  enabled: boolean;
+  endpoint: string | null;
+  useTls: boolean;
+  region: string;
+  bucket: string | null;
+  prefix: string;
+  accessKeyId: string | null;
+  hasSecretAccessKey: boolean;
+  storage: BackupStorageLimits;
+  servers: ServerBackupPolicy;
+  databases: DatabaseBackupPolicy;
+  /** Whether the stored config is complete enough to actually run a backup. */
+  usable: boolean;
+}
+
+const DEFAULT_STORAGE: BackupStorageLimits = { quotaBytes: 0, capacityBytes: 0 };
+
+const DEFAULT_SERVER_POLICY: ServerBackupPolicy = {
+  schedule: "",
+  maxPerServer: 5,
+  exclude: [],
+  concurrency: 2,
+};
+
+const DEFAULT_DATABASE_POLICY: DatabaseBackupPolicy = {
+  schedule: "",
+  maxPerNode: 5,
+};
+
+const DEFAULT_BACKUPS: StoredBackupSettings = {
+  enabled: false,
+  endpoint: null,
+  useTls: true,
+  region: "us-east-1",
+  bucket: null,
+  prefix: "citadel",
+  accessKeyId: null,
+  secretAccessKeyEncrypted: null,
+  storage: DEFAULT_STORAGE,
+  servers: DEFAULT_SERVER_POLICY,
+  databases: DEFAULT_DATABASE_POLICY,
+};
+
+export async function getBackupSettings(): Promise<StoredBackupSettings> {
+  const stored = await readSetting<Partial<StoredBackupSettings>>("backups", DEFAULT_BACKUPS);
+  return {
+    ...DEFAULT_BACKUPS,
+    ...stored,
+    // Each nested group is merged field-by-field. A partially-written group must
+    // not leave a limit undefined: `undefined` reaches the agent as "no limit",
+    // and silently unlimited retention is how a bucket quietly grows forever.
+    storage: { ...DEFAULT_STORAGE, ...(stored.storage ?? {}) },
+    servers: {
+      ...DEFAULT_SERVER_POLICY,
+      ...(stored.servers ?? {}),
+      exclude: Array.isArray(stored.servers?.exclude) ? stored.servers.exclude : [],
+    },
+    databases: { ...DEFAULT_DATABASE_POLICY, ...(stored.databases ?? {}) },
+  };
+}
+
+/**
+ * True when the stored config has everything a backup needs.
+ *
+ * Checked separately from `enabled` so a half-entered destination is never treated
+ * as "backups are on". The UI reports it as unusable and the scheduler skips it
+ * rather than failing every server in the fleet once an hour.
+ */
+export function isBackupConfigUsable(settings: StoredBackupSettings): boolean {
+  return Boolean(
+    settings.enabled &&
+      settings.endpoint &&
+      settings.bucket &&
+      settings.region &&
+      settings.accessKeyId &&
+      settings.secretAccessKeyEncrypted,
+  );
+}
+
+export async function getPublicBackupSettings(): Promise<PublicBackupSettings> {
+  const backups = await getBackupSettings();
+  return {
+    enabled: backups.enabled,
+    endpoint: backups.endpoint,
+    useTls: backups.useTls,
+    region: backups.region,
+    bucket: backups.bucket,
+    prefix: backups.prefix,
+    accessKeyId: backups.accessKeyId,
+    hasSecretAccessKey: backups.secretAccessKeyEncrypted !== null,
+    storage: backups.storage,
+    servers: backups.servers,
+    databases: backups.databases,
+    usable: isBackupConfigUsable(backups),
+  };
+}
+
+/** The decrypted S3 secret key, or null when backups are not configured. */
+export async function getBackupSecretAccessKey(): Promise<string | null> {
+  const backups = await getBackupSettings();
+  if (!backups.secretAccessKeyEncrypted) return null;
+  return decryptSecret(backups.secretAccessKeyEncrypted);
+}
+
+export interface BackupSettingsUpdate {
+  enabled: boolean;
+  endpoint?: string | null;
+  useTls?: boolean;
+  region?: string | null;
+  bucket?: string | null;
+  prefix?: string | null;
+  accessKeyId?: string | null;
+  /** Plaintext; encrypted here. Omit to keep the stored secret unchanged. */
+  secretAccessKey?: string | null;
+  storage?: Partial<BackupStorageLimits>;
+  servers?: Partial<ServerBackupPolicy>;
+  databases?: Partial<DatabaseBackupPolicy>;
+}
+
+/**
+ * Update the backup configuration.
+ *
+ * Enabling requires a complete destination, checked here so the admin page and the
+ * scheduler's `isBackupConfigUsable` cannot disagree. Disabling keeps the stored
+ * secret key, so turning backups off for an evening does not mean re-entering it,
+ * and, more importantly, does not mean losing the credential that reads the
+ * existing snapshots.
+ *
+ * Schedule validation lives in the route (which owns the operator-facing error
+ * messages from `parseCron`); this stores what it is given.
+ */
+export async function setBackupSettings(
+  update: BackupSettingsUpdate,
+  updatedBy: string | null,
+): Promise<void> {
+  const current = await getBackupSettings();
+
+  const next: StoredBackupSettings = {
+    enabled: update.enabled,
+    endpoint: update.endpoint === undefined ? current.endpoint : update.endpoint,
+    useTls: update.useTls === undefined ? current.useTls : update.useTls,
+    region: update.region ? update.region : current.region,
+    bucket: update.bucket === undefined ? current.bucket : update.bucket,
+    prefix: update.prefix === undefined ? current.prefix : (update.prefix ?? ""),
+    accessKeyId: update.accessKeyId === undefined ? current.accessKeyId : update.accessKeyId,
+    // Omitted secret keeps the existing ciphertext; an explicit empty string
+    // clears it. Same convention as the mail and AI settings.
+    secretAccessKeyEncrypted:
+      update.secretAccessKey === undefined
+        ? current.secretAccessKeyEncrypted
+        : update.secretAccessKey
+          ? encryptSecret(update.secretAccessKey)
+          : null,
+    storage: { ...current.storage, ...(update.storage ?? {}) },
+    servers: { ...current.servers, ...(update.servers ?? {}) },
+    databases: { ...current.databases, ...(update.databases ?? {}) },
+  };
+
+  if (next.enabled && !isBackupConfigUsable(next)) {
+    throw new Error(
+      "A complete S3 destination is required to enable backups: endpoint, region, " +
+        "bucket, access key ID, and secret access key.",
+    );
+  }
+  if (next.storage.quotaBytes > 0 && next.storage.capacityBytes > 0 &&
+      next.storage.quotaBytes > next.storage.capacityBytes) {
+    throw new Error(
+      "The backup storage limit cannot exceed the total capacity you have recorded " +
+        "for this bucket.",
+    );
+  }
+
+  await writeSetting("backups", next satisfies StoredBackupSettings, updatedBy);
 }
 
 // --- Setup state --------------------------------------------------------------

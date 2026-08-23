@@ -1,7 +1,7 @@
 /**
  * Tests for the error-shape contract the panel and the browser read.
  *
- * The message is for a human; `code` is what callers branch on — the panel
+ * The message is for a human; `code` is what callers branch on. The panel
  * rebuilds a container it is told is missing, and the console says a rebuild is
  * coming rather than echoing Docker. Both break silently if the tag stops
  * riding along with the response, which is what these assertions pin down.

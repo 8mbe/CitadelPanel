@@ -45,7 +45,7 @@ export interface SiteSettings {
    * `FRONTEND_URL`. Used as `metadataBase` and by `robots.txt`/`sitemap.xml`.
    */
   siteUrl: string;
-  /** The operator's palette — the third theme. See `docs/theming.md`. */
+  /** The operator's palette, the third theme. See `docs/theming.md`. */
   theme: SiteThemeSettings;
 }
 
@@ -82,7 +82,7 @@ export const getSiteSettings = cache(async (): Promise<SiteSettings> => {
 /**
  * Which legal documents are published, for the footer.
  *
- * Only the booleans — the bodies are large and the footer needs none of them.
+ * Only the booleans. The bodies are large and the footer needs none of them.
  * Falls back to "neither" on a read failure, which degrades to a footer with no
  * legal links rather than a crashed layout.
  */
@@ -103,7 +103,7 @@ export const getLegalAvailability = cache(async (): Promise<LegalAvailability> =
  *
  * `robots` is emitted explicitly rather than left to the default. A control
  * panel is an authenticated surface, so `allowIndexing` is off by default and
- * this sends `noindex, nofollow` until an operator opts in — which keeps the
+ * this sends `noindex, nofollow` until an operator opts in, which keeps the
  * meta tag and `robots.txt` (see `app/robots.ts`) making the same statement.
  */
 export async function buildSiteMetadata(): Promise<Metadata> {

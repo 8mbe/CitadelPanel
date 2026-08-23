@@ -1,7 +1,7 @@
 /**
  * Tests for the site theme's normaliser and CSS builder.
  *
- * `buildSiteThemeCss` does no escaping — it is allowed not to, because
+ * `buildSiteThemeCss` does no escaping. It is allowed not to, because
  * `normalizeSiteTheme` guarantees every value it sees was produced by
  * `formatOklch`. These tests are what that guarantee rests on, so they cover
  * the stored-row cases (unknown keys, wrong types, a value that was never

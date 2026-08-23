@@ -1,13 +1,13 @@
 /**
  * Starting points for the operator-authored legal documents.
  *
- * The panel ships **no** default terms or privacy policy — see the note in
+ * The panel ships **no** default terms or privacy policy. See the note in
  * `services/settings.ts`. What it can honestly provide is a factual inventory:
  * this file enumerates the data CitadelPanel's own code stores, where it stores
  * it, and how long it keeps it, so an operator writing a privacy policy is not
  * reverse-engineering the schema to find out what they are disclosing.
  *
- * Everything here is a *draft*. It describes the software, not the operator —
+ * Everything here is a *draft*. It describes the software, not the operator, so
  * it cannot know about the host's backups, log shipping, upstream provider, or
  * jurisdiction, and it says so in the placeholders. The admin editor inserts it
  * into an empty document and the admin edits from there.
@@ -55,7 +55,7 @@ When you create an account we store:
 
 - **Your name and email address**, as you entered them.
 - **A hash of your password.** The plaintext password is never stored and
-  cannot be recovered — only reset.
+  cannot be recovered, only reset.
 - **Whether your email address has been verified.**
 - **Your role** (regular user or administrator).
 - **Two-factor authentication secrets and backup codes**, if you enable 2FA.
@@ -74,7 +74,7 @@ When you create an account we store:
 
 ## Activity and security logging
 
-The panel keeps an audit log of privileged actions — starting and stopping
+The panel keeps an audit log of privileged actions: starting and stopping
 servers, editing files, changing settings, administrative actions, and similar.
 Each entry records:
 
@@ -99,8 +99,9 @@ visible to administrators of this panel.
 For each server you own or have been granted access to, the panel stores its
 configuration (name, resource limits, which node it runs on, published ports,
 environment variables, linked servers, and provisioned databases) and the files
-in its data directory. Values marked as secret — database passwords, secret
-environment variables, node access tokens — are encrypted at rest.
+in its data directory. Values marked as secret are encrypted at rest. That
+covers database passwords, secret environment variables, and node access
+tokens.
 
 Files you upload to a server are stored on the node that runs it. The operator
 can technically access them; treat anything you upload as visible to the
@@ -170,8 +171,8 @@ The operator may update this policy. ${TODO}: say how users will be told.
  * A terms-of-service skeleton.
  *
  * Much shorter than the privacy draft on purpose. Terms are almost entirely
- * about the operator's own rules — acceptable use, payment, uptime, suspension
- * — and the software knows nothing about those. Inventing clauses would only
+ * about the operator's own rules: acceptable use, payment, uptime, suspension.
+ * The software knows nothing about those. Inventing clauses would only
  * produce something an operator might publish unread.
  */
 export function termsOfServiceTemplate(siteName: string): string {
@@ -182,7 +183,7 @@ _Last updated: ${TODO}_
 These terms govern your use of ${siteName}, operated by ${TODO}.
 
 > **Operator: this is a skeleton, not a contract.** Unlike the privacy draft,
-> almost nothing here can be filled in from the software — your acceptable-use
+> almost nothing here can be filled in from the software. Your acceptable-use
 > rules, pricing, refunds, uptime commitments, and liability position are
 > yours. Write each section or delete it. If you charge money or operate
 > commercially, have a lawyer review the result.

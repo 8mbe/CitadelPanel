@@ -49,20 +49,51 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { UsageMeter } from "@/components/usage-meter";
 import {
   adminCreateNode,
   adminProbeNodeConnection,
   adminTestNodeConnection,
   ApiError,
+  type NodeHealthResult,
 } from "@/lib/api";
 import { formatMb, formatRelative, nodeReachability } from "@/lib/format";
 import type { NodeAllocation, NodeView } from "@/lib/types";
 
 /**
+ * The one thing worth telling an admin about a *reachable* agent.
+ *
+ * A node can answer its health check and still be unable to host anything: no
+ * Docker socket, or no writable data root. Both used to be discovered as a
+ * failed server creation, so both are folded into one string the connection
+ * test can show, worst first, since an agent that cannot reach Docker will not
+ * get as far as needing the data root.
+ */
+function agentProblem(health: NodeHealthResult): string | undefined {
+  if (health.dockerSocket && !health.dockerSocket.reachable) {
+    return (
+      "This node's agent cannot reach Docker, so every container action will fail. " +
+      (health.dockerSocket.error ??
+        `The socket at ${health.dockerSocket.path} is unreachable.`)
+    );
+  }
+
+  if (health.dataRoot && !health.dataRoot.writable) {
+    return (
+      "This node cannot store server data yet, so provisioning will fail. " +
+      (health.dataRoot.error ??
+        `Its data root ${health.dataRoot.path} is not writable by the agent.`)
+    );
+  }
+
+  return undefined;
+}
+
+/**
  * Register-a-node dialog.
  *
  * Calls POST /api/admin/nodes for real. When the operator leaves the token
- * blank the backend generates one and returns it **once** — the dialog then
+ * blank the backend generates one and returns it **once**. The dialog then
  * shows that token with a copy button and does not let it be dismissed by
  * accident, because it can never be retrieved again.
  */
@@ -99,8 +130,8 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
         state: "ok";
         dockerVersion?: string;
         containersRunning?: number;
-        /** Set when the agent answered but cannot write its data root. */
-        dataRootError?: string;
+        /** Set when the agent answered but cannot actually host a server. */
+        nodeProblem?: string;
       }
     | { state: "unauthorized" }
     | { state: "error"; message: string }
@@ -145,13 +176,9 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
               dockerVersion: health.dockerVersion,
               containersRunning: health.containersRunning,
               // Caught here rather than at the first provision: a node whose
-              // data root the agent cannot write to answers health checks
-              // perfectly and then fails every server creation.
-              dataRootError:
-                health.dataRoot && !health.dataRoot.writable
-                  ? (health.dataRoot.error ??
-                    `Its data root ${health.dataRoot.path} is not writable by the agent.`)
-                  : undefined,
+              // Docker socket or data root the agent cannot use answers health
+              // checks perfectly and then fails every server creation.
+              nodeProblem: agentProblem(health),
             }
           : health.unauthorized
             ? { state: "unauthorized" }
@@ -292,7 +319,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                   />
                   <FieldDescription>
                     Where the node agent is listening. Use https:// or keep it on
-                    a private network — the token below grants full control of
+                    a private network. The token below grants full control of
                     that machine.
                   </FieldDescription>
                 </Field>
@@ -306,8 +333,8 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                   />
                   <FieldDescription>
                     Public address browsers use for the direct console
-                    (wss://). Leave blank to derive it from the Agent URL —
-                    fine when that URL is already browser-reachable.
+                    (wss://). Leave blank to derive it from the Agent URL, which
+                    works when that URL is already browser-reachable.
                   </FieldDescription>
                 </Field>
                 <Field>
@@ -326,7 +353,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                   />
                   <FieldDescription>
                     The agent&apos;s AGENT_TOKEN. If left blank, one is generated
-                    and shown once — you then set it on the agent and restart it.
+                    and shown once. You then set it on the agent and restart it.
                   </FieldDescription>
                 </Field>
                 <Field>
@@ -398,8 +425,8 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                     Allow overcommit
                   </FieldLabel>
                   <FieldDescription>
-                    Ignore the reservation and allocate against the full total —
-                    for nodes that intentionally oversubscribe.
+                    Ignore the reservation and allocate against the full total.
+                    For nodes that intentionally oversubscribe.
                   </FieldDescription>
                 </Field>
 
@@ -412,8 +439,8 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                     <FieldDescription>
                       Run <code className="font-mono">bun run setup-db</code> on
                       the node first, then enter the credentials it prints. This
-                      is a one-time step — enables database provisioning for all
-                      servers on this node.
+                      is a one-time step. It enables database provisioning for
+                      all servers on this node.
                     </FieldDescription>
                   </div>
                   <Switch
@@ -479,18 +506,18 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                 <div
                   role="status"
                   className={
-                    probe.state === "ok" && !probe.dataRootError
+                    probe.state === "ok" && !probe.nodeProblem
                       ? "flex items-start gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm"
                       : probe.state === "unauthorized" ||
-                          (probe.state === "ok" && probe.dataRootError)
+                          (probe.state === "ok" && probe.nodeProblem)
                         ? "flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm"
                         : "flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
                   }
                 >
-                  {probe.state === "ok" && !probe.dataRootError ? (
+                  {probe.state === "ok" && !probe.nodeProblem ? (
                     <Check className="mt-0.5 size-4 shrink-0 text-emerald-500" />
                   ) : probe.state === "unauthorized" ||
-                    (probe.state === "ok" && probe.dataRootError) ? (
+                    (probe.state === "ok" && probe.nodeProblem) ? (
                     <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
                   ) : (
                     <TriangleAlert className="mt-0.5 size-4 shrink-0" />
@@ -512,13 +539,12 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                           </>
                         ) : null}
                         {/* Amber, not red: the connection details are correct
-                          and worth saving — it is the node that needs fixing
+                          and worth saving. It is the node that needs fixing
                           before it can host a server. */}
-                        {probe.dataRootError ? (
+                        {probe.nodeProblem ? (
                           <>
                             <br />
-                            This node cannot store server data yet, so
-                            provisioning will fail. {probe.dataRootError}
+                            {probe.nodeProblem}
                           </>
                         ) : null}
                       </>
@@ -547,7 +573,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                   variant="outline"
                   onClick={testConnection}
                   // The probe needs both a URL and a token. With no token, the
-                  // operator intends to generate one — which cannot be tested
+                  // operator intends to generate one, which cannot be tested
                   // until it is set on the agent, so disable rather than 401.
                   disabled={
                     probing || submitting || !apiUrl.trim() || !token.trim()
@@ -588,7 +614,7 @@ function GeneratedToken({ token }: { token: string }) {
       <div className="flex items-start gap-2 text-sm">
         <KeyRound className="mt-0.5 size-4 shrink-0 text-amber-500" />
         <span className="text-muted-foreground">
-          Copy this token now — it is stored encrypted and cannot be shown again.
+          Copy this token now. It is stored encrypted and cannot be shown again.
           Set it as <code className="text-foreground">AGENT_TOKEN</code> on the
           node and restart its agent.
         </span>
@@ -627,15 +653,15 @@ export function NodeCard({
     : 0;
 
   // Test-connection state. No toast library is wired up, so feedback is shown
-  // inline beneath the button — the same pattern the mail test button uses.
+  // inline beneath the button, the same pattern the mail test button uses.
   const [testing, setTesting] = React.useState(false);
   const [result, setResult] = React.useState<
     | {
         reachable: true;
         dockerVersion?: string;
         containersRunning?: number;
-        /** Set only when the agent reports a data root it cannot write to. */
-        dataRootError?: string;
+        /** Set only when the agent reports something that stops it hosting. */
+        nodeProblem?: string;
       }
     | { reachable: false; error: string }
     | null
@@ -652,13 +678,10 @@ export function NodeCard({
               reachable: true,
               dockerVersion: health.dockerVersion,
               containersRunning: health.containersRunning,
-              // A writable data root is the difference between "connected" and
-              // "connected but every provision will fail".
-              dataRootError:
-                health.dataRoot && !health.dataRoot.writable
-                  ? (health.dataRoot.error ??
-                    `Its data root ${health.dataRoot.path} is not writable by the agent.`)
-                  : undefined,
+              // A usable Docker socket and a writable data root are the
+              // difference between "connected" and "connected but every
+              // provision will fail".
+              nodeProblem: agentProblem(health),
             }
           : { reachable: false, error: health.error ?? "No response from agent." },
       );
@@ -690,7 +713,7 @@ export function NodeCard({
             </Link>
           </CardTitle>
           {/* Reachability is inferred from heartbeat freshness, not the drain
-            toggle — a drained node can still be reachable, and a reachable
+            toggle. A drained node can still be reachable, and a reachable
             node can be out of rotation. */}
           <Badge
             variant="outline"
@@ -744,6 +767,11 @@ export function NodeCard({
 
         <Separator />
 
+        {/*
+          Allocation, not live use: these bars say how much of the node is
+          already promised to servers, so a full one means nothing more can be
+          scheduled here. Same thresholds as everywhere else.
+        */}
         <div className="grid gap-2 text-xs">
           <div className="flex justify-between text-muted-foreground">
             <span>Memory allocated</span>
@@ -751,24 +779,14 @@ export function NodeCard({
               {formatMb(allocation?.memoryAllocatedMb ?? 0)} · {memPct}%
             </span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-primary"
-              style={{ width: `${memPct}%` }}
-            />
-          </div>
+          <UsageMeter value={memPct} label="Memory allocated" />
           <div className="flex justify-between text-muted-foreground">
             <span>Disk allocated</span>
             <span className="tabular-nums">
               {formatMb(allocation?.diskAllocatedMb ?? 0)} · {diskPct}%
             </span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-primary"
-              style={{ width: `${diskPct}%` }}
-            />
-          </div>
+          <UsageMeter value={diskPct} label="Disk allocated" />
         </div>
 
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -799,12 +817,12 @@ export function NodeCard({
           <div
             role="status"
             className={
-              result.reachable && !result.dataRootError
+              result.reachable && !result.nodeProblem
                 ? "flex items-start gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-2.5 text-xs"
                 : "flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs text-destructive"
             }
           >
-            {result.reachable && !result.dataRootError ? (
+            {result.reachable && !result.nodeProblem ? (
               <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-500" />
             ) : (
               <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
@@ -823,15 +841,12 @@ export function NodeCard({
                       {result.containersRunning === 1 ? "" : "s"} running
                     </>
                   ) : null}
-                  {/* Reachable but unable to store data: say so here, because
-                    the next thing this admin does is provision a server. */}
-                  {result.dataRootError ? (
+                  {/* Reachable but unable to host: say so here, because the
+                    next thing this admin does is provision a server. */}
+                  {result.nodeProblem ? (
                     <>
                       <br />
-                      <span className="text-destructive">
-                        Cannot store server data — provisioning will fail.
-                      </span>{" "}
-                      {result.dataRootError}
+                      <span className="text-destructive">{result.nodeProblem}</span>
                     </>
                   ) : null}
                 </>

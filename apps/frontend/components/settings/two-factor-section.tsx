@@ -473,7 +473,7 @@ function RegenerateDialog({
             <DialogHeader>
               <DialogTitle>New backup codes</DialogTitle>
               <DialogDescription>
-                Save these now — they cannot be shown again.
+                Save these now. They cannot be shown again.
               </DialogDescription>
             </DialogHeader>
             <BackupCodesDisplay codes={codes} />

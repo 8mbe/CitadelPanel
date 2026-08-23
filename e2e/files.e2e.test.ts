@@ -1,7 +1,7 @@
 /**
  * E2E tests for the server file-manager routes (see routes/files.ts).
  *
- * All of these require the `files` permission — the same grant the file
+ * All of these require the `files` permission, the same grant the file
  * manager UI uses. The panel is a thin proxy onto the node agent here: it
  * authorizes, audits, and forwards; the containment boundary (path
  * traversal, symlink escape, size caps) lives agent-side in
@@ -12,7 +12,7 @@
  * data). The user key has no relationship to that server, so the auth
  * middleware returns 404 (info-leak prevention). Write routes (write/delete/
  * rename/copy/upload/pull) are gated + validated but not exercised against
- * real files — they would mutate the seeded server's data directory.
+ * real files. They would mutate the seeded server's data directory.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -24,7 +24,7 @@ describe("GET /api/servers/:id/files (list a directory)", () => {
     const { serverId } = await loadFixtures();
     const res = await api(`/api/servers/${serverId}/files?path=/`, { key: config.adminKey });
     expectStatus(res, 200);
-    // The agent returns its own listing shape — the panel forwards it verbatim.
+    // The agent returns its own listing shape. The panel forwards it verbatim.
     expect(res.body).toBeDefined();
   });
 

@@ -5,7 +5,7 @@
  * table's Data/Structure views on the right.
  *
  * The explorer is opened from the Databases tab and replaces it until the
- * owner navigates back — one database at a time, matching how a game server
+ * owner navigates back. One database at a time, matching how a game server
  * uses exactly one connection at a time.
  */
 
@@ -124,7 +124,7 @@ export function DatabaseExplorer({
             </div>
           ) : tables !== null && tables.length === 0 ? (
             <p className="px-1 py-4 text-xs text-muted-foreground">
-              No tables yet — create the first one.
+              No tables yet. Create the first one.
             </p>
           ) : (
             <nav className="flex min-w-0 flex-col gap-0.5" aria-label="Tables">

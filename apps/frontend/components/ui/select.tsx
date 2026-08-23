@@ -10,7 +10,7 @@ import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
  * Collect a value→label map from `SelectItem` descendants.
  *
  * Base UI's `Select.Value` renders the selected *value* (our ids/keys) unless
- * `Select.Root` is given an `items` map — unlike Radix, it does not infer the
+ * `Select.Root` is given an `items` map. Unlike Radix, it does not infer the
  * label from the chosen item's text. Deriving the map here, from the labels
  * already written as `SelectItem` children, makes every Select in the app show
  * the label with no per-call-site bookkeeping.

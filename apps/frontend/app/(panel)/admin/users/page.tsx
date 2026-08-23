@@ -237,7 +237,7 @@ export default function AdminUsersPage() {
                       {user.serverCount}
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground tabular-nums">
-                      {user.createdAt ? formatRelative(user.createdAt) : "—"}
+                      {user.createdAt ? formatRelative(user.createdAt) : "Unknown"}
                     </TableCell>
                     <TableCell>
                       <UserActions
@@ -359,8 +359,8 @@ function UnbanItem({
  *
  * Duration is offered as presets (Never / 1h / 1d / 1w) plus the backend also
  * accepts a raw seconds value; the presets cover the common cases cleanly. On
- * ban, the user's sessions are revoked and their servers suspended — the copy
- * makes that explicit.
+ * ban, the user's sessions are revoked and their servers suspended, and the
+ * copy makes that explicit.
  */
 function BanDialog({
   user,

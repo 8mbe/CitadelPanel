@@ -25,7 +25,7 @@ process.env.BETTER_AUTH_SECRET ??= "test-auth-secret-value-for-unit-tests-000000
  * The agent's data root for the whole test run.
  *
  * `src/config.ts` caches SERVER_DATA_ROOT at first import, and bun runs every
- * test file in one process with one module registry — so whichever file
+ * test file in one process with one module registry, so whichever file
  * imports config first would otherwise lock in the `.env` value, pointing
  * filesystem tests at the developer's real server data. Setting it here,
  * before any test module runs, gives every root-dependent test the same temp
@@ -33,8 +33,8 @@ process.env.BETTER_AUTH_SECRET ??= "test-auth-secret-value-for-unit-tests-000000
  *
  * Fixtures (per-server trees, outside-root canaries) are created in `beforeAll`
  * rather than at module scope, so test files stay independent of each other's
- * setup order. Cleanup happens once at process exit — a per-file afterAll would
- * depend on file ordering.
+ * setup order. Cleanup happens once at process exit, because a per-file
+ * afterAll would depend on file ordering.
  */
 export const testRoot = await mkdtemp(join(tmpdir(), "citadel-agent-test-"));
 process.env.SERVER_DATA_ROOT = testRoot;

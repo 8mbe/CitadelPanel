@@ -2,7 +2,7 @@
  * Server-side captcha verification.
  *
  * A captcha is only worth anything if the *server* validates the token. The
- * widget in the browser proves nothing on its own — a client can simply not run
+ * widget in the browser proves nothing on its own. A client can simply not run
  * it and post the form directly. So every protected endpoint goes through
  * `verifyCaptcha` before the underlying handler sees the request.
  *
@@ -14,10 +14,10 @@
  *   google-recaptcha      hosted, v2 checkbox or v3 score (minScore applies)
  *   cap                   self-hosted (capjs / trycap.dev), proof-of-work
  *
- * FAIL CLOSED: if verification cannot be completed — provider unreachable,
- * timeout, malformed response — the request is rejected. Failing open would mean
- * an attacker gets a free pass by making the provider unreachable, which is the
- * one condition they can most easily induce.
+ * FAIL CLOSED: if verification cannot be completed, the request is rejected.
+ * That covers an unreachable provider, a timeout and a malformed response.
+ * Failing open would mean an attacker gets a free pass by making the provider
+ * unreachable, which is the one condition they can most easily induce.
  */
 
 import { getCaptchaSecret, getCaptchaSettings } from "../services/settings";

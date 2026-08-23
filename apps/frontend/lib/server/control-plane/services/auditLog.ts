@@ -3,7 +3,7 @@
  *
  * Every state-changing action gets a row. Audit writes must never break the
  * operation they are recording, so failures are logged and swallowed rather
- * than propagated — a lost log line is preferable to a failed server start.
+ * than propagated. A lost log line is preferable to a failed server start.
  */
 
 import { sql } from "../db/client";
@@ -50,6 +50,13 @@ export type AuditAction =
   | "server.plugin.toggle"
   | "server.plugin.settings"
   | "server.plugin.auto-update"
+  | "server.backup.create"
+  | "server.backup.restore"
+  | "server.backup.delete"
+  | "server.backup.settings"
+  | "node.database.backup"
+  | "node.database.restore"
+  | "node.database.backup.delete"
   | "server.sftp.auth"
   | "server.sftp.credential.create"
   | "server.sftp.credential.regenerate"
@@ -106,7 +113,7 @@ export interface AuditEntry {
 /**
  * Write an audit row.
  *
- * Metadata should describe *what changed*, never *secret values* — callers must
+ * Metadata should describe *what changed*, never *secret values*. Callers must
  * not put passwords, tokens or TLS keys in here.
  */
 export async function recordAudit(entry: AuditEntry): Promise<void> {
@@ -137,13 +144,13 @@ export async function recordAuditFromRequest(
 
 /**
  * When the request was authenticated with an API key (either header
- * convention — see `middleware.withApiKeyHeaderAlias`), stamp the entry's
+ * convention, see `middleware.withApiKeyHeaderAlias`), stamp the entry's
  * metadata so the audit trail distinguishes "the admin clicked this" from "a
  * script holding the admin's key did". `viaKeyPrefix` records the first 8
- * chars of the credential actually used — distinct from a handler-supplied
- * `keyPrefix`, which names the key being *acted on* (the two are often
- * different keys). Never the key material itself is recorded. Requests from
- * the panel UI never carry these headers, and a request bearing an invalid
+ * chars of the credential actually used, which is distinct from a
+ * handler-supplied `keyPrefix` naming the key being *acted on* (the two are
+ * often different keys). Never the key material itself is recorded. Requests
+ * from the panel UI never carry these headers, and a request bearing an invalid
  * key is rejected 401 before any audited handler runs, so header presence at
  * this point means the key authenticated.
  */

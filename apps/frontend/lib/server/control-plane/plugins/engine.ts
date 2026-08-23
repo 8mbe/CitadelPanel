@@ -1,5 +1,5 @@
 /**
- * Plugin fetch engine — the generic interpreter for a blueprint's provider
+ * Plugin fetch engine: the generic interpreter for a blueprint's provider
  * fetch spec (`PluginFetchSpec`).
  *
  * There are no per-provider modules: a blueprint declares its catalog's
@@ -10,8 +10,8 @@
  *   - GET-only requests to the spec's validated https origin, with the SSRF
  *     blocklist re-checked at fetch time (protects against DB tampering) and
  *     against the host a redirect actually landed on;
- *   - templates are interpolated from a fixed variable vocabulary — never
- *     evaluated — and values the profile can't supply resolve to empty query
+ *   - templates are interpolated from a fixed variable vocabulary, never
+ *     evaluated, and values the profile can't supply resolve to empty query
  *     params, which are omitted;
  *   - responses are size-capped, JSON-only, and read exclusively through the
  *     spec's dot-path field mappings, with every mapped string/array trimmed;
@@ -19,8 +19,12 @@
  *     entry and pass the blocklist before the agent is ever asked to fetch.
  *
  * Nothing a catalog returns reaches a command line, a container or anything
- * executable — the only side effect downstream is an inert `.jar` file write
+ * executable. The only side effect downstream is an inert `.jar` file write
  * through the agent's contained `files/pull`.
+ *
+ * Dot-path reads, field coercion and the project-page URL are the pure half.
+ * They live in `mapping.ts`, which has no env or network dependency and is unit
+ * tested directly.
  */
 
 import type {
@@ -30,6 +34,19 @@ import type {
 } from "../blueprints/plugins";
 import { badRequest } from "../lib/http";
 import { isBlockedHost } from "../lib/ssrf";
+import {
+  asChannel,
+  asGameVersionList,
+  asNumber,
+  asString,
+  asStringList,
+  interpolate,
+  isRecord,
+  pick,
+  providerProjectUrl,
+} from "./mapping";
+
+export { providerProjectUrl } from "./mapping";
 
 // --- Normalized results --------------------------------------------------------
 
@@ -45,6 +62,8 @@ export interface ProviderSearchResult {
   categories: string[];
   /** Game versions the project supports (trimmed). */
   gameVersions: string[];
+  /** The catalog's page for this project, when the spec declares a site. */
+  projectUrl?: string;
 }
 
 export interface ProviderVersionFile {
@@ -84,32 +103,11 @@ const REQUEST_TIMEOUT_MS = 8_000;
 const MAX_RESPONSE_BYTES = 1_000_000;
 const MAX_SEARCH_LIMIT = 20;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return (
-    typeof value === "object" && value !== null && !Array.isArray(value)
-  );
-}
-
-/** Read a dot-path ("a.b") out of a JSON value; missing keys read as undefined. */
-function pick(source: unknown, path: string | undefined): unknown {
-  if (!path) return undefined;
-  return path.split(".").reduce<unknown>(
-    (acc, key) => (isRecord(acc) ? acc[key] : undefined),
-    source,
-  );
-}
-
-/** Substitute `{var}` templates. Unknown names are left empty by construction:
- *  validation only admits the fixed vocabulary, and `vars` always defines it. */
-function interpolate(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{([A-Za-z]+)\}/g, (_, name: string) => vars[name] ?? "");
-}
-
 /**
  * The values every template may reference. `loaders`/`gameVersions` are JSON
  * arrays ("" when the profile has none, so the param is omitted); `facets` is
- * the composed facet grammar. Deliberately no env values — no secret-leakage
- * channel from servers into catalog queries.
+ * the composed facet grammar. Deliberately no env values, so there is no
+ * secret-leakage channel from servers into catalog queries.
  */
 function templateVars(
   spec: PluginFetchSpec,
@@ -143,9 +141,10 @@ function templateVars(
 
 /**
  * Fetch and parse one endpoint's JSON. Returns null on 404 (callers decide
- * whether that means "unknown project" or an error). Everything else — network
- * failure, redirect to a blocked host, oversized or non-JSON body — is a
- * 400-shaped error naming the provider id, never a stack trace.
+ * whether that means "unknown project" or an error). Everything else is a
+ * 400-shaped error naming the provider id, never a stack trace. That covers a
+ * network failure, a redirect to a blocked host, and an oversized or non-JSON
+ * body.
  */
 async function fetchEndpoint(
   spec: PluginFetchSpec,
@@ -187,7 +186,7 @@ async function fetchEndpoint(
     );
   }
 
-  // Followed redirects may only land on public hosts — a catalog 3xx must not
+  // Followed redirects may only land on public hosts. A catalog 3xx must not
   // turn the panel into an internal-network client.
   if (isBlockedHost(new URL(response.url).hostname)) {
     throw badRequest(`Plugin catalog "${spec.id}" redirected to a blocked host.`);
@@ -209,38 +208,6 @@ async function fetchEndpoint(
   } catch {
     throw badRequest(`Plugin catalog "${spec.id}" returned an unreadable response.`);
   }
-}
-
-// --- Coercion of mapped fields ---------------------------------------------------
-
-function asString(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function asNumber(value: unknown): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function asStringList(value: unknown, cap: number): string[] {
-  return Array.isArray(value)
-    ? value.filter((v): v is string => typeof v === "string").slice(0, cap)
-    : [];
-}
-
-/**
- * Game-version lists must arrive whole: compatibility checks use
- * `includes(currentVersion)`, and catalogs return these lists in arbitrary
- * (Modrinth's search: oldest-first) order, so a truncation can cut off
- * exactly the version a current server runs. 200 is a sanity bound against
- * pathological payloads, not a meaningful limit.
- */
-function asGameVersionList(value: unknown): string[] {
-  return asStringList(value, 200);
-}
-
-function asChannel(value: unknown): "release" | "beta" | "alpha" {
-  return value === "beta" || value === "alpha" ? value : "release";
 }
 
 // --- Endpoint operations ---------------------------------------------------------
@@ -279,9 +246,15 @@ export async function engineSearch(
 
     const slug = fields.slug ? asString(pick(hit, fields.slug)) : "";
     const iconUrl = fields.iconUrl ? asString(pick(hit, fields.iconUrl)) : "";
+    const projectUrl = providerProjectUrl(spec, {
+      projectId,
+      slug,
+      projectType: support.projectType,
+    });
     results.push({
       projectId,
       ...(slug ? { slug } : {}),
+      ...(projectUrl ? { projectUrl } : {}),
       title,
       description: fields.description ? asString(pick(hit, fields.description)) : "",
       author: fields.author ? asString(pick(hit, fields.author)) : "",
@@ -407,8 +380,8 @@ export async function engineGetVersion(
 // --- Download guards ------------------------------------------------------------
 
 /**
- * Enforce the spec's download-host pin on a file URL. Every install path —
- * manual or auto-update — must pass through this before the agent is asked to
+ * Enforce the spec's download-host pin on a file URL. Every install path,
+ * manual or auto-update, must pass through this before the agent is asked to
  * pull anything.
  */
 export function assertDownloadUrl(spec: PluginFetchSpec, url: string): URL {

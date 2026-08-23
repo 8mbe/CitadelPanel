@@ -19,7 +19,7 @@ export const dynamic = "force-dynamic";
  *
  * Two visitors must never reach the form:
  *   - anyone arriving at a fresh install whose first-admin slot is still
- *     claimable — they belong in the wizard;
+ *     claimable, since they belong in the wizard;
  *   - anyone who already holds a session, who has nothing to gain from signing
  *     in again and would otherwise be able to create a second account on top of
  *     a live one.
@@ -89,10 +89,10 @@ async function loadSetupStatus(): Promise<SetupStatus | null> {
 /**
  * Reduce a `?next=` value to a safe same-origin path, or undefined.
  *
- * Anything that could leave this origin — absolute URLs, protocol-relative
- * `//host`, the backslash variants browsers normalise — is dropped, so the
- * parameter cannot be used as an open redirect. `/login` itself is dropped too,
- * since honouring it would bounce the visitor straight back here.
+ * Anything that could leave this origin is dropped, so the parameter cannot be
+ * used as an open redirect. That covers absolute URLs, protocol-relative
+ * `//host`, and the backslash variants browsers normalise. `/login` itself is
+ * dropped too, since honouring it would bounce the visitor straight back here.
  */
 function safeNext(value: string | string[] | undefined): string | undefined {
   const raw = Array.isArray(value) ? value[0] : value;

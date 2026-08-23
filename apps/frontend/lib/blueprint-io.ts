@@ -1,14 +1,14 @@
 /**
  * Blueprint I/O: the conversions between a blueprint's several shapes.
  *
- *   BlueprintFile   — the canonical, hand-editable JSON format (import/export).
+ *   BlueprintFile:    the canonical, hand-editable JSON format (import/export).
  *                     Mirrors the code `Blueprint` definition: env as a keyed
  *                     map, ports as `defaultPorts`.
- *   FormValues      — the editable UI shape used by the form dialog. Everything
+ *   FormValues:       the editable UI shape used by the form dialog. Everything
  *                     numeric is a string so partial input doesn't fight inputs.
- *   BlueprintPayload— the wire shape the create/update API accepts (env as a
+ *   BlueprintPayload: the wire shape the create/update API accepts (env as a
  *                     flat `envFields` array).
- *   AdminBlueprintDetail — what the API returns for an existing blueprint.
+ *   AdminBlueprintDetail: what the API returns for an existing blueprint.
  *
  * Keeping all four conversions here means the form dialog, the import dialog and
  * the export action never re-derive them independently.
@@ -54,13 +54,18 @@ export interface BlueprintFile {
   supportsReadOnlyRoot?: boolean;
   startupCommand?: string | null;
   stopCommand?: string | null;
-  defaultPorts: { container: number; protocol: "tcp" | "udp"; primary?: boolean }[];
+  /**
+   * Port numbers the blueprint declares. No protocol: a published port is
+   * claimed on TCP and UDP both. A `protocol` key in an older exported file is
+   * accepted and ignored on import.
+   */
+  defaultPorts: { container: number; primary?: boolean }[];
   envSchema?: Record<string, BlueprintFileEnvField>;
   install?: { image: string; script: string; entrypoint?: string[] | null } | null;
   /**
    * Plugin/mod support, including the provider fetch spec. Travels with the
    * file (shareable like the rest of the blueprint); the backend validates it
-   * strictly on save — https-only catalog hosts that pass the SSRF blocklist,
+   * strictly on save: https-only catalog hosts that pass the SSRF blocklist,
    * pinned download hosts, fixed template vocabulary.
    */
   plugins?: BlueprintPluginsSpec | null;
@@ -71,7 +76,6 @@ export interface BlueprintFile {
 
 export interface PortRow {
   container: string;
-  protocol: "tcp" | "udp";
   primary: boolean;
 }
 
@@ -117,8 +121,8 @@ export interface FormValues {
 
 /**
  * One install profile. With a `pluginEnvField` set, `envValue` names the env
- * value that activates this profile ("" never matches — the default profile
- * is a separate row). `enabled` marks which env values support plugins at all
+ * value that activates this profile ("" never matches, since the default
+ * profile is a separate row). `enabled` marks which env values support plugins at all
  * (e.g. PAPER yes, VANILLA no).
  */
 export interface PluginProfileRow {
@@ -148,7 +152,7 @@ export function emptyForm(): FormValues {
     minCpu: "1",
     minMemoryMb: "1024",
     minDiskMb: "2048",
-    ports: [{ container: "", protocol: "tcp", primary: true }],
+    ports: [{ container: "", primary: true }],
     env: [],
     installEnabled: false,
     installImage: "",
@@ -274,7 +278,6 @@ export function detailToForm(detail: AdminBlueprintDetail): FormValues {
     ports: ensurePrimary(
       detail.defaultPorts.map((p) => ({
         container: String(p.container),
-        protocol: p.protocol,
         primary: p.primary === true,
       })),
     ),
@@ -315,7 +318,6 @@ export function fileToForm(file: BlueprintFile): FormValues {
     ports: ensurePrimary(
       (file.defaultPorts ?? []).map((p) => ({
         container: String(p.container),
-        protocol: p.protocol === "udp" ? "udp" : "tcp",
         primary: p.primary === true,
       })),
     ),
@@ -350,7 +352,6 @@ export function formToPayload(values: FormValues): BlueprintPayload {
     stopCommand: values.stopCommand.trim() || null,
     ports: values.ports.map((p) => ({
       container: Number(p.container),
-      protocol: p.protocol,
       primary: p.primary,
     })),
     envFields: values.env.map((row) => ({
@@ -398,7 +399,6 @@ export function detailToFile(detail: AdminBlueprintDetail): BlueprintFile {
     stopCommand: detail.stopCommand,
     defaultPorts: detail.defaultPorts.map((p) => ({
       container: p.container,
-      protocol: p.protocol,
       ...(p.primary ? { primary: true } : {}),
     })),
     envSchema: detail.envSchema,

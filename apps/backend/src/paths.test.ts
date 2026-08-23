@@ -2,8 +2,8 @@
  * Path containment tests.
  *
  * This is the agent's security boundary: a caller who can escape it can read or
- * overwrite any file the agent's user owns, and — via a bind mount — take the
- * host. The traversal cases below are the ones that actually get tried.
+ * overwrite any file the agent's user owns, and via a bind mount take the host.
+ * The traversal cases below are the ones that actually get tried.
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
@@ -11,12 +11,17 @@ import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 // The data root is a temp directory prepared by the test preload
-// (test-setup.ts) before any test module — and therefore any config import —
-// runs. It is imported here only to learn where it is.
+// (test-setup.ts) before any test module runs, and therefore before any config
+// import runs. It is imported here only to learn where it is.
 const root = (await import("../test-setup")).testRoot;
 
-const { isInside, resolveExistingServerPath, resolveServerPath, serverDataPath } =
-  await import("./paths");
+const {
+  isInside,
+  resolveExistingServerPath,
+  resolveServerPath,
+  resolveWritableServerPath,
+  serverDataPath,
+} = await import("./paths");
 
 const SERVER_ID = "11111111-2222-3333-4444-555555555555";
 
@@ -64,8 +69,8 @@ describe("resolveServerPath", () => {
   });
 
   test("rejects an absolute path to elsewhere on the host", () => {
-    // Reinterpreted as root-relative, so it lands inside — but must not reach
-    // the real /etc/passwd.
+    // Reinterpreted as root-relative, so it lands inside, but it must not
+    // reach the real /etc/passwd.
     expect(resolveServerPath(SERVER_ID, "/etc/passwd")).toBe(
       join(root, SERVER_ID, "etc/passwd"),
     );
@@ -104,5 +109,36 @@ describe("resolveExistingServerPath", () => {
     await expect(
       resolveExistingServerPath(SERVER_ID, "/not-created-yet.txt"),
     ).resolves.toBe(join(root, SERVER_ID, "not-created-yet.txt"));
+  });
+});
+
+describe("resolveWritableServerPath", () => {
+  test("allows writing a brand-new file inside the data directory", async () => {
+    await expect(
+      resolveWritableServerPath(SERVER_ID, "/config/new.yml"),
+    ).resolves.toBe(join(root, SERVER_ID, "config/new.yml"));
+  });
+
+  test("rejects a write through a symlinked directory pointing outside", async () => {
+    // The write-side of the escape resolveExistingServerPath guards on the read
+    // side: the game server plants a symlink to a directory outside its own
+    // tree, then a later write to a path *under* that symlink would follow it.
+    // The target ("planted.txt") does not exist yet, so a lexical check passes
+    // and only the ancestor realpath catches it.
+    await mkdir(join(root, "outside-dir"), { recursive: true });
+    await symlink(
+      join(root, "outside-dir"),
+      join(root, SERVER_ID, "escape-dir"),
+    );
+
+    await expect(
+      resolveWritableServerPath(SERVER_ID, "/escape-dir/planted.txt"),
+    ).rejects.toThrow();
+  });
+
+  test("rejects lexical traversal for writes too", async () => {
+    await expect(
+      resolveWritableServerPath(SERVER_ID, "/../outside-secret.txt"),
+    ).rejects.toThrow();
   });
 });

@@ -63,7 +63,7 @@ export function SubusersTab({ serverId }: { serverId: string }) {
         setError(null);
       } catch (err) {
         if (cancelled) return;
-        // 403 here means the caller is not owner/admin — subuser management is
+        // 403 here means the caller is not owner/admin. Subuser management is
         // owner-only, so present that as an empty, non-actionable state.
         if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
           setSubusers([]);

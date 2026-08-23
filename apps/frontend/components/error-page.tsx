@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
  *
  * Built on `Empty` rather than a new primitive, because "a centred icon, a
  * heading, an explanation, and one or two actions" is exactly what `Empty`
- * already is — an error page is an empty state with a status code.
+ * already is. An error page is an empty state with a status code.
  *
  * Deliberately presentational and hook-free, so the *same* component serves the
  * server-rendered `not-found.tsx` and the client-only `error.tsx` boundaries.
@@ -35,7 +35,7 @@ export function ErrorPage({
   description: React.ReactNode;
   icon: React.ReactNode;
   /**
-   * A short technical hint — typically Next.js's error digest — shown in a
+   * A short technical hint, typically Next.js's error digest, shown in a
    * monospace line under the description. In production a server error's real
    * message is withheld from the browser, so the digest is the only thing that
    * ties what the user saw to what the operator will find in the logs.

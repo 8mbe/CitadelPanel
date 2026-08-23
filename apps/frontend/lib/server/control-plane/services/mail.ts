@@ -3,13 +3,13 @@
  *
  * A thin transport over the operator-chosen provider (SMTP via nodemailer, or
  * Resend over HTTPS), driven by the `mail` row in `panel_settings`. The config
- * is read on every send — Better Auth's email callbacks are functions, not
+ * is read on every send. Better Auth's email callbacks are functions, not
  * static options, so an admin changing SMTP settings in the UI takes effect
  * immediately without a restart.
  *
  * Failure handling is deliberately silent: `sendMail` logs and swallows every
  * error. Better Auth runs these callbacks via `runInBackgroundOrAwait`, so a
- * thrown error would surface as a 500 on a sign-up or sign-in — turning a
+ * thrown error would surface as a 500 on a sign-up or sign-in, turning a
  * transient SMTP outage into a total auth outage. A dropped verification email
  * is recoverable (the user can request another); a blocked sign-in is not.
  */
@@ -38,14 +38,14 @@ export async function isMailConfigured(): Promise<boolean> {
 
 /**
  * Send an email via the configured provider. Returns true on success, false on
- * any failure (including "no mail configured" — treated as a no-op, not an
- * error, so callers in no-mail mode keep working).
+ * any failure. "No mail configured" is treated as a no-op rather than an
+ * error, so callers in no-mail mode keep working.
  */
 export async function sendMail(mail: OutgoingMail): Promise<boolean> {
   const settings = await getMailSettings();
   if (!isMailUsable(settings)) {
     // Not configured: the panel is running without email. This is a normal
-    // state, not a fault — verification/reset are simply unavailable.
+    // state, not a fault. Verification and reset are unavailable.
     return false;
   }
 
@@ -61,7 +61,7 @@ export async function sendMail(mail: OutgoingMail): Promise<boolean> {
     }
     return true;
   } catch (error) {
-    // Swallowed on purpose — see the module comment. The operator sees the
+    // Swallowed on purpose, see the module comment. The operator sees the
     // log; the user never sees a broken auth flow because of it.
     console.error(
       `[mail] failed to send "${mail.subject}" to ${mail.to}:`,

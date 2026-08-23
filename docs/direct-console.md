@@ -1,7 +1,7 @@
 # Direct console (browser → agent WebSocket)
 
 The live server console opens a **WebSocket straight from the browser to the
-node agent** — the panel is not in the data path. This keeps the panel from
+node agent**. The panel is not in the data path. This keeps the panel from
 holding an open connection per viewer and gives the console true bidirectional
 I/O (output + command input over one socket).
 
@@ -14,7 +14,7 @@ single-use capability token** and gets out of the way:
 1. The browser requests a console session: `POST /api/servers/:id/console/session`.
    The panel checks the caller's `console` permission, mints a random UUID
    token, stores a `console_sessions` row (server, user, node, 60s expiry), and
-   returns `{ token, url }` — a `wss://` URL pointing at the agent.
+   returns `{ token, url }`, a `wss://` URL pointing at the agent.
 2. The browser opens `new WebSocket(url)`. The URL path carries the token
    (`/v1/sessions/:token/console`); browsers can't set handshake headers, so the
    token rides the path (it's single-use and short-lived, unlike the agent
@@ -29,7 +29,7 @@ single-use capability token** and gets out of the way:
    agent writes it to the container's stdin **and** fire-and-forgets an audit
    callback (`POST /api/internal/console/audit`). The panel resolves the user
    from the session token (never trusting an agent-supplied userId) and writes
-   the `server.console.command` audit row — so the audit trail is preserved even
+   the `server.console.command` audit row, so the audit trail is preserved even
    though input no longer transits the panel.
 
 The agent stays **stateless**: it pulls validation per-connection rather than
@@ -39,7 +39,7 @@ which gives instant revocation and survives agent restarts.
 ## When the attach fails
 
 An attach that never gets off the ground is reported to the browser as
-`{type:"error", message, code?}` and then the socket closes — a console that
+`{type:"error", message, code?}` and then the socket closes. A console that
 silently shows nothing is worse than one that says why. The optional `code` is
 the machine-readable half of the agent's `HttpError`: the message is written
 for a human, the code is what the browser branches on, so its handling does not
@@ -48,9 +48,9 @@ just falls back to printing the message).
 
 The one code so far is **`no_container`**: the node has no container for this
 server. The console renders that as *"Please wait, rebuilding container…"*
-rather than the agent's Docker fact, because it is a state the panel repairs —
-the next power action rebuilds the container from the stored spec (see
-[server-lifecycle.md](server-lifecycle.md)) — and the console's own reconnect
+rather than the agent's Docker fact, because it is a state the panel repairs.
+The next power action rebuilds the container from the stored spec (see
+[server-lifecycle.md](server-lifecycle.md)), and the console's own reconnect
 loop attaches to the new container when it comes up, with no page reload.
 
 ## Requirements
@@ -62,16 +62,17 @@ loop attaches to the new container when it comes up, with no page reload.
   as mixed content. Set `AGENT_TLS_CERT` + `AGENT_TLS_KEY` on the agent, or put
   it behind a TLS-terminating reverse proxy (Caddy/Nginx) and point the node's
   Console URL at the proxy.
-- **`PANEL_URL`** must be set on the agent — the base URL it calls back to for
-  validate/audit. Without it the agent refuses direct-console connections (503).
+- **`PANEL_URL`** must be set on the agent. It is the base URL the agent calls
+  back to for validate/audit. Without it the agent refuses direct-console
+  connections (503).
 
 ## Node configuration
 
 Each node has two relevant URL fields:
 
-- **Agent URL** (`api_url`) — the panel→agent address. Keep this on a private
+- **Agent URL** (`api_url`): the panel→agent address. Keep this on a private
   network; the panel uses it for all lifecycle calls.
-- **Console URL** (`console_url`, optional) — the browser→agent address for the
+- **Console URL** (`console_url`, optional): the browser→agent address for the
   direct console. When blank, the panel derives `wss://`/`ws://` from the Agent
   URL's scheme (the zero-config homelab case, where the agent is already on the
   LAN). Set it to the public `wss://` address when the agent is behind a reverse
@@ -97,5 +98,5 @@ URL that would fail silently.
   be replayed; a transient WebSocket drop (lag) reconnects without revoking,
   since the user is still on the page.
 - A dropped audit callback (network partition between agent and panel) leaves a
-  command unaudited — fire-and-forget, matching the panel's own "audit must never
+  command unaudited. Fire-and-forget matches the panel's own "audit must never
   break the operation" posture. Monitor panel reachability from agents.

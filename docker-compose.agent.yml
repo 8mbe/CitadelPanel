@@ -1,4 +1,5 @@
-# CitadelPanel Bun node backend — deploy this on every machine that runs game servers.
+# CitadelPanel Bun node backend. Deploy this on every machine that runs game
+# servers.
 #
 # The Bun backend owns this node's Docker daemon and server data. The Next.js
 # control plane reaches it with a bearer token and never touches Docker itself.
@@ -8,7 +9,7 @@
 # and the agent calls the panel back to validate it and audit each command. The
 # long-lived AGENT_TOKEN still guards every lifecycle route and the callbacks.
 #
-# SECURITY: AGENT_TOKEN is root-equivalent for this host — the agent drives the
+# SECURITY: AGENT_TOKEN is root-equivalent for this host. The agent drives the
 # Docker socket, and a container can be given any mount the agent allows. Treat
 # it like a root password:
 #   - keep the agent on a private network, or put TLS in front of it;
@@ -19,12 +20,17 @@
 #
 # Register the node afterwards from the panel's first-run setup or admin UI,
 # setting its Console URL to the public wss:// address browsers will use.
+#
+# A node is not the panel: it has no database, runs no migrations, and needs no
+# setup step. All it needs is a `.env` beside this file with AGENT_TOKEN (the
+# token the panel will present) and PANEL_URL. See docs/docker.md.
 
 services:
   backend:
     build:
-      context: ./apps/backend
-      dockerfile: Dockerfile
+      # Repo root: the workspace lockfile is what pins the install.
+      context: .
+      dockerfile: apps/backend/Dockerfile
     # Or, once published:
     # image: ghcr.io/your-org/citadel-agent:latest
     restart: unless-stopped
@@ -41,21 +47,26 @@ services:
       AGENT_TLS_CERT: ${AGENT_TLS_CERT:-}
       AGENT_TLS_KEY: ${AGENT_TLS_KEY:-}
       # SFTP server (custom ssh2, on its own port). Set to 0 to disable.
-      SFTP_PORT: ${SFTP_PORT:-8022}
+      # Fixed inside the container; remap the published port below instead.
+      SFTP_PORT: 8022
     ports:
       # Bind to a private interface in production, e.g. "10.0.0.5:8081:8081".
       # For browser-direct console on a public node, put a TLS proxy in front
       # and expose that instead.
       - "8081:8081"
-      # SFTP — expose only where clients can reach it. Keep behind a firewall or
+      # SFTP. Expose only where clients can reach it. Keep behind a firewall or
       # TLS tunnel in production; SFTP auth is delegated to the panel but the
       # traffic itself is unencrypted without a host key + TLS proxy in front.
-      - "8022:8022"
+      - "${SFTP_PORT:-8022}:8022"
     volumes:
       # The daemon this agent manages. This is why the token matters so much.
       - /var/run/docker.sock:/var/run/docker.sock
-      # Server data. A host bind (not a named volume) so the path the agent
-      # reports is the same path the daemon bind-mounts into game containers.
-      - /var/lib/citadel/servers:/var/lib/citadel/servers
+      # The whole /var/lib/citadel tree. A host bind (not a named volume) so the
+      # path the agent reports is the same path the daemon bind-mounts into game
+      # containers, and the parent rather than servers/ alone because the SFTP
+      # host key and the backup staging directory are siblings of the data root.
+      # The staging directory in particular is bind-mounted into the restic
+      # container, so it has to exist on the host, not just in this container.
+      - /var/lib/citadel:/var/lib/citadel
       # TLS material for the agent's wss:// server, if enabled above.
       - ./certs:/certs:ro

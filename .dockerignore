@@ -1,0 +1,33 @@
+# Build context for both images is the repository root (the workspace lockfile
+# lives here). Keep it to source + manifests.
+
+.git
+.gitignore
+**/node_modules
+**/.next
+out
+dist
+build
+*.tsbuildinfo
+
+# Secrets never enter an image layer. Compose passes them in as environment.
+.env
+.env.*
+**/.env
+**/.env.*
+certs/
+*.pem
+*.key
+*.crt
+
+# Not needed to build or run.
+docs/
+e2e/
+plan.md
+*.md
+!apps/*/README.md
+data/
+*.log
+.zcode
+.vscode
+.idea

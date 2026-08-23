@@ -30,7 +30,7 @@ import { formatRelative } from "@/lib/format";
  * API key management, backed by Better Auth's API-key plugin endpoints.
  *
  * Keys authenticate `/api/*` requests via the `x-api-key` header or
- * `Authorization: Bearer <key>` and carry the owner's session — so a key can do
+ * `Authorization: Bearer <key>` and carry the owner's session, so a key can do
  * exactly what its owner can, and no more. The full key is shown only once at
  * creation; afterwards only a masked prefix is recoverable.
  */
@@ -103,7 +103,7 @@ export function ApiKeysSection() {
           Keys let scripts and tools call the panel API on your behalf. Use the{" "}
           <code className="text-foreground">x-api-key</code> header or{" "}
           <code className="text-foreground">Authorization: Bearer</code>. Treat
-          them like passwords — they grant the same access as your account.
+          them like passwords. They grant the same access as your account.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -224,7 +224,7 @@ function GeneratedKey({
       <div className="flex items-start gap-2 text-sm">
         <KeyRound className="mt-0.5 size-4 shrink-0 text-amber-500" />
         <span className="text-muted-foreground">
-          Copy this key now — it is stored hashed and cannot be shown again.
+          Copy this key now. It is stored hashed and cannot be shown again.
         </span>
       </div>
       <div className="flex items-center gap-2">
@@ -275,10 +275,10 @@ function KeyRow({
         {apiKey.name ?? <span className="text-muted-foreground">Untitled</span>}
       </TableCell>
       <TableCell className="font-mono text-xs text-muted-foreground">
-        {apiKey.prefix ? `${apiKey.prefix}…` : "—"}
+        {apiKey.prefix ? `${apiKey.prefix}…` : "Unknown"}
       </TableCell>
       <TableCell className="text-muted-foreground tabular-nums">
-        {apiKey.createdAt ? formatRelative(apiKey.createdAt) : "—"}
+        {apiKey.createdAt ? formatRelative(apiKey.createdAt) : "Unknown"}
       </TableCell>
       <TableCell>
         <Button

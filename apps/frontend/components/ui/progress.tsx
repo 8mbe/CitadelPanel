@@ -6,10 +6,18 @@ import { cn } from "@/lib/utils"
 
 function Progress({
   className,
+  indicatorClassName,
   children,
   value,
   ...props
-}: ProgressPrimitive.Root.Props) {
+}: ProgressPrimitive.Root.Props & {
+  /**
+   * Classes for the filled part of the track. Exposed because the fill is the
+   * one part of a progress bar that carries meaning of its own: a resource
+   * meter recolours it by how full it is (see `UsageMeter`).
+   */
+  indicatorClassName?: string
+}) {
   return (
     <ProgressPrimitive.Root
       value={value}
@@ -19,7 +27,7 @@ function Progress({
     >
       {children}
       <ProgressTrack>
-        <ProgressIndicator />
+        <ProgressIndicator className={indicatorClassName} />
       </ProgressTrack>
     </ProgressPrimitive.Root>
   )

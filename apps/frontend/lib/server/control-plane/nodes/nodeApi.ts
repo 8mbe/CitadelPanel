@@ -18,6 +18,7 @@ import { env } from "../config/env";
 import { HttpError } from "../lib/http";
 import {
   getNodeWithSecrets,
+  invalidateNode,
   type NodeWithSecrets,
 } from "./nodeRegistry";
 
@@ -75,9 +76,16 @@ function toConnection(node: NodeWithSecrets): CachedConnection {
   return connection;
 }
 
-/** Drop a cached connection, e.g. after a node is deleted or reconfigured. */
+/**
+ * Drop everything cached about a node, after it is deleted or reconfigured.
+ *
+ * Covers the registry's credential cache as well as the resolved connection.
+ * The two are refreshed together or not at all, and callers should not have to
+ * know there are two.
+ */
 export function invalidateNodeConnection(nodeId: string): void {
   connectionCache.delete(nodeId);
+  invalidateNode(nodeId);
 }
 
 export interface NodeRequestOptions {
@@ -158,7 +166,7 @@ export async function nodeRequestFor<T>(
       const payload = (await response.json()) as { error?: string };
       if (payload.error) message = `${message}: ${payload.error}`;
     } catch {
-      // Non-JSON error body — the status alone will have to do.
+      // Non-JSON error body, so the status alone will have to do.
     }
     throw new HttpError(response.status, message);
   }
@@ -179,7 +187,7 @@ export async function nodeRequest<T>(
 }
 
 /**
- * Call a node's agent and return the raw `Response` — for streaming endpoints
+ * Call a node's agent and return the raw `Response`. For streaming endpoints
  * (file downloads) where the body must not be buffered into memory.
  *
  * Same auth and failure-mode mapping as {@link nodeRequestFor}, but does not
@@ -211,7 +219,7 @@ export async function nodeRequestRaw(
   let response: Response;
   try {
     // Build the fetch init. When forwarding a streaming body (a file upload),
-    // Node's fetch requires `duplex: "half"` — it refuses to send a
+    // Node's fetch requires `duplex: "half"`. It refuses to send a
     // ReadableStream body without it. The option is a Node extension to
     // RequestInit (not in the DOM spec), so it is only set for the streaming
     // path and cast through to satisfy the TS lib type.
@@ -264,10 +272,18 @@ export interface NodeHealth {
    * Absent when the agent predates this field.
    */
   dataRoot?: NodeDataRootStatus;
+  /**
+   * Whether the agent can reach its Docker daemon. Same reasoning as
+   * `dataRoot`: the agent answers HTTP perfectly well while every container
+   * operation on the node fails, so it reports the socket's state (and the fix)
+   * rather than letting the panel discover it as a failed power action. Absent
+   * when the agent predates this field.
+   */
+  dockerSocket?: NodeDockerSocketStatus;
   error?: string;
   /**
    * The agent rejected the bearer token (401/403). Distinct from `reachable`
-   * so a wrong token is not reported as "unreachable" — the host is there, the
+   * so a wrong token is not reported as "unreachable". The host is there, the
    * credential is not. Only ever true when `reachable` is false.
    */
   unauthorized?: boolean;
@@ -281,12 +297,21 @@ export interface NodeDataRootStatus {
   error?: string;
 }
 
+/** The agent's verdict on its own Docker socket, with the fix when it is broken. */
+export interface NodeDockerSocketStatus {
+  path: string;
+  reachable: boolean;
+  /** Cause plus remediation, written for an operator to act on. */
+  error?: string;
+}
+
 interface AgentHealthResponse {
   status: string;
   dockerVersion?: string;
   containersRunning?: number;
   capacity?: { ncpu: number; memTotalMb: number };
   dataRoot?: NodeDataRootStatus;
+  dockerSocket?: NodeDockerSocketStatus;
 }
 
 /**
@@ -309,6 +334,7 @@ export async function checkNodeHealth(node: NodeWithSecrets): Promise<NodeHealth
       containersRunning: health.containersRunning,
       capacity: health.capacity,
       dataRoot: health.dataRoot,
+      dockerSocket: health.dockerSocket,
     };
   } catch (error) {
     // The agent answered but refused the token: the host is reachable, the
@@ -363,7 +389,7 @@ export async function probeAgent(
  * failure with a server stuck in `error`. Checking first turns that into one
  * actionable message and no wreckage.
  *
- * Deliberately not silent about a missing `dataRoot` field — an older agent that
+ * Deliberately not silent about a missing `dataRoot` field. An older agent that
  * does not report it is allowed through, because the alternative is refusing to
  * provision on a node that may be perfectly fine.
  */
@@ -378,6 +404,17 @@ export async function assertNodeReadyToProvision(nodeId: string): Promise<void> 
       503,
       `Node "${node.name}" is not ready to host a server: ` +
         `${health.error ?? "its agent did not respond"}.`,
+    );
+  }
+
+  // Checked before the data root: an agent that cannot reach Docker cannot
+  // create the container either, and its message names the actual fault.
+  if (health.dockerSocket && !health.dockerSocket.reachable) {
+    throw new HttpError(
+      503,
+      `Node "${node.name}" cannot run containers. ` +
+        (health.dockerSocket.error ??
+          `Its agent cannot reach the Docker socket at ${health.dockerSocket.path}.`),
     );
   }
 

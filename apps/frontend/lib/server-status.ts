@@ -2,7 +2,7 @@ import type { ServerStatus } from "./types";
 
 /**
  * Client-side reading of the two statuses that mean "the panel is still
- * building this server" — the mirror of `serverManager.isProvisioning`.
+ * building this server". It mirrors `serverManager.isProvisioning`.
  *
  * `creating` is the row and its ports; `installing` is the blueprint's install
  * script and the container build after it. The distinction matters to the

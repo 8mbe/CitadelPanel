@@ -3,16 +3,17 @@
  *
  * Two audiences use these endpoints:
  *
- *   1. The browser, via the /api/servers/:id/sftp/* routes — gated on the
+ *   1. The browser, via the /api/servers/:id/sftp/* routes, gated on the
  *      `files` permission, the same flag the file manager uses.
- *   2. The agent, via POST /api/internal/sftp/authenticate — which
+ *   2. The agent, via POST /api/internal/sftp/authenticate, which
  *      authenticates by a long-lived AGENT_TOKEN bearer (root-equivalent),
  *      NOT an API key. The panel reverse-looks-up the node from the token so
  *      a leaked token from one node cannot validate creds against another.
  *
  * The admin key reaches the seeded server's SFTP routes; the user key gets
- * 404. The agent callback rejects every API key (admin or user) with 401 —
- * an API key is not an agent bearer and `findNodeByAgentToken` returns null.
+ * 404. The agent callback rejects every API key (admin or user) with 401,
+ * because an API key is not an agent bearer and `findNodeByAgentToken` returns
+ * null.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -52,7 +53,7 @@ describe("GET /api/servers/:id/sftp/credentials (list, no passwords)", () => {
     expectStatus(res, 200);
     const creds = (res.body as { credentials?: Array<{ password?: unknown }> }).credentials;
     expect(Array.isArray(creds)).toBe(true);
-    // A credential summary never carries the password — only the create/
+    // A credential summary never carries the password. Only the create or
     // regenerate response reveals it once.
     for (const c of creds ?? []) expect(c.password).toBeUndefined();
   });
@@ -68,7 +69,7 @@ describe("POST /api/servers/:id/sftp/credentials/regenerate (404 when none exist
   e2e("with an admin key 404s when the caller has no existing credential", async () => {
     // The admin has not minted a credential for the seeded server yet (the
     // suite never mints one either). The regenerate route 404s rather than
-    // accidentally creating one — distinct from POST which upserts.
+    // accidentally creating one, unlike POST which upserts.
     const { serverId } = await loadFixtures();
     const res = await api(`/api/servers/${serverId}/sftp/credentials/regenerate`, { method: "POST", key: config.adminKey });
     expect(res.status).toBe(404);
@@ -124,7 +125,7 @@ describe("POST /api/internal/sftp/authenticate (agent callback)", () => {
   e2e("with the admin API key is 401 (an API key is not an agent bearer)", async () => {
     // The route authenticates the agent by its long-lived AGENT_TOKEN, which
     // `findNodeByAgentToken` reverse-looks-up to a node. An API key does not
-    // match any node's token, so the call is rejected — a key-holding script
+    // match any node's token, so the call is rejected. A key-holding script
     // cannot enumerate valid SFTP usernames from this surface.
     const res = await api("/api/internal/sftp/authenticate", {
       method: "POST",
@@ -134,7 +135,7 @@ describe("POST /api/internal/sftp/authenticate (agent callback)", () => {
     expect(res.status).toBe(401);
   });
 
-  e2e("with the user API key is 401 (same — not an agent bearer)", async () => {
+  e2e("with the user API key is 401 (same, not an agent bearer)", async () => {
     const res = await api("/api/internal/sftp/authenticate", {
       method: "POST",
       key: config.userKey,

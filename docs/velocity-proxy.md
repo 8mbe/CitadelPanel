@@ -11,7 +11,7 @@ identity-mapping model this blueprint has to satisfy the hard way),
 
 ## What it is
 
-A proxy is not a game server — nothing plays on it. Players connect to it and
+A proxy is not a game server. Nothing plays on it. Players connect to it and
 it hands them to one of the owner's *other* servers, which is what makes it the
 front door of a network: one address for players, several backends behind it,
 and no visible reconnect when they move between them.
@@ -27,7 +27,7 @@ Two things are not ordinary, and both are about `velocity.toml`.
 ## The bind port: patched, not injected
 
 Velocity reads its listen address from `bind` in `velocity.toml`. There is no
-`SERVER_PORT`-style variable — the one the image documents only steers its own
+`SERVER_PORT`-style variable. The one the image documents only steers its own
 health check. But the panel publishes ports as identity mappings (`ports.md`):
 the number Docker publishes on the host is the number the process must bind
 inside the container, and the agent *refuses* a split mapping. A proxy that
@@ -51,8 +51,8 @@ instead of through the process env:
   the variable without renaming the placeholder would silently stop the sync.
 
 The price, stated plainly because owners see it: **the patcher re-serializes
-`velocity.toml` on every start.** Values survive, formatting does not —
-comments are dropped and `[section]` headers come back as dotted keys
+`velocity.toml` on every start.** Values survive, formatting does not.
+Comments are dropped and `[section]` headers come back as dotted keys
 (`servers.try = []`). Editing values is safe; expecting comments or layout to
 persist is not. Ordinary TOML rules still apply to hand edits: a root-level key
 written *after* a `[servers]` header belongs to that table, and Velocity will
@@ -64,11 +64,11 @@ This blueprint is also why provisioning is asynchronous: it is the first one
 with both an install step and a large runtime image (`itzg/mc-proxy`), so a
 fresh node spends minutes pulling and installing before the container exists.
 Creating one returns immediately with the server `installing`, and the install
-log is where that time is visible — see
+log is where that time is visible. See
 [server-lifecycle.md](server-lifecycle.md).
 
 The patcher can only rewrite a `bind` that already exists, so the config cannot
-be left to Velocity's own first-boot generation — the first bind has to be
+be left to Velocity's own first-boot generation. The first bind has to be
 right. The install step (a throwaway `alpine:3` container with the data dir
 mounted) writes:
 
@@ -76,7 +76,7 @@ mounted) writes:
 - **`velocity.toml`**, if absent: `config-version`, the allocated `bind`,
   `motd`, `show-max-players`, `online-mode`, `player-info-forwarding-mode =
   "modern"`, `forwarding-secret-file`, plus two keys that exist purely to stop
-  Velocity from booting into its own examples — `servers = { try = [] }` and
+  Velocity from booting into its own examples: `servers = { try = [] }` and
   `forced-hosts = {}`. Absent keys fall back to the **packaged default config**,
   whose example forced hosts (`lobby.example.com` → `lobby`) and `try = ["lobby"]`
   name servers that don't exist; Velocity treats that as an invalid
@@ -84,17 +84,17 @@ mounted) writes:
   survives the patcher's rewrite (an empty `[section]` header does not).
 - **`forwarding.secret`**, if absent: 32 random alphanumerics, written with no
   trailing newline. The file's bytes *are* the secret, and the same string has
-  to be pasted into each backend — a stray newline is a mismatch that shows up
+  to be pasted into each backend. A stray newline is a mismatch that shows up
   as an unexplained kick.
 - **the bind patch**, unconditionally, so a re-provision repairs it.
 
 The script does not run as root: the agent pins the install container to the uid
 that owns the server's data directory (see
 [server-lifecycle.md](server-lifecycle.md#who-the-install-container-runs-as)).
-That is why it contains no `chown` and no `umask` — what it writes is already
+That is why it contains no `chown` and no `umask`. What it writes is already
 owned by the account that has to keep using it. The runtime container is pinned
 to `1000:1000` with `SKIP_PRIVILEGE_DROP` / `SKIP_CHOWN_DATA` set, for the same
-reason the Minecraft blueprints set `SKIP_SUDO` — the image's own
+reason the Minecraft blueprints set `SKIP_SUDO`. The image's own
 `runuser`/`chown` dance needs capabilities the panel drops.
 
 ## Connecting backends
@@ -102,14 +102,14 @@ reason the Minecraft blueprints set `SKIP_SUDO` — the image's own
 Two halves, and the panel only owns one of them:
 
 1. **Reachability** is a server link (`server-links.md`): Settings →
-   "Connect servers" on the proxy, then the address the panel shows —
+   "Connect servers" on the proxy, then the address the panel shows:
    `citadel-<id12>:<port>` on the same node, `hostname:port` across nodes.
    Never a container IP; those change on every recreate.
 2. **Configuration** is `velocity.toml`, edited in the Files tab: one
    `servers` entry per backend (`name = "address"`) and the names players may
    land on in `try`.
 
-Each backend then needs Velocity's modern forwarding enabled on its side —
+Each backend then needs Velocity's modern forwarding enabled on its side:
 `online-mode=false` in `server.properties` plus the proxy's secret in
 `config/paper-global.yml` under `proxies.velocity`. That combination is also
 what keeps the published backend port from becoming a bypass: with modern
@@ -118,8 +118,8 @@ because it carries no forwarded player data.
 
 ## Plugins, versions, console
 
-- **Plugins** resolve from a *static* profile rather than an env-driven one —
-  a Velocity proxy only ever loads Velocity plugins from `plugins/`, so there
+- **Plugins** resolve from a *static* profile rather than an env-driven one.
+  A Velocity proxy only ever loads Velocity plugins from `plugins/`, so there
   is nothing to switch on (contrast minecraft-java's `TYPE`). Compatibility
   filtering reads `MINECRAFT_VERSION`, the image's own name for "which
   Minecraft version are the backends"; leave it on `LATEST` and filtering is
@@ -129,7 +129,7 @@ because it carries no forwarded player data.
   currently a 4.x development snapshot; practically every Velocity plugin still
   targets 3.x. The field is editable, so an owner can move a proxy to 4.x
   deliberately.
-- **Stopping** sends `shutdown` — Velocity's console-only stop command, which
+- **Stopping** sends `shutdown`, Velocity's console-only stop command, which
   disconnects players with a reason and lets plugins finish before exit. A
   pseudo-TTY is allocated (`tty: true`) so Velocity's JLine console emits the
   ANSI colour the panel's console renderer exists to render; without one it

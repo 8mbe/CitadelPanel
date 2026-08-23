@@ -61,15 +61,16 @@ import { cn } from "@/lib/utils";
  * `needsSetup` is true) and self-closing once done. Four steps, of which only
  * the first two are mandatory:
  *
- *   1. Admin account   — the one unauthenticated step; claims the first admin.
- *   2. Timezone        — how the panel renders timestamps.
- *   3. Captcha         — optional bot protection for the auth endpoints.
- *   4. First node      — optional; an operator without a node yet can skip it.
+ *   1. Admin account: the one unauthenticated step; claims the first admin.
+ *   2. Timezone:      how the panel renders timestamps.
+ *   3. Captcha:       optional bot protection for the auth endpoints.
+ *   4. First node:    optional; an operator without a node yet can skip it.
  *
  * Step 1 signs the browser in (the backend returns a session cookie), so steps
- * 2–4 authenticate as the freshly-created admin. If an admin already exists when
- * the wizard loads — someone else finished step 1, or the account was made by
- * CLI — step 1 is skipped and the wizard asks the operator to sign in.
+ * 2 to 4 authenticate as the freshly-created admin. If an admin already exists
+ * when the wizard loads, whether someone else finished step 1 or the account
+ * was made by CLI, step 1 is skipped and the wizard asks the operator to sign
+ * in.
  *
  * The server page reads setup status before this component is rendered. That
  * prevents a completed installation from ever serving the wizard UI.
@@ -271,7 +272,7 @@ function AdminStep({ onDone }: { onDone: () => void }) {
         <CardTitle>Create the admin account</CardTitle>
         <CardDescription>
           The first account owns the panel: it manages nodes, provisions servers
-          and reviews security flags. There is no default password — you set the
+          and reviews security flags. There is no default password. You set the
           only credential now.
         </CardDescription>
       </CardHeader>
@@ -374,7 +375,7 @@ function TimezoneStep({
       <CardHeader>
         <CardTitle>Panel timezone</CardTitle>
         <CardDescription>
-          How timestamps are displayed across the panel — audit logs, activity,
+          How timestamps are displayed across the panel: audit logs, activity,
           heartbeat times. Stored data stays in UTC; this only affects display.
         </CardDescription>
       </CardHeader>
@@ -508,7 +509,7 @@ function NodeStep({ onBack }: { onBack: () => void }) {
         hostname: String(data.get("hostname") ?? ""),
         apiUrl: String(data.get("apiUrl") ?? ""),
         token: token || undefined,
-        // The form asks for GB — the friendlier unit — and converts to the MB
+        // The form asks for GB, the friendlier unit, and converts to the MB
         // the API expects. CPU and memory are omitted on purpose: the backend
         // probes them from the agent when reachable and falls back to defaults
         // when it is not, so an offline node still registers.
@@ -567,7 +568,7 @@ function NodeStep({ onBack }: { onBack: () => void }) {
         <CardTitle>Add your first node</CardTitle>
         <CardDescription>
           A node is a machine running the CitadelPanel agent that hosts game
-          servers. You need at least one to provision servers — but you can skip
+          servers. You need at least one to provision servers, but you can skip
           this now and add one later from the admin area.
         </CardDescription>
       </CardHeader>
@@ -600,7 +601,7 @@ function NodeStep({ onBack }: { onBack: () => void }) {
               />
               <FieldDescription>
                 Where the node agent listens. Keep it on a private network or
-                behind TLS — the token below is root-equivalent for that machine.
+                behind TLS. The token below is root-equivalent for that machine.
               </FieldDescription>
             </Field>
             <Field>
@@ -648,7 +649,7 @@ function NodeStep({ onBack }: { onBack: () => void }) {
               className="ml-auto"
             >
               {finishing && <Spinner />}
-              Skip — I&apos;ll add one later
+              Skip, I&apos;ll add one later
             </Button>
             <Button type="submit" disabled={loading}>
               {loading && <Spinner />}
@@ -680,7 +681,7 @@ function GeneratedToken({ token }: { token: string }) {
       <div className="flex items-start gap-2 text-sm">
         <KeyRound className="mt-0.5 size-4 shrink-0 text-amber-500" />
         <span className="text-muted-foreground">
-          Copy this token now — it is stored encrypted and cannot be shown again.
+          Copy this token now. It is stored encrypted and cannot be shown again.
           Set it as <code className="text-foreground">AGENT_TOKEN</code> on the
           node and restart its agent.
         </span>

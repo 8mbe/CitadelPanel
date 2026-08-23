@@ -4,7 +4,7 @@
  * These routes exist precisely so an unauthenticated page (the login screen,
  * the first-time-setup wizard) can render: they report only configuration
  * state, never account details. Every authenticated route returns 401 to a
- * credential-less request — that contract is asserted once here and relied on
+ * credential-less request. That contract is asserted once here and relied on
  * by the per-route-group suites, which only cover their own happy paths and
  * permission gates.
  */

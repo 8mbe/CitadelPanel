@@ -5,7 +5,7 @@
  * `lib/server/control-plane/nodes/portSpec.ts` so the Add-port form can give
  * immediate feedback without a round-trip. The server parser remains the source
  * of truth; this only reduces wasted POSTs and improves UX. Keep the two in
- * sync — accepted forms and error messages should match.
+ * sync, so accepted forms and error messages match.
  */
 
 export class PortSpecError extends Error {

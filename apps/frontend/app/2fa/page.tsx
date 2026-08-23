@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
  *
  * Unlike the login page, this page does NOT verify a session: at this point the
  * user has entered correct credentials but Better Auth has NOT issued a session
- * cookie — instead it set a short-lived 2FA cookie that authorises only the
+ * cookie. Instead it set a short-lived 2FA cookie that authorises only the
  * verification endpoints. Checking `getAuthenticatedUser` here would always
  * fail, so we simply render the form and let it complete the flow.
  */
@@ -26,9 +26,10 @@ export default async function TwoFactorPage({
 /**
  * Reduce a `?next=` value to a safe same-origin path, or undefined.
  *
- * Mirrors the login page's `safeNext`: anything that could leave this origin —
- * absolute URLs, protocol-relative `//host`, backslash variants — is dropped so
- * the parameter cannot be used as an open redirect after verification.
+ * Mirrors the login page's `safeNext`. Anything that could leave this origin is
+ * dropped, so the parameter cannot be used as an open redirect after
+ * verification. That covers absolute URLs, protocol-relative `//host`, and
+ * backslash variants.
  */
 function safeNext(value: string | string[] | undefined): string | undefined {
   const raw = Array.isArray(value) ? value[0] : value;

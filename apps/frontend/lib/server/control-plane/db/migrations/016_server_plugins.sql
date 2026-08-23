@@ -5,8 +5,8 @@
 -- by whom, and whether it is enabled (a disabled plugin is the same file with
 -- a ".disabled" suffix, which Bukkit-family loaders and Fabric ignore).
 --
--- The table is the panel's linkage for update checks — including the
--- auto-updater that runs before every start — not a filesystem inventory:
+-- The table is the panel's linkage for update checks, including the
+-- auto-updater that runs before every start. It is not a filesystem inventory:
 -- rows are reconciled against the actual directory listing when displayed, so
 -- manually added or deleted jars show up as untracked/missing rather than
 -- being silently overwritten. UNIQUE (server_id, provider, project_id) makes

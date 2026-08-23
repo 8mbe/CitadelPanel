@@ -7,7 +7,7 @@
  *   Every path the agent touches resolves to somewhere inside
  *   `<serverDataRoot>/<serverId>`.
  *
- * The panel never sends a host path — it sends a server id and a relative path,
+ * The panel never sends a host path. It sends a server id and a relative path,
  * and both are re-derived here. That is deliberate: the agent's token is
  * root-equivalent for this host, so a caller who can name an arbitrary
  * `hostDataPath` could bind-mount `/` into a container and own the machine.
@@ -19,7 +19,7 @@
  */
 
 import { realpath } from "node:fs/promises";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { config } from "./config";
 import { badRequest, forbidden } from "./http";
 
@@ -42,7 +42,7 @@ export function isInside(base: string, candidate: string): boolean {
 /**
  * Resolve a panel-supplied relative path against a server's data directory.
  *
- * Lexical only — this runs before the target is known to exist, so it is what
+ * Lexical only. This runs before the target is known to exist, so it is what
  * guards writes and creates. Absolute paths are rejected outright rather than
  * silently reinterpreted, because a caller sending `/etc/passwd` is either
  * confused or hostile and both deserve an error.
@@ -103,4 +103,66 @@ export async function resolveExistingServerPath(
     throw forbidden("Path resolves outside the server's data directory.");
   }
   return real;
+}
+
+/**
+ * Resolve a path for **writing**, where the target may not exist yet but any
+ * existing directory along the way could be a symlink.
+ *
+ * The lexical check alone is not enough for writes: a game server can plant a
+ * symlink inside its own data directory (`ln -s /etc plugins/x`), and a later
+ * `mkdir -p`/write to `plugins/x/foo` would follow it and land outside the
+ * containment boundary. That write runs as the agent, which is root-equivalent
+ * on this host. `resolveServerPath`'s lexical `resolve` never expands that
+ * symlink, so it cannot see the escape.
+ *
+ * The target itself is allowed to be missing (that is the whole point of a
+ * write), so instead of realpath-ing the target we walk up to the *deepest
+ * existing ancestor* and verify its real path is inside the data root. Any
+ * symlink in the existing portion of the path shows up there; the components
+ * that do not exist yet cannot be symlinks, and `mkdir` will create them as
+ * real directories.
+ *
+ * A residual TOCTOU remains (the container could plant a symlink between this
+ * check and the write), the same window `resolveExistingServerPath` has for
+ * reads and deletes. Closing it entirely needs per-component `O_NOFOLLOW`
+ * openat, which Bun does not expose; this closes the practical vector (a
+ * symlink planted ahead of an owner-triggered write).
+ */
+export async function resolveWritableServerPath(
+  serverId: string,
+  userPath = "/",
+): Promise<string> {
+  const target = resolveServerPath(serverId, userPath);
+  const base = serverDataPath(serverId);
+
+  let realBase: string;
+  try {
+    realBase = await realpath(base);
+  } catch {
+    realBase = base;
+  }
+
+  let ancestor = target;
+  for (;;) {
+    let real: string | null = null;
+    try {
+      real = await realpath(ancestor);
+    } catch {
+      // This component does not exist yet, so keep walking up.
+    }
+
+    if (real !== null) {
+      if (!isInside(realBase, real)) {
+        throw forbidden("Path resolves outside the server's data directory.");
+      }
+      break;
+    }
+
+    const parent = dirname(ancestor);
+    if (parent === ancestor) break; // reached the filesystem root
+    ancestor = parent;
+  }
+
+  return target;
 }

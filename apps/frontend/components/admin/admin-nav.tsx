@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Archive,
   Blocks,
   ClipboardList,
   KeyRound,
@@ -24,6 +25,7 @@ export const ADMIN_SECTIONS = [
   { href: "/admin/blueprints", label: "Blueprints", icon: Blocks },
   { href: "/admin/users", label: "Users", icon: Users },
   { href: "/admin/api-keys", label: "API keys", icon: KeyRound },
+  { href: "/admin/backups", label: "Backups", icon: Archive },
   { href: "/admin/security", label: "Security", icon: ShieldAlert },
   { href: "/admin/audit", label: "Audit log", icon: ClipboardList },
   { href: "/admin/legal", label: "Legal", icon: Scale },

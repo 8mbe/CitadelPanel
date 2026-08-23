@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { parseAnsi } from "./ansi";
 
-/** Concatenate run text — convenient for asserting the readable content. */
+/** Concatenate run text, convenient for asserting the readable content. */
 function textOf(runs: ReturnType<typeof parseAnsi>): string {
   return runs.map((r) => r.text).join("");
 }
@@ -77,7 +77,7 @@ test("dim renders at half opacity", () => {
 });
 
 test("non-SGR CSI sequences are stripped, not rendered as garbage", () => {
-  // Cursor moves, erase line, etc. — must vanish from output.
+  // Cursor moves, erase line, and so on. These must vanish from output.
   const runs = parseAnsi("a\x1b[2Kbc\x1b[10;5Hde");
   expect(textOf(runs)).toBe("abcde");
 });
@@ -109,13 +109,13 @@ test("C0 control chars (except tab) are stripped", () => {
 });
 
 test("ANSI split across the boundary of two parse calls is NOT auto-joined", () => {
-  // parseAnsi is stateless per call — a sequence split across frames would be
-  // broken. The console-panel handles this by buffering on newlines so a full
+  // parseAnsi is stateless per call, so a sequence split across frames would
+  // be broken. The console-panel handles this by buffering on newlines so a full
   // line (including its escapes) is parsed as one unit. This test documents
   // that contract: each call is independent.
   const a = parseAnsi("\x1b[3");
   const b = parseAnsi("1mred\x1b[0m");
-  // First call sees a malformed CSI (no final byte) — drops the ESC, and the
+  // First call sees a malformed CSI (no final byte). It drops the ESC, and the
   // leftover "[" / "3" pass through as printable text.
   expect(textOf(a)).toBe("[3");
   // Second call has no ESC, so "1mred" is plain text and "\x1b[0m" resets.
@@ -128,7 +128,7 @@ test("HTML/script content in text is preserved as text, never executed", () => {
   const runs = parseAnsi("\x1b[31m<script>alert(1)</script>\x1b[0m");
   expect(runs[0].text).toBe("<script>alert(1)</script>");
   expect(runs[0].style?.color).toBe("#ff5555");
-  // No dangerouslySetInnerHTML, no href — the style object is the only attr.
+  // No dangerouslySetInnerHTML, no href. The style object is the only attr.
   expect(typeof runs[0].style).toBe("object");
 });
 

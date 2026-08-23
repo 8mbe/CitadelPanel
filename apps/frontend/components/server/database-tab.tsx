@@ -154,7 +154,7 @@ function DatabaseRow({
         </div>
       ) : (
         <p className="ml-6 text-xs text-muted-foreground">
-          Password hidden — reset to generate a new one.
+          Password hidden. Reset to generate a new one.
         </p>
       )}
     </div>
@@ -167,7 +167,7 @@ function DatabaseRow({
  * Lets a server owner provision MySQL-compatible databases on the node's shared
  * MariaDB. Each database gets a scoped user with access to that one database
  * only. The database host is the MariaDB container's IP on the node's internal
- * Docker network — the game server reaches it because the agent attaches the
+ * Docker network. The game server reaches it because the agent attaches the
  * server's container to that network when the database is created.
  *
  * The database password is generated server-side and shown exactly once (at
@@ -217,7 +217,7 @@ export function DatabaseTab({ serverId }: { serverId: string }) {
     setError(null);
     try {
       const db = await addServerDatabase(serverId);
-      // The new database arrives with its plaintext password — show it once.
+      // The new database arrives with its plaintext password. Show it once.
       setDatabases((prev) => [...(prev ?? []), { ...db, password: db.password }]);
       await refresh();
     } catch (err) {
@@ -273,7 +273,7 @@ export function DatabaseTab({ serverId }: { serverId: string }) {
     );
   }
 
-  // The explorer replaces the list until the owner navigates back — it owns
+  // The explorer replaces the list until the owner navigates back. It owns
   // the whole tab so its sidebar and views get the available width.
   if (exploring) {
     return (

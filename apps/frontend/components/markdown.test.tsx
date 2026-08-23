@@ -4,7 +4,7 @@
  * Rendered to a static HTML string because that is the thing worth asserting:
  * the renderer's job is to turn admin-authored text into markup that is safe to
  * serve to anonymous visitors, so the tests check the *output*, not the parse
- * tree. The link-scheme cases are the security-relevant ones — see the note in
+ * tree. The link-scheme cases are the security-relevant ones. See the note in
  * `markdown.tsx` on why this renderer exists instead of a library.
  */
 
@@ -121,7 +121,7 @@ describe("links", () => {
     expect(html).not.toContain("<a ");
   });
 
-  test("protocol-relative URLs are dropped — they are absolute in disguise", () => {
+  test("protocol-relative URLs are dropped since they are absolute in disguise", () => {
     const html = render("[x](//evil.example.com)");
     expect(html).not.toContain("evil.example.com");
     expect(html).not.toContain("<a ");
@@ -145,7 +145,7 @@ describe("raw HTML is never emitted", () => {
 
   test("an event handler survives only as escaped text, never as an attribute", () => {
     const html = render('<div onclick="alert(1)">**bold**</div>');
-    // The handler text is still present — as escaped content inside a <p>, which
+    // The handler text is still present, as escaped content inside a <p>, which
     // is inert. What matters is that no live element carries it: the quotes are
     // entities, so there is no attribute boundary for the browser to parse.
     expect(html).toContain("&lt;div onclick=&quot;alert(1)&quot;&gt;");

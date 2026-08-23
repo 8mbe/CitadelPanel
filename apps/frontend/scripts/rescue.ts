@@ -1,5 +1,6 @@
 /**
- * Rescue CLI — out-of-band recovery when the panel's own auth surface is locked.
+ * Rescue CLI for out-of-band recovery when the panel's own auth surface is
+ * locked.
  *
  * Two operations, both runnable without the web server or a signed-in session:
  *
@@ -19,8 +20,8 @@
  *
  * It deliberately does NOT import the `server-only`-guarded modules
  * (`config/env`, `db/client`, `services/settings`): `server-only` is a Next.js
- * build shim that plain Bun cannot resolve, so — like `scripts/migrate.ts` — it
- * loads the repository `.env` itself and opens its own single-connection client.
+ * build shim that plain Bun cannot resolve. Like `scripts/migrate.ts`, it loads
+ * the repository `.env` itself and opens its own single-connection client.
  *
  * Usage:
  *   bun run scripts/rescue.ts reset-password --email admin@example.com
@@ -38,7 +39,7 @@ import postgres from "postgres";
 import { loadRepositoryEnv } from "../lib/server/control-plane/config/load-repository-env";
 // `better-auth/crypto` exports the same hashPassword the credential provider
 // uses (scrypt under Node/Bun). Importing it directly avoids the `server-only`
-// guard on the auth config module — and it has no dependency on a running
+// guard on the auth config module, and it has no dependency on a running
 // Better Auth instance, which a server-only endpoint would.
 import { hashPassword } from "better-auth/crypto";
 
@@ -215,7 +216,7 @@ async function resetPassword(
   }
 
   // Find the credential account Better Auth created at sign-up. An OAuth-only
-  // user has none, and this tool will not fabricate one — adding a password to
+  // user has none, and this tool will not fabricate one. Adding a password to
   // an account that never had one is a different operation than "reset", and
   // doing it by raw INSERT risks missing a required field the adapter would
   // populate. Surface it instead.
@@ -241,7 +242,7 @@ async function resetPassword(
     WHERE "userId" = ${user.id} AND "providerId" = 'credential'
   `;
 
-  // Revoke sessions so the old password's sessions cannot outlive the reset —
+  // Revoke sessions so the old password's sessions cannot outlive the reset,
   // the same effect Better Auth's own reset-password endpoint has. A stale
   // session would otherwise let a compromised credential keep working.
   await sql`
@@ -281,8 +282,8 @@ const DEFAULT_CAPTCHA: CaptchaSettings = {
 };
 
 async function disableCaptcha(sql: postgres.Sql, args: ParsedArgs): Promise<void> {
-  // Read the current row so the provider/site key/secret survive the disable —
-  // this mirrors setCaptchaSettings({ enabled: false }) in services/settings,
+  // Read the current row so the provider/site key/secret survive the disable.
+  // This mirrors setCaptchaSettings({ enabled: false }) in services/settings,
   // which deliberately keeps stored keys so re-enabling is a toggle, not a
   // re-entry. The captcha migration seeds this row, but a read-merge-write
   // also covers a panel where it was never seeded.
@@ -323,7 +324,7 @@ async function disableCaptcha(sql: postgres.Sql, args: ParsedArgs): Promise<void
   );
   if (current.provider) {
     console.log(
-      `[rescue] ${current.provider} keys retained — re-enable from Admin settings or this script's inverse.`,
+      `[rescue] ${current.provider} keys retained. Re-enable from Admin settings or this script's inverse.`,
     );
   }
 }
@@ -355,7 +356,7 @@ async function main(): Promise<void> {
 
   // A single connection is all a one-shot CLI needs; max:1 avoids leaving an
   // idle pool behind. onnotice silences Postgres notices (e.g. the CREATE TABLE
-  // IF NOT EXISTS noise from other scripts) — there are none here, but it keeps
+  // IF NOT EXISTS noise from other scripts). There are none here, but it keeps
   // the output clean if the UPSERT emits one.
   const sql = postgres(databaseUrl, {
     max: 1,

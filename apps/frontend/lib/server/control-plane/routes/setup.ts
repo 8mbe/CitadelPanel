@@ -15,7 +15,7 @@
  * The remaining exposure is a race between deploying the panel and completing
  * setup: whoever reaches it first becomes admin. That is inherent to any
  * no-default-credential bootstrap, and it is why `/api/setup/status` reports
- * `needsSetup` — an operator can see at a glance that the window is still open.
+ * `needsSetup`. An operator can see at a glance that the window is still open.
  */
 
 import { requireAdmin } from "../auth/middleware";
@@ -45,6 +45,7 @@ import {
   getLegalSettings,
   getMailSettings,
   getPublicAiSettings,
+  getPublicBackupSettings,
   getPublicCaptchaSettings,
   getPublicMailSettings,
   getRegistrationSettings,
@@ -63,6 +64,8 @@ import {
   markSetupComplete,
   setAiSettings,
   setAnalyticsSettings,
+  setBackupSettings,
+  type BackupSettingsUpdate,
   setBranding,
   setCaptchaSettings,
   setMailSettings,
@@ -77,6 +80,7 @@ import {
 } from "../services/settings";
 import { chatCompletion, fetchAiModels } from "../services/aiClient";
 import { parseColor } from "@/lib/color";
+import { parseCron } from "@/lib/cron";
 import {
   isSiteThemeToken,
   MAX_SITE_RADIUS,
@@ -86,7 +90,7 @@ import {
 } from "@/lib/site-theme";
 
 /**
- * GET /api/setup/status — public.
+ * GET /api/setup/status. Public.
  *
  * Unauthenticated on purpose: the login page and the wizard both need to know
  * whether setup is pending before anyone can possibly hold a session. It reports
@@ -147,7 +151,7 @@ async function countNodes(): Promise<number> {
 }
 
 /**
- * POST /api/setup/admin — claim the first admin account. Unauthenticated, once.
+ * POST /api/setup/admin. Claims the first admin account. Unauthenticated, once.
  *
  * Account creation is delegated to Better Auth rather than inserting a row: it
  * owns password hashing and session issuance, and a hand-rolled bootstrap user
@@ -156,7 +160,7 @@ async function countNodes(): Promise<number> {
  * wizard is signed in for the remaining steps.
  *
  * The role is set here explicitly instead of relying on FIRST_USER_BECOMES_ADMIN,
- * which an operator may have turned off — the account this endpoint creates is
+ * which an operator may have turned off. The account this endpoint creates is
  * an admin by definition.
  */
 export async function handleSetupCreateAdmin(request: Request): Promise<Response> {
@@ -164,7 +168,7 @@ export async function handleSetupCreateAdmin(request: Request): Promise<Response
   // common refusal does not depend on Better Auth's error shape.
   if ((await countAdmins()) > 0) {
     throw conflict(
-      "An administrator account already exists. Sign in instead — first-time setup is closed.",
+      "An administrator account already exists. Sign in instead. First-time setup is closed.",
     );
   }
 
@@ -217,7 +221,7 @@ export async function handleSetupCreateAdmin(request: Request): Promise<Response
     `;
     if (current[0]?.role !== "admin") {
       throw conflict(
-        "An administrator account was just created by someone else. Your account was created as a regular user — ask that administrator for access.",
+        "An administrator account was just created by someone else. Your account was created as a regular user. Ask that administrator for access.",
       );
     }
   }
@@ -247,7 +251,7 @@ export async function handleSetupCreateAdmin(request: Request): Promise<Response
 }
 
 /**
- * PATCH /api/setup/settings — timezone and captcha. Admin only.
+ * PATCH /api/setup/settings. Timezone and captcha. Admin only.
  *
  * Shared by the wizard and the admin settings page: there is no second code path
  * that writes these, so validation cannot drift between "during setup" and
@@ -667,9 +671,142 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
     changed.push("analytics");
   }
 
+  if (body.backups !== undefined) {
+    const backups = requireObject(body, "backups");
+    if (typeof backups.enabled !== "boolean") {
+      throw badRequest('"backups.enabled" must be a boolean');
+    }
+
+    // Cron is validated here rather than in the service layer so the operator gets
+    // the parser's own message about the field they typed, and so an unparseable
+    // expression can never be stored. The scheduler would then silently never fire.
+    const readSchedule = (group: Record<string, unknown>, label: string): string | undefined => {
+      if (group.schedule === undefined) return undefined;
+      const raw = optionalString(group, "schedule", { max: 256 }) ?? "";
+      if (raw.trim().length > 0) {
+        try {
+          parseCron(raw);
+        } catch (error) {
+          throw badRequest(
+            error instanceof Error ? `${label}: ${error.message}` : `Invalid ${label}`,
+          );
+        }
+      }
+      return raw.trim();
+    };
+
+    let servers: BackupSettingsUpdate["servers"];
+    if (backups.servers !== undefined) {
+      const group = requireObject(backups, "servers");
+      servers = {};
+      const schedule = readSchedule(group, "server backup schedule");
+      if (schedule !== undefined) servers.schedule = schedule;
+      if (group.maxPerServer !== undefined) {
+        servers.maxPerServer = requireNumber(group, "maxPerServer", { min: 0, max: 1000 });
+      }
+      if (group.concurrency !== undefined) {
+        servers.concurrency = requireNumber(group, "concurrency", { min: 1, max: 32 });
+      }
+      if (group.exclude !== undefined) {
+        if (!Array.isArray(group.exclude)) {
+          throw badRequest('"backups.servers.exclude" must be an array of glob patterns');
+        }
+        if (group.exclude.length > 64) {
+          throw badRequest('"backups.servers.exclude" must contain at most 64 patterns');
+        }
+        servers.exclude = group.exclude.map((entry, index) => {
+          if (typeof entry !== "string" || entry.trim().length === 0 || entry.length > 256) {
+            throw badRequest(
+              `"backups.servers.exclude[${index}]" must be a non-empty string of at most 256 characters`,
+            );
+          }
+          return entry.trim();
+        });
+      }
+    }
+
+    let databases: BackupSettingsUpdate["databases"];
+    if (backups.databases !== undefined) {
+      const group = requireObject(backups, "databases");
+      databases = {};
+      const schedule = readSchedule(group, "database backup schedule");
+      if (schedule !== undefined) databases.schedule = schedule;
+      if (group.maxPerNode !== undefined) {
+        databases.maxPerNode = requireNumber(group, "maxPerNode", { min: 0, max: 1000 });
+      }
+    }
+
+    let storage: BackupSettingsUpdate["storage"];
+    if (backups.storage !== undefined) {
+      const group = requireObject(backups, "storage");
+      storage = {};
+      // A petabyte ceiling: high enough for any real operator, low enough that a
+      // typo cannot produce a number that overflows the display or the BIGINT.
+      const MAX_BYTES = 1024 ** 5;
+      if (group.quotaBytes !== undefined) {
+        storage.quotaBytes = requireNumber(group, "quotaBytes", { min: 0, max: MAX_BYTES });
+      }
+      if (group.capacityBytes !== undefined) {
+        storage.capacityBytes = requireNumber(group, "capacityBytes", { min: 0, max: MAX_BYTES });
+      }
+    }
+
+    try {
+      await setBackupSettings(
+        {
+          enabled: backups.enabled,
+          endpoint:
+            backups.endpoint === undefined
+              ? undefined
+              : (optionalString(backups, "endpoint", { max: 253 }) ?? null),
+          // Absent leaves the stored value alone; it defaults to true on a fresh
+          // install so an upgrade never quietly starts sending credentials in clear.
+          useTls:
+            backups.useTls === undefined
+              ? undefined
+              : (() => {
+                  if (typeof backups.useTls !== "boolean") {
+                    throw badRequest('"backups.useTls" must be a boolean');
+                  }
+                  return backups.useTls;
+                })(),
+          region: optionalString(backups, "region", { max: 64 }) ?? undefined,
+          bucket:
+            backups.bucket === undefined
+              ? undefined
+              : (optionalString(backups, "bucket", { max: 255 }) ?? null),
+          prefix:
+            backups.prefix === undefined
+              ? undefined
+              : (optionalString(backups, "prefix", { max: 255 }) ?? ""),
+          accessKeyId:
+            backups.accessKeyId === undefined
+              ? undefined
+              : (optionalString(backups, "accessKeyId", { max: 256 }) ?? null),
+          // Undefined keeps the stored secret; an empty string clears it.
+          secretAccessKey:
+            backups.secretAccessKey === undefined
+              ? undefined
+              : (optionalString(backups, "secretAccessKey", { max: 512 }) ?? null),
+          storage,
+          servers,
+          databases,
+        },
+        admin.id,
+      );
+    } catch (error) {
+      // setBackupSettings enforces "enabled requires a complete destination" and the
+      // quota-within-capacity rule.
+      throw badRequest(
+        error instanceof Error ? error.message : "Invalid backup configuration",
+      );
+    }
+    changed.push("backups");
+  }
+
   if (changed.length === 0) {
     throw badRequest(
-      "Provide at least one of: timezone, captcha, mail, verification, serverLimits, ai, branding, theme, registration, seo, analytics",
+      "Provide at least one of: timezone, captcha, mail, verification, serverLimits, ai, branding, theme, registration, seo, analytics, backups",
     );
   }
 
@@ -677,7 +814,7 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
     userId: admin.id,
     action: "settings.update",
     targetType: "settings",
-    // Field names only — never a captcha, mail, or AI API key.
+    // Field names only, never a captcha, mail, or AI API key.
     metadata: { changed },
   });
 
@@ -685,7 +822,7 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
 }
 
 /**
- * GET /api/admin/settings — current settings for the admin settings page.
+ * GET /api/admin/settings. Returns current settings for the admin settings page.
  *
  * The secret key is reported as a boolean, not a value: it is stored encrypted
  * precisely so it cannot be read back, and an admin session is not a reason to
@@ -701,7 +838,7 @@ export async function handleGetSettings(request: Request): Promise<Response> {
  * The admin form's view of every settings group.
  *
  * Shared by the GET and the PATCH response so a saved form always re-renders
- * from the same shape it loaded from — there is no second projection that could
+ * from the same shape it loaded from. There is no second projection that could
  * drop a field only on one of the two paths.
  */
 async function adminSettingsView() {
@@ -712,6 +849,7 @@ async function adminSettingsView() {
     verification: await getVerificationPolicy(),
     serverLimits: await getServerLimits(),
     ai: await getPublicAiSettings(),
+    backups: await getPublicBackupSettings(),
     branding: await getBranding(),
     theme: await getThemeSettings(),
     registration: await getRegistrationSettings(),
@@ -734,11 +872,11 @@ async function getAdminCaptchaView() {
 }
 
 /**
- * POST /api/admin/settings/test-email — send a test message to a given address.
+ * POST /api/admin/settings/test-email. Sends a test message to a given address.
  *
  * Lets an admin confirm their SMTP/Resend config actually delivers before
  * relying on it for verification and password-reset emails. The address is
- * validated here; the send itself never throws — `sendMail` logs and swallows
+ * validated here; the send itself never throws. `sendMail` logs and swallows
  * transport errors, returning false instead, so a misconfigured server yields a
  * readable "did not send" result rather than a 500.
  */
@@ -773,7 +911,7 @@ export async function handleTestEmail(request: Request): Promise<Response> {
 }
 
 /**
- * POST /api/setup/complete — close the setup window. Admin only.
+ * POST /api/setup/complete. Closes the setup window. Admin only.
  *
  * Idempotent: re-running it on a completed install returns the existing
  * timestamp rather than refusing, so a double-submit from the wizard's last step
@@ -803,7 +941,7 @@ export async function handleSetupComplete(request: Request): Promise<Response> {
 }
 
 /**
- * GET /api/settings/public — public.
+ * GET /api/settings/public. Unauthenticated.
  *
  * What an unauthenticated page legitimately needs: the captcha site key so the
  * login form can render its widget, and the timezone so timestamps read
@@ -824,8 +962,8 @@ export async function handlePublicSettings(): Promise<Response> {
     // Surfaced so the console can show (or hide) the AI helper button without
     // a separate round-trip per server page. Only the boolean; no URL/key/model.
     ai: await getPublicAiSettings(),
-    // The site name and tagline the sign-in page renders. Public by definition —
-    // it is the text in the page title.
+    // The site name and tagline the sign-in page renders. Public by definition,
+    // since it is the text in the page title.
     branding: await getBranding(),
     // Lets the sign-in page hide the sign-up tab. The gate itself is the Better
     // Auth before-hook; this only avoids offering a form that would be refused.
@@ -851,7 +989,7 @@ export async function handlePublicSettings(): Promise<Response> {
  * (the most natural flow: type a URL + key, fetch models, pick one, test, then
  * save). When a field is absent the stored value is used instead, so the
  * buttons also work against an already-saved config. The decrypted API key
- * lives only inside this request — it is never returned to the browser.
+ * lives only inside this request. It is never returned to the browser.
  *
  * Returns null when there is no usable config (no URL or no key from either
  * source); callers surface their own readable error.
@@ -882,7 +1020,7 @@ async function resolveAiConfigFromBody(
 }
 
 /**
- * POST /api/admin/settings/ai/models — list models from the provider.
+ * POST /api/admin/settings/ai/models. Lists models from the provider.
  *
  * Accepts `{ apiUrl?, apiKey? }` so an admin can probe a provider before saving
  * it; falls back to the stored config when either is omitted. The model list is
@@ -905,7 +1043,7 @@ export async function handleFetchAiModels(request: Request): Promise<Response> {
 }
 
 /**
- * POST /api/admin/settings/ai/test — send a trivial ping and wait for the reply.
+ * POST /api/admin/settings/ai/test. Sends a trivial ping and waits for the reply.
  *
  * Accepts `{ apiUrl?, apiKey?, model? }` so an admin can test a provider before
  * saving. Returns the assistant's reply so the operator can confirm the round
@@ -934,7 +1072,7 @@ export async function handleTestAi(request: Request): Promise<Response> {
         content:
           "You are a connectivity test. Reply with a single short sentence confirming you received this message.",
       },
-      { role: "user", content: "Hello — is this model reachable?" },
+      { role: "user", content: "Hello, is this model reachable?" },
     ],
   );
 

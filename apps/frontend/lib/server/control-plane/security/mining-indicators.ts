@@ -1,11 +1,10 @@
 /**
  * Static mining indicators (plan.md section 9.1).
  *
- * Intentionally NOT a host blocklist. A domain list is trivially defeated —
- * a miner proxies stratum through a host it controls and the list never
- * matches — so maintaining one costs real effort while catching only the
- * laziest abuse. What remains here are the indicators that survive that
- * objection:
+ * Intentionally NOT a host blocklist. A domain list is trivially defeated. A
+ * miner proxies stratum through a host it controls and the list never matches,
+ * so maintaining one costs real effort while catching only the laziest abuse.
+ * What remains here are the indicators that survive that objection:
  *
  *  - Stratum PORTS, which are a property of the protocol rather than of any
  *    particular pool operator.
@@ -26,7 +25,7 @@
  *
  * 7777 is retained per the plan, but it is also a common game-server port
  * (Terraria, Unturned, some Rust setups), so it is treated as a WEAKER signal
- * than the unambiguous stratum ports — see `heuristics.ts`.
+ * than the unambiguous stratum ports. See `heuristics.ts`.
  */
 export const MINING_POOL_PORTS: readonly number[] = [
   3333, 4444, 5555, 7777, 14444, 45700, 3357, 9999,
@@ -39,9 +38,9 @@ export const UNAMBIGUOUS_MINING_PORTS: readonly number[] = [
 
 /** Ports intentionally NOT treated as mining indicators, with the reason. */
 export const EXCLUDED_AMBIGUOUS_PORTS: Readonly<Record<number, string>> = {
-  80: "Standard HTTP — used by plugin/mod update checks",
-  443: "Standard HTTPS — used by plugin/mod update checks",
-  8080: "Common HTTP alternate — too many legitimate uses",
+  80: "Standard HTTP, used by plugin/mod update checks",
+  443: "Standard HTTPS, used by plugin/mod update checks",
+  8080: "Common HTTP alternate, too many legitimate uses",
   25565: "Minecraft Java default port",
   19132: "Minecraft Bedrock default port",
 };

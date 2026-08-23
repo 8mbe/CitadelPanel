@@ -1,8 +1,9 @@
 /**
  * Minecraft: Bedrock Edition blueprint.
  *
- * Bedrock uses UDP (RakNet) rather than TCP, which is why port protocol is
- * modelled per-port rather than assumed TCP.
+ * Bedrock uses UDP (RakNet) rather than TCP. That distinction no longer shows
+ * up here: a published port is claimed on both protocols, so the declaration
+ * is the number alone.
  */
 
 import type { Blueprint } from "../types";
@@ -14,13 +15,11 @@ export const minecraftBedrock: Blueprint = {
     "Bedrock dedicated server (itzg image). Connects over UDP; version and gameplay options are set with environment variables.",
   dockerImage: "itzg/minecraft-bedrock-server:latest",
 
-  defaultPorts: [
-    { container: 19132, protocol: "udp", primary: true },
-  ],
+  defaultPorts: [{ container: 19132, primary: true }],
 
   // Identity port mapping: the image is told to bind the allocated port inside
   // the container (it rewrites server.properties' server-port from this env,
-  // overriding manual edits — by design of the image).
+  // overriding manual edits, by design of the image).
   primaryPortEnv: "SERVER_PORT",
 
   envSchema: {
@@ -93,7 +92,7 @@ export const minecraftBedrock: Blueprint = {
   expectedResourceProfile: "bursty",
 
   // Run as the data directory's owner (uid 1000) so the image needs no
-  // setuid/chown capabilities — see SKIP_SUDO/SKIP_CHOWN_DATA above.
+  // setuid/chown capabilities. See SKIP_SUDO/SKIP_CHOWN_DATA above.
   user: "1000:1000",
 
   dataPath: "/data",

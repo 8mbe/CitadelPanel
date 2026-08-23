@@ -2,7 +2,7 @@
  * Bearer-token authentication.
  *
  * The agent has exactly one credential and one caller (the panel), so there is
- * no session or user model here — authorization is the panel's job and has
+ * no session or user model here. Authorization is the panel's job and has
  * already happened by the time a request arrives.
  */
 

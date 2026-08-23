@@ -28,6 +28,11 @@ export const forbidden = (message = "Insufficient permissions") =>
 export const notFound = (message = "Not found") => new HttpError(404, message);
 export const conflict = (message: string) => new HttpError(409, message);
 export const payloadTooLarge = (message: string) => new HttpError(413, message);
+/**
+ * The panel is working but a dependency it needs is not. Distinct from a 500:
+ * nothing is wrong with the request, and retrying it later is the right advice.
+ */
+export const serviceUnavailable = (message: string) => new HttpError(503, message);
 
 export function json(
   data: unknown,
@@ -45,8 +50,8 @@ export function noContent(): Response {
 }
 
 /**
- * CORS headers for the configured frontend origin only — not a wildcard, since
- * credentialed requests (session cookies) require an exact origin match.
+ * CORS headers for the configured frontend origin only, never a wildcard,
+ * since credentialed requests (session cookies) require an exact origin match.
  */
 export function corsHeaders(): Record<string, string> {
   return {
@@ -73,7 +78,7 @@ export function withCors(response: Response): Response {
 /**
  * Convert a thrown value into a JSON response.
  *
- * Better Auth `APIError`s (thrown by the auth layer and its plugins — e.g. an
+ * Better Auth `APIError`s (thrown by the auth layer and its plugins, e.g. an
  * invalid API key failing the plugin's before-hook during `getSession`) keep
  * their own status and message; an invalid credential surfaces as 401 rather
  * than a generic 500. Everything else unexpected is logged in full but

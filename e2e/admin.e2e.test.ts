@@ -1,8 +1,8 @@
 /**
  * E2E tests for the admin surface (see routes/admin.ts).
  *
- * Every handler is gated on `requireAdmin`, which checks the global role only
- * — subuser permissions can never reach these endpoints. The suite covers:
+ * Every handler is gated on `requireAdmin`, which checks the global role only.
+ * Subuser permissions can never reach these endpoints. The suite covers:
  *
  *   - the user-management surface (list, detail, role/ban/unban gates)
  *   - the admin server surface (fleet list, resource limits, suspend/unsuspend)
@@ -10,8 +10,8 @@
  *   - the audit feed
  *
  * Destructive mutations (actually banning a user, suspending a server,
- * promoting/demoting) are not exercised — they would destabilize the dev
- * panel. The suite asserts the gates and validation instead. One happy-path
+ * promoting/demoting) are not exercised, because they would destabilize the
+ * dev panel. The suite asserts the gates and validation instead. One happy-path
  * write IS covered: `POST /api/admin/scan` triggers a detection sweep, which
  * is idempotent and side-effect-free (it just re-runs the watcher).
  */
@@ -330,7 +330,7 @@ describe("GET /api/admin/audit-logs", () => {
   });
 
   e2e("returns the empty-list shape when the limit yields no rows", async () => {
-    // A tiny limit is still a valid request — the route clamps to the default.
+    // A tiny limit is still a valid request. The route clamps to the default.
     const res = await api("/api/admin/audit-logs?limit=1", { key: config.adminKey });
     expect(res.status).toBe(200);
   });

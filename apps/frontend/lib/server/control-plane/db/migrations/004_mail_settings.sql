@@ -31,7 +31,7 @@ VALUES (
 )
 ON CONFLICT (key) DO NOTHING;
 
--- Email-verification policy. False until an admin turns it on — and only
+-- Email-verification policy. False until an admin turns it on, and only
 -- meaningful once mail is configured, enforced by the sign-in before-hook.
 INSERT INTO panel_settings (key, value)
 VALUES ('verification', '{"requireVerifiedSignIn": false}'::jsonb)

@@ -10,7 +10,7 @@ import { checkSetup } from "@/lib/setup-gate";
 /**
  * The signed-in account, as the UI needs it.
  *
- * `role` gates every admin affordance in the panel — the admin navigation, the
+ * `role` gates every admin affordance in the panel: the admin navigation, the
  * resource-limit editor, the enforcement actions. It is a display concern only:
  * the backend re-checks the role on every admin route, so a tampered client
  * gains nothing but a broken-looking UI.
@@ -45,15 +45,31 @@ const SessionContext = React.createContext<SessionValue | null>(null);
  * Loads the caller's account once and shares it with the whole panel shell.
  *
  * There is no demo fallback: the panel requires a real backend and a signed-in
- * account. If `/api/me` fails, the visitor is redirected — to `/setup` when the
- * panel has not been configured yet, otherwise to `/login`. Children are not
+ * account. If `/api/me` fails, the visitor is redirected, to `/setup` when the
+ * panel has not been configured yet and otherwise to `/login`. Children are not
  * rendered until a session is in hand, so no panel page ever runs without a
  * `user`.
+ *
+ * When {@link initialUser} is supplied (the normal case, where the panel layout
+ * resolves the session server-side and seeds it), the provider starts with a
+ * user in hand and renders children on first paint. The `GET /api/me` round
+ * trip is skipped entirely, collapsing the old "session blocks → page fetches →
+ * stats fetches" waterfall down to the page's own first request. Only paths
+ * that mount the provider *without* a seed (currently none in the panel, but
+ * kept for completeness and any future bare mount) fall back to the fetch.
  */
-export function SessionProvider({ children }: { children: React.ReactNode }) {
+export function SessionProvider({
+  children,
+  initialUser,
+}: {
+  children: React.ReactNode;
+  initialUser?: SessionUser;
+}) {
   const router = useRouter();
-  const [user, setUser] = React.useState<SessionUser | null>(null);
-  const [loading, setLoading] = React.useState(true);
+  const [user, setUser] = React.useState<SessionUser | null>(initialUser ?? null);
+  // Seeded from SSR → start ready (loading false). Only the bare-mount fallback
+  // (no initialUser) starts in loading and fetches /api/me.
+  const [loading, setLoading] = React.useState(initialUser === undefined);
 
   // Resolve a `/api/me` response into the display shape the shell renders.
   // The stored name wins; if it is missing (older accounts, or never set), fall
@@ -90,6 +106,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [toSessionUser]);
 
   React.useEffect(() => {
+    // Seeded from SSR, so there is nothing to fetch. The layout already
+    // redirected an unauthenticated visitor, so a seeded user is always
+    // present here.
+    if (initialUser !== undefined) return;
     let cancelled = false;
 
     (async () => {
@@ -112,7 +132,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [router, toSessionUser]);
+  }, [router, toSessionUser, initialUser]);
 
   if (loading || !user) {
     // A minimal, theme-aware loading state. The redirect (if any) fires from the

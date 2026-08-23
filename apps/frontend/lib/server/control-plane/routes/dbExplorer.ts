@@ -1,14 +1,14 @@
 /**
  * Database explorer routes.
  *
- * Everything under /api/servers/:id/databases/:databaseId/explorer. All routes
- * — reads included — require the "database" permission, matching the rest of
- * the databases resource. The handlers stay thin: parse, authorize, delegate
+ * Everything under /api/servers/:id/databases/:databaseId/explorer. All routes,
+ * reads included, require the "database" permission, matching the rest of the
+ * databases resource. The handlers stay thin: parse, authorize, delegate
  * to `services/dbExplorer.ts`, which composes the SQL (never the browser) and
  * audits every mutation.
  *
  * Table and column names arrive as path/body values and are vetted inside the
- * SQL builders before anything is interpolated — a hostile name yields a 400,
+ * SQL builders before anything is interpolated. A hostile name yields a 400,
  * not a statement.
  */
 
@@ -59,7 +59,7 @@ function parseColumnSpecs(value: unknown): ColumnSpecInput[] {
   return value.map((spec, i) => parseColumnSpecInput(spec, `columns[${i}]`));
 }
 
-/** GET /api/servers/:id/databases/:databaseId/explorer/tables — table list. */
+/** GET /api/servers/:id/databases/:databaseId/explorer/tables. Table list. */
 export async function handleListExplorerTables(
   request: Request,
   serverId: string,
@@ -74,7 +74,7 @@ export async function handleListExplorerTables(
 }
 
 /**
- * POST .../explorer/tables — create a table.
+ * POST .../explorer/tables. Creates a table.
  *
  * Body: { table: string, columns: ColumnSpecInput[] }
  */
@@ -100,7 +100,7 @@ export async function handleCreateExplorerTable(
   return json({ created: true }, 201);
 }
 
-/** DELETE .../explorer/tables/:table — drop a table (destructive). */
+/** DELETE .../explorer/tables/:table. Drops a table (destructive). */
 export async function handleDropExplorerTable(
   request: Request,
   serverId: string,
@@ -116,7 +116,7 @@ export async function handleDropExplorerTable(
   return noContent();
 }
 
-/** GET .../explorer/tables/:table/schema — columns and primary key. */
+/** GET .../explorer/tables/:table/schema. Columns and primary key. */
 export async function handleGetExplorerTableSchema(
   request: Request,
   serverId: string,
@@ -132,7 +132,7 @@ export async function handleGetExplorerTableSchema(
 }
 
 /**
- * GET .../explorer/tables/:table/rows?offset=&limit= — one page of rows.
+ * GET .../explorer/tables/:table/rows?offset=&limit=. One page of rows.
  *
  * `limit` is clamped server-side (1..EXPLORER_MAX_PAGE) so a client cannot
  * ask for the whole table in one response.
@@ -160,7 +160,7 @@ export async function handleGetExplorerTableRows(
 }
 
 /**
- * POST .../explorer/tables/:table/rows — insert a row.
+ * POST .../explorer/tables/:table/rows. Inserts a row.
  *
  * Body: { values: Record<string, string | null> }
  */
@@ -183,7 +183,7 @@ export async function handleInsertExplorerRow(
 }
 
 /**
- * PATCH .../explorer/tables/:table/rows — update one row by primary key.
+ * PATCH .../explorer/tables/:table/rows. Updates one row by primary key.
  *
  * Body: { pk: Record<string, string | null>, values: Record<string, string | null> }
  */
@@ -207,7 +207,7 @@ export async function handleUpdateExplorerRow(
 }
 
 /**
- * DELETE .../explorer/tables/:table/rows — delete one row by primary key.
+ * DELETE .../explorer/tables/:table/rows. Deletes one row by primary key.
  *
  * Body: { pk: Record<string, string | null> } (a keyed DELETE keeps the row
  * identity out of the URL, where it would be logged everywhere).
@@ -231,7 +231,7 @@ export async function handleDeleteExplorerRow(
 }
 
 /**
- * POST .../explorer/tables/:table/columns — add a column.
+ * POST .../explorer/tables/:table/columns. Adds a column.
  *
  * Body: { column: ColumnSpecInput }
  */
@@ -254,9 +254,9 @@ export async function handleAddExplorerColumn(
 }
 
 /**
- * PATCH .../explorer/tables/:table/columns/:column — edit a column.
+ * PATCH .../explorer/tables/:table/columns/:column. Edits a column.
  *
- * Body: { column: ColumnSpecInput } — the full restated definition; the UI
+ * Body: { column: ColumnSpecInput }, the full restated definition; the UI
  * prefills it from the schema so nothing is silently dropped.
  */
 export async function handleChangeExplorerColumn(
@@ -283,7 +283,7 @@ export async function handleChangeExplorerColumn(
   return json({ changed: true });
 }
 
-/** DELETE .../explorer/tables/:table/columns/:column — drop a column (destructive). */
+/** DELETE .../explorer/tables/:table/columns/:column. Drops a column (destructive). */
 export async function handleDropExplorerColumn(
   request: Request,
   serverId: string,
