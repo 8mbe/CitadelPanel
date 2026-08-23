@@ -2,6 +2,8 @@
 
 CitadelPanel ships with no default credentials. The first-time setup wizard runs once to configure the panel before any servers can be provisioned.
 
+Deploying with Docker splits `bun run setup` across three places — secrets on the host, migrations at container boot, this wizard in the browser. See [docker.md](docker.md).
+
 ## Overview
 
 Setup is a four-step wizard reached at `/setup`:

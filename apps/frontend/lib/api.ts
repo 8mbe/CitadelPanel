@@ -390,14 +390,22 @@ export async function getServer(id: string): Promise<ServerView | null> {
 /**
  * DELETE /api/servers/:id — remove a server. Owner-or-admin only. When
  * `deleteData` is true the node also wipes the server's data directory;
- * otherwise the files are left on disk. Node cleanup is best-effort — an
- * unreachable node does not block removal of the panel record.
+ * otherwise the files are left on disk.
+ *
+ * A node that cannot confirm the container was removed fails the delete with a
+ * 502 and changes nothing — retry it once the node is back. `force` (admin-only)
+ * drops the panel's record anyway, for a node that is never coming back, and
+ * accepts the container and files it leaves behind.
  */
 export async function deleteServer(
   id: string,
   deleteData = false,
+  force = false,
 ): Promise<void> {
-  const query = deleteData ? "?deleteData=true" : "";
+  const params = new URLSearchParams();
+  if (deleteData) params.set("deleteData", "true");
+  if (force) params.set("force", "true");
+  const query = params.size > 0 ? `?${params}` : "";
   await request(`/api/servers/${id}${query}`, { method: "DELETE" });
 }
 
@@ -2056,6 +2064,12 @@ export interface NodeHealthResult {
    * Absent when the agent does not report it.
    */
   dataRoot?: NodeDataRootStatus;
+  /**
+   * Whether the agent can reach its Docker daemon. A reachable agent with an
+   * unusable socket answers this probe while failing every power action, so it
+   * is shown alongside reachability. Absent when the agent does not report it.
+   */
+  dockerSocket?: NodeDockerSocketStatus;
   /** Present when the agent was probed but did not answer successfully. */
   error?: string;
   /**
@@ -2069,6 +2083,13 @@ export interface NodeHealthResult {
 export interface NodeDataRootStatus {
   path: string;
   writable: boolean;
+  error?: string;
+}
+
+/** The agent's report on its own Docker socket, including how to fix it. */
+export interface NodeDockerSocketStatus {
+  path: string;
+  reachable: boolean;
   error?: string;
 }
 

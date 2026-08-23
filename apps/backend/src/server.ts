@@ -21,6 +21,7 @@ import { config } from "./config";
 import { validateConsoleSession, recordConsoleCommand } from "./consoleAudit";
 import { probeDataRoot, reportDataRootAtBoot } from "./dataRoot";
 import { readDaemonInfo } from "./docker/client";
+import { probeDockerSocket, reportDockerSocketAtBoot } from "./docker/socket";
 import { probePorts, type PortProtocol } from "./docker/ports";
 import {
   getNodeDbInfo,
@@ -368,17 +369,26 @@ const server = Bun.serve<ConsoleSocket, never>({
      */
     "/v1/health": {
       GET: route(async () => {
-        const [info, dataRoot] = await Promise.all([
-          readDaemonInfo(),
+        // The socket is probed first and separately: `readDaemonInfo` throws on
+        // an unusable daemon, and letting that through would answer the panel
+        // with "Internal agent error" — the least useful of the possible
+        // diagnoses. A node whose Docker is unreachable is degraded, not
+        // broken, and it can still say exactly what to fix (see `socket.ts`).
+        const [dockerSocket, dataRoot] = await Promise.all([
+          probeDockerSocket(),
           probeDataRoot(),
         ]);
+
+        const info = dockerSocket.reachable ? await readDaemonInfo() : undefined;
+
         return json({
-          status: "ok",
-          dockerVersion: info.serverVersion,
-          containersRunning: info.containersRunning,
-          capacity: { ncpu: info.ncpu, memTotalMb: info.memTotalMb },
+          status: dockerSocket.reachable ? "ok" : "degraded",
+          dockerVersion: info?.serverVersion,
+          containersRunning: info?.containersRunning,
+          capacity: info ? { ncpu: info.ncpu, memTotalMb: info.memTotalMb } : undefined,
           serverDataRoot: config.serverDataRoot,
           dataRoot,
+          dockerSocket,
         });
       }),
     },
@@ -1409,7 +1419,11 @@ const server = Bun.serve<ConsoleSocket, never>({
 
 const scheme = config.tlsCert && config.tlsKey ? "https" : "http";
 console.log(`[agent] CitadelPanel node agent listening on ${scheme}://0.0.0.0:${server.port}`);
-console.log(`[agent] docker socket: ${config.dockerSocket}`);
+
+// Prints the socket and, when the daemon cannot be reached, which of the two
+// usual causes it is and the command that fixes it. Runs before the data-root
+// report because an agent that cannot reach Docker can do nothing at all.
+await reportDockerSocketAtBoot();
 
 // Prints the data root and, when it is not writable, the command that fixes it.
 // Runs after `Bun.serve` so a slow or broken filesystem cannot delay the agent

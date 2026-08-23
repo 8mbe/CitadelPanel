@@ -83,6 +83,36 @@ a server on the node. A node whose root is unwritable refuses creation with 503
 and that same remediation text, shown to the admin who requested the server;
 `Test connection` in the panel's node UI reports it too.
 
+## Docker socket access
+
+Everything else the agent does is a call on `DOCKER_SOCKET`, so it gets the same
+treatment: pinged at boot (`(reachable)` or the reason plus the fix), re-probed
+on every `/v1/health`, and reported to the panel as a status rather than thrown
+as an error. See `src/docker/socket.ts`.
+
+The permission case has a trap that makes a correct fix look broken:
+**a process's supplementary groups are fixed when it starts.**
+
+```
+[agent] docker socket: /var/run/docker.sock (UNREACHABLE)
+[agent] The node agent (uid 1000) may not use /var/run/docker.sock: the socket
+        is owned by group docker (gid 955) and this process's groups (…) do not
+        include it. …
+```
+
+`sudo usermod -aG docker "$(id -un)"` edits `/etc/group`; it does not change any
+running process, including the shell you typed it in. Start a **new login
+session** (or `newgrp docker`) and launch the agent from there — `id -G` in that
+session must list the docker gid. To grant a *running* agent access without
+restarting it, ACL the socket instead (resets when the daemon restarts):
+
+```bash
+sudo setfacl -m u:"$(id -un)":rw /var/run/docker.sock
+```
+
+`docs/docker.md` has the full rundown, including the `ENOENT` (no Docker /
+wrong `DOCKER_SOCKET`) and `ECONNREFUSED` (daemon stopped) cases.
+
 ## Shared node database (optional)
 
 A node can host one shared MariaDB instance that server owners request

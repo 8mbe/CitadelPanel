@@ -12,7 +12,8 @@
     "env:init": "bun run scripts/init-env.ts",
     "auth:migrate": "bunx @better-auth/cli migrate --config lib/server/control-plane/auth/betterAuth.migrate.ts -y",
     "db:migrate": "bun run scripts/migrate.ts",
-    "setup": "bun run env:init && bun run auth:migrate && bun run db:migrate",
+    "migrate": "bun run auth:migrate && bun run db:migrate",
+    "setup": "bun run env:init && bun run migrate",
     "rescue": "bun run scripts/rescue.ts"
   },
   "dependencies": {

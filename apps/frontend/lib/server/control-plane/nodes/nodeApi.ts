@@ -272,6 +272,14 @@ export interface NodeHealth {
    * Absent when the agent predates this field.
    */
   dataRoot?: NodeDataRootStatus;
+  /**
+   * Whether the agent can reach its Docker daemon. Same reasoning as
+   * `dataRoot`: the agent answers HTTP perfectly well while every container
+   * operation on the node fails, so it reports the socket's state (and the fix)
+   * rather than letting the panel discover it as a failed power action. Absent
+   * when the agent predates this field.
+   */
+  dockerSocket?: NodeDockerSocketStatus;
   error?: string;
   /**
    * The agent rejected the bearer token (401/403). Distinct from `reachable`
@@ -289,12 +297,21 @@ export interface NodeDataRootStatus {
   error?: string;
 }
 
+/** The agent's verdict on its own Docker socket, with the fix when it is broken. */
+export interface NodeDockerSocketStatus {
+  path: string;
+  reachable: boolean;
+  /** Cause plus remediation, written for an operator to act on. */
+  error?: string;
+}
+
 interface AgentHealthResponse {
   status: string;
   dockerVersion?: string;
   containersRunning?: number;
   capacity?: { ncpu: number; memTotalMb: number };
   dataRoot?: NodeDataRootStatus;
+  dockerSocket?: NodeDockerSocketStatus;
 }
 
 /**
@@ -317,6 +334,7 @@ export async function checkNodeHealth(node: NodeWithSecrets): Promise<NodeHealth
       containersRunning: health.containersRunning,
       capacity: health.capacity,
       dataRoot: health.dataRoot,
+      dockerSocket: health.dockerSocket,
     };
   } catch (error) {
     // The agent answered but refused the token: the host is reachable, the
@@ -386,6 +404,17 @@ export async function assertNodeReadyToProvision(nodeId: string): Promise<void> 
       503,
       `Node "${node.name}" is not ready to host a server: ` +
         `${health.error ?? "its agent did not respond"}.`,
+    );
+  }
+
+  // Checked before the data root: an agent that cannot reach Docker cannot
+  // create the container either, and its message names the actual fault.
+  if (health.dockerSocket && !health.dockerSocket.reachable) {
+    throw new HttpError(
+      503,
+      `Node "${node.name}" cannot run containers. ` +
+        (health.dockerSocket.error ??
+          `Its agent cannot reach the Docker socket at ${health.dockerSocket.path}.`),
     );
   }
 

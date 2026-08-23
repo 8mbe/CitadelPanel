@@ -461,17 +461,23 @@ function DeleteServerForm({
   onDeleted: () => void;
 }) {
   const [deleteData, setDeleteData] = React.useState(false);
+  const [force, setForce] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // Forcing is only offered once a delete has actually been refused by the node.
+  // It is the answer to a node that is gone for good, not a checkbox to tick on
+  // the way past a node that is merely restarting.
+  const [canForce, setCanForce] = React.useState(false);
 
   const confirm = async () => {
     setSubmitting(true);
     setError(null);
     try {
-      await deleteServer(target.id, deleteData);
+      await deleteServer(target.id, deleteData, force);
       onDeleted();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to delete server.");
+      setCanForce(true);
     } finally {
       setSubmitting(false);
     }
@@ -498,11 +504,24 @@ function DeleteServerForm({
           </FieldLabel>
         </Field>
         {error && <p className="text-sm text-destructive">{error}</p>}
+        {canForce && (
+          <Field orientation="horizontal">
+            <Checkbox
+              id="delete-force"
+              checked={force}
+              onCheckedChange={(checked) => setForce(checked === true)}
+            />
+            <FieldLabel htmlFor="delete-force" className="font-normal">
+              Force: delete the panel&apos;s record anyway, leaving the container
+              and files on the node
+            </FieldLabel>
+          </Field>
+        )}
         <DialogFooter>
           <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
           <Button variant="destructive" onClick={confirm} disabled={submitting}>
             {submitting && <Spinner />}
-            Delete server
+            {force ? "Force delete" : "Delete server"}
           </Button>
         </DialogFooter>
       </DialogContent>

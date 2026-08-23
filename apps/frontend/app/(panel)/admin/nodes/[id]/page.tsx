@@ -337,6 +337,29 @@ function NodeDetailBody({
         </div>
       )}
 
+      {/* Same reasoning as the data-root callout below, one layer earlier: an
+        agent that cannot open the Docker socket answers this page while every
+        power action on the node fails. The agent's message names which of the
+        two usual causes it is and the command that fixes it. */}
+      {health?.reachable && health.dockerSocket && !health.dockerSocket.reachable && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-xs"
+        >
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+          <div className="flex flex-col gap-1">
+            <span className="font-medium text-destructive">
+              This node&apos;s agent cannot reach Docker — every container action will
+              fail.
+            </span>
+            <span className="text-muted-foreground">
+              {health.dockerSocket.error ??
+                `Its agent cannot reach the Docker socket at ${health.dockerSocket.path}.`}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* A reachable agent that cannot write its data root will refuse every
         provision, so it gets its own callout rather than a footnote on the
         status line above — the message carries the command that fixes it. */}

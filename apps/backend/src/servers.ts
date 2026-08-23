@@ -578,7 +578,14 @@ export async function sampleServers(
         const stats = await getServerStats(serverId);
         return stats ? { ...stats, serverId } : null;
       } catch (error) {
-        console.error(`[agent] failed to sample server ${serverId}:`, error);
+        // Message only, no stack: this runs on the panel's sweep timer for
+        // every server on the node, so a node-wide fault (an unreachable
+        // Docker socket, say) would otherwise bury the boot-time diagnosis
+        // under one dockerode stack trace per container per tick.
+        console.error(
+          `[agent] failed to sample server ${serverId}:`,
+          error instanceof Error ? error.message : error,
+        );
         return null;
       }
     }),

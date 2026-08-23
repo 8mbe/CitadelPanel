@@ -43,6 +43,7 @@ import {
 } from "../lib/http";
 import {
   accessAllowsOwnerOnly,
+  isAdmin,
   resolveServerAccess,
 } from "../auth/rbac";
 import { listBlueprints, getBlueprintByKey } from "../blueprints/registry";
@@ -195,6 +196,11 @@ export async function handleKillServer(
  *
  * Owner-or-admin only: deletion is not a delegable subuser permission.
  * World data is retained unless `?deleteData=true` is passed explicitly.
+ *
+ * `?force=true` deletes the panel's record even when the node cannot confirm the
+ * container is gone, and is **admin-only** — an owner deleting their own server
+ * does not get to leave a running container and its files on an operator's node.
+ * The 502 that a normal delete fails with names this as the way out.
  */
 export async function handleDeleteServer(
   request: Request,
@@ -203,10 +209,18 @@ export async function handleDeleteServer(
   const id = requireUuidParam(serverId, "serverId");
   const { user } = await requireServerOwner(request, id);
 
-  const deleteData =
-    new URL(request.url).searchParams.get("deleteData") === "true";
+  const params = new URL(request.url).searchParams;
+  const deleteData = params.get("deleteData") === "true";
+  const force = params.get("force") === "true";
 
-  await deleteServer(id, user.id, deleteData);
+  if (force && !isAdmin(user)) {
+    throw forbidden(
+      "Only an administrator can force a delete past a node that cannot " +
+        "confirm the container was removed.",
+    );
+  }
+
+  await deleteServer(id, user.id, deleteData, force);
   return noContent();
 }
 

@@ -1304,17 +1304,44 @@ export async function unsuspendServer(
  *
  * The world data directory is retained unless `deleteData` is explicitly true —
  * an accidental delete should be recoverable (plan.md section 11 step 8).
+ *
+ * **The node's cleanup is not best-effort.** Dropping the panel record while the
+ * container survives inverts this module's ordering principle: a container with
+ * no row is an orphan nobody can see. Worse, it keeps running — a deleted server
+ * that still serves players, still writes to disk, and still holds its published
+ * host ports, which the panel is now free to hand to the next server on that
+ * node. So a node that cannot confirm the removal aborts the delete: the record
+ * stays, the status goes back to what it was, and the operator retries once the
+ * node is back. Retrying is safe because the agent's delete is idempotent.
+ *
+ * `force` is the escape hatch for the node that is never coming back
+ * (decommissioned hardware, a lost host). It accepts the orphan knowingly, and
+ * is admin-only for that reason — see `handleDeleteServer`. What was left behind
+ * is written into the audit entry, because after the row is gone that log is the
+ * only record of what still needs cleaning up by hand.
+ *
+ * A row with no container is exempt from the gate: there is nothing on the node
+ * that can run or hold a port, so an unreachable node must not strand a failed
+ * provision as an undeletable row. Asking to delete the data is not exempt —
+ * the files may well exist even when the container never did.
  */
 export async function deleteServer(
   serverId: string,
   actorId: string,
   deleteData = false,
+  force = false,
 ): Promise<void> {
   const server = await loadServerRow(serverId);
+  const previousStatus = server.status;
+  const cleanupMustSucceed =
+    !force && (server.container_id !== null || deleteData);
+
   await setStatus(serverId, "deleting");
 
   // Detach any server links while both containers still exist, so the peer is
-  // dropped from the pair network too. Best-effort, like the cleanup below.
+  // dropped from the pair network too. Best-effort: this only unwires networks
+  // on the node, and the same node failure that would strand a link network is
+  // the one the container delete below is about to refuse over.
   try {
     await detachAllServerLinks(serverId);
   } catch (error) {
@@ -1324,23 +1351,40 @@ export async function deleteServer(
     );
   }
 
+  /** What the node still holds, when a forced delete walks away from it. */
+  const orphaned: { container?: string; databases?: string[] } = {};
+
   try {
     // The agent removes the container, the per-server network and — only when
     // asked — the data directory, all on the node that owns them.
     await deleteServerContainer(server.node_id, serverId, deleteData);
   } catch (error) {
-    // A node that is unreachable must not block removal of the panel record;
-    // the container is already stopped-or-gone from the user's perspective.
+    const reason = error instanceof Error ? error.message : String(error);
+
+    if (cleanupMustSucceed) {
+      await setStatus(serverId, previousStatus);
+      throw new HttpError(
+        error instanceof HttpError ? error.status : 502,
+        `${reason} Nothing was deleted — the server's container and files are ` +
+          `still on the node. Retry once the node is reachable, or force the ` +
+          `delete to drop the panel's record and leave them behind.`,
+      );
+    }
+
     console.error(
-      `[serverManager] node cleanup failed for ${serverId} (continuing):`,
+      `[serverManager] node cleanup failed for ${serverId} (${
+        force ? "forced" : "no container"
+      }, continuing):`,
       error,
     );
+    if (server.container_id) orphaned.container = server.container_id;
   }
 
   // Drop any provisioned databases on the node's MariaDB before the panel
-  // record disappears. Best-effort: an unreachable node leaves orphaned DBs
-  // (a manual cleanup task), but that is better than blocking the delete. The
-  // stored name/user are passed so the agent drops each one by its real name.
+  // record disappears. Best-effort even when the container delete is not: the
+  // node just answered that call, so a failure here is the database's, not the
+  // node's, and it leaves data rather than a running container. The stored
+  // name/user are passed so the agent drops each one by its real name.
   const dbRows = (await sql`
     SELECT id, db_name, db_user, node_id FROM server_databases
     WHERE server_id = ${serverId}
@@ -1363,19 +1407,36 @@ export async function deleteServer(
           `[serverManager] DB drop failed for ${serverId}/${row.id} (continuing):`,
           error,
         );
+        orphaned.databases = [...(orphaned.databases ?? []), row.db_name];
       }
+    } else {
+      orphaned.databases = [...(orphaned.databases ?? []), row.db_name];
     }
   }
 
   // Cascades clear server_ports, server_env, server_subusers, server_databases.
   await sql`DELETE FROM servers WHERE id = ${serverId}`;
 
+  const leftBehind = orphaned.container || orphaned.databases;
+  if (leftBehind) {
+    console.error(
+      `[serverManager] ${serverId} deleted with leftovers on node ${server.node_id}:`,
+      orphaned,
+    );
+  }
+
   await recordAudit({
     userId: actorId,
     action: "server.delete",
     targetType: "server",
     targetId: serverId,
-    metadata: { dataDeleted: deleteData },
+    metadata: {
+      dataDeleted: deleteData,
+      ...(force ? { forced: true } : {}),
+      // The row is gone after this; the audit entry is the only place an
+      // operator can later find what is still sitting on the node.
+      ...(leftBehind ? { nodeId: server.node_id, orphaned } : {}),
+    },
   });
 }
 
