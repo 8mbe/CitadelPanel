@@ -88,9 +88,9 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 
-// The code editor (CodeMirror) and the in-place editor view are heavy and
+// The code editor (Monaco) and the in-place editor view are heavy and
 // rarely the first thing a user needs, so they are split into lazy chunks.
-// `ssr: false` keeps CodeMirror's DOM-dependent module out of the server bundle.
+// `ssr: false` keeps Monaco's DOM-dependent module out of the server bundle.
 const FileEditor = nextDynamic(() => import("./file-editor"), {
   ssr: false,
   loading: () => (
@@ -512,7 +512,7 @@ export function FilesManager({ serverId }: { serverId: string }) {
         serverId={serverId}
         entry={editing}
         busy={busy}
-        onBack={() => navigate({ path })}
+        onNavigate={(dir) => navigate({ path: dir })}
         onSave={(contents) => handleSaveFile(editing, contents)}
       />
     );

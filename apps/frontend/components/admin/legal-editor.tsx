@@ -32,7 +32,7 @@ import {
 } from "@/lib/legal-templates";
 import { cn } from "@/lib/utils";
 
-// `ssr: false` keeps CodeMirror's DOM-dependent module out of the server bundle,
+// `ssr: false` keeps Monaco's DOM-dependent module out of the server bundle,
 // matching how the file manager loads it.
 const CodeEditor = nextDynamic(() => import("@/components/code-editor"), {
   ssr: false,
@@ -61,7 +61,7 @@ const DOCUMENTS = [
 /**
  * The legal document editor.
  *
- * A real editor — CodeMirror with a side-by-side preview — rather than a textarea
+ * A real editor — Monaco with a side-by-side preview — rather than a textarea
  * in the settings form, because these are documents, not settings: they are
  * thousands of words long, they are written over multiple sittings, and they are
  * the one thing on the panel a lawyer might read. A four-row textarea buried

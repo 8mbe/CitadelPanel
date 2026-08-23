@@ -68,8 +68,10 @@ Existing docs:
 - `docs/sftp.md` — per-(user,server) SFTP credentials, panel-callback auth.
 - `docs/subusers.md` — per-server delegated access: the permission flags,
   what each gates (API and UI), and the reads-gate-with-writes rule.
-- `docs/file-editor.md` — the in-panel code editor: CodeMirror 6, CSS-var
-  theming, the client-side binary sniff, and dirty/save semantics.
+- `docs/file-editor.md` — the in-panel code editor: Monaco (the VS Code
+  editor), why its theme is the one thing rebuilt from JS instead of CSS, the
+  local worker entry points, the client-side binary sniff, and dirty/save
+  semantics.
 - `docs/server-lifecycle.md` — provisioning, the power actions and the stored
   status: why status is a record and the node is the truth, why a server is
   built *after* the create request answers (and what the `installing` gate and
