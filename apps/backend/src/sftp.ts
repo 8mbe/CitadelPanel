@@ -8,10 +8,11 @@
  * server's data directory.
  *
  * Containment reuses `paths.ts` — the same boundary the file-manager HTTP routes
- * use. The SFTP virtual root `/` maps to `serverDataPath(serverId)`; every
- * operation is resolved through `resolveServerPath` / `resolveExistingServerPath`
- * so `..` traversal and symlink escapes are caught by the existing checks rather
- * than reimplemented here.
+ * use. The SFTP virtual root `/` maps to `serverDataPath(serverId)`; reads
+ * resolve through `resolveExistingServerPath` and writes/creates through
+ * `resolveWritableServerPath`, so `..` traversal and symlink escapes (including
+ * a symlink planted in an existing parent of a new path) are caught by the
+ * existing checks rather than reimplemented here.
  *
  * The agent stays stateless about users: it holds open file handles for the
  * duration of an SFTP session (ssh2 requires it) but validates the credential
@@ -32,8 +33,15 @@ import { generateKeyPairSync } from "node:crypto";
 import { constants as fsConstants, type Stats, type Dirent } from "node:fs";
 import { Server, type SFTPWrapper, type Attributes } from "ssh2";
 import { config } from "./config";
+import { docker } from "./docker/client";
+import { alignOwnership } from "./docker/userns";
 import { requireServerId } from "./http";
-import { resolveExistingServerPath, resolveServerPath, serverDataPath } from "./paths";
+import {
+  resolveExistingServerPath,
+  resolveServerPath,
+  resolveWritableServerPath,
+  serverDataPath,
+} from "./paths";
 import { validateSftpCredentials } from "./sftpAuth";
 
 /** SFTP status codes (ssh2 exposes them as `STATUS_CODE` on the wrapper). */
@@ -204,6 +212,20 @@ async function resolveExisting(state: SessionState, clientPath: string): Promise
 }
 
 /**
+ * Resolve a path that is about to be **written or created**.
+ *
+ * The lexical {@link resolveSafe} is not enough for these: the game can plant
+ * `ln -s /etc plugins` inside its own data dir, and a later create of
+ * `plugins/x` would follow the symlinked parent and land outside the boundary
+ * — as this process, whose access on the node is root-equivalent. Same
+ * reasoning (and same resolver) as `writeFile` in `files.ts`.
+ */
+async function resolveWritable(state: SessionState, clientPath: string): Promise<string> {
+  requireServerId(state.serverId);
+  return resolveWritableServerPath(state.serverId, clientPath);
+}
+
+/**
  * Convert a `node:fs` `Stats` to the ssh2 `Attributes` shape.
  *
  * Times are seconds (SFTP's wire format), not ms. Mode is the full st_mode
@@ -331,16 +353,16 @@ function wireSftpEvents(sftp: SFTPWrapper, state: SessionState): void {
 
   // --- Open file ------------------------------------------------------------
   sftp.on("OPEN", async (reqId, clientPath, flags) => {
+    const creating = (flags & 0x00000008) /* CREATE */ !== 0;
     let hostPath: string;
     try {
-      // Use the existing-path variant when not creating, so a symlink escape
-      // is caught; for create paths the lexical check in resolveSafe is enough
-      // (the target doesn't exist yet, matching writeFile's posture in files.ts).
-      if (flags & 0x00000008 /* CREATE */) {
-        hostPath = resolveSafe(state, clientPath);
-      } else {
-        hostPath = await resolveExisting(state, clientPath);
-      }
+      // Creates go through the write-safe resolver (a symlink planted in an
+      // existing parent must not redirect the new file outside the boundary);
+      // plain opens use the existing-path variant, which realpath-checks the
+      // target itself.
+      hostPath = creating
+        ? await resolveWritable(state, clientPath)
+        : await resolveExisting(state, clientPath);
     } catch {
       sftp.status(reqId, STATUS.PERMISSION_DENIED);
       return;
@@ -353,6 +375,10 @@ function wireSftpEvents(sftp: SFTPWrapper, state: SessionState): void {
       return null;
     });
     if (!fd) return;
+
+    // A file this session may have just created belongs to the container-side
+    // data owner, not to the agent (a no-op off userns-remap).
+    if (creating) await alignOwnership(docker, hostPath);
 
     const handle: SftpHandle = { kind: "file", fd, path: hostPath, flags };
     sftp.handle(reqId, registerHandle(state, handle));
@@ -497,13 +523,16 @@ function wireSftpEvents(sftp: SFTPWrapper, state: SessionState): void {
   sftp.on("MKDIR", async (reqId, clientPath) => {
     let hostPath: string;
     try {
-      hostPath = resolveSafe(state, clientPath);
+      // Write-safe: `mkdir` under a symlinked parent would create the
+      // directory outside the boundary (see resolveWritable).
+      hostPath = await resolveWritable(state, clientPath);
     } catch {
       sftp.status(reqId, STATUS.PERMISSION_DENIED);
       return;
     }
     try {
       await mkdir(hostPath, { recursive: false });
+      await alignOwnership(docker, hostPath);
       sftp.status(reqId, STATUS.OK);
     } catch (error) {
       const code = (error as { code?: string }).code;
@@ -540,7 +569,9 @@ function wireSftpEvents(sftp: SFTPWrapper, state: SessionState): void {
     let to: string;
     try {
       from = await resolveExisting(state, oldPath);
-      to = resolveSafe(state, newPath);
+      // Write-safe for the destination: a symlinked parent would let the
+      // rename move a real file *out* of the data directory.
+      to = await resolveWritable(state, newPath);
     } catch {
       sftp.status(reqId, STATUS.PERMISSION_DENIED);
       return;
@@ -555,7 +586,8 @@ function wireSftpEvents(sftp: SFTPWrapper, state: SessionState): void {
       return;
     }
     try {
-      await mkdir(dirname(to), { recursive: true });
+      const created = await mkdir(dirname(to), { recursive: true });
+      if (created) await alignOwnership(docker, created, { recursive: true });
       await rename(from, to);
       sftp.status(reqId, STATUS.OK);
     } catch (error) {
@@ -606,12 +638,14 @@ function wireSftpEvents(sftp: SFTPWrapper, state: SessionState): void {
     // linkPath is the symlink to create; targetPath is what it points at.
     // Both must resolve inside the data dir — a symlink pointing outside would
     // be caught on read by resolveExistingServerPath, but we block at create
-    // time too so a hostile client can't even plant one.
+    // time too so a hostile client can't even plant one. The link itself goes
+    // through the write-safe resolver so it cannot be *created through* a
+    // symlinked parent either.
     let target: string;
     let link: string;
     try {
       target = resolveSafe(state, targetPath);
-      link = resolveSafe(state, linkPath);
+      link = await resolveWritable(state, linkPath);
     } catch {
       sftp.status(reqId, STATUS.PERMISSION_DENIED);
       return;

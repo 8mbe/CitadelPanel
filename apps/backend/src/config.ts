@@ -34,6 +34,21 @@ function optionalInt(key: string, fallback: number): number {
 }
 
 /**
+ * A runtime name is handed to the daemon verbatim, so the only validation that
+ * makes sense here is shape: a plausible runtime identifier, not a flag or a
+ * path with spaces. Whether the daemon actually has it is checked at boot.
+ */
+function validateRuntimeName(value: string): string {
+  if (value === "") return value;
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value)) {
+    throw new Error(
+      `CONTAINER_RUNTIME must be a runtime name like "runsc" or "kata-runtime", got "${value}".`,
+    );
+  }
+  return value;
+}
+
+/**
  * The shared secret the panel presents as a bearer token.
  *
  * This API is root-equivalent for this host (it drives the Docker socket), so a
@@ -63,6 +78,26 @@ export const config = {
 
   /** Local Docker socket. The agent only ever talks to its own daemon. */
   dockerSocket: optional("DOCKER_SOCKET", "/var/run/docker.sock"),
+
+  /**
+   * OCI runtime for tenant containers (Docker `--runtime`), e.g. `runsc` for
+   * gVisor or `kata-runtime`. Empty means the daemon default (`runc`).
+   *
+   * A per-node knob rather than a panel setting because it names a binary
+   * installed on *this* host — the panel has no way to know what a node has.
+   * Validated for shape here and against the daemon's runtime list at boot
+   * (see `reportContainerSecurityAtBoot`), so a typo surfaces as one clear
+   * line instead of a create-time error on every provision.
+   */
+  containerRuntime: validateRuntimeName(optional("CONTAINER_RUNTIME", "")),
+
+  /**
+   * Manual override for the userns-remap subordinate base (see
+   * `docker/userns.ts`). -1 (the default) means auto-detect from the daemon;
+   * set both only when detection fails on an exotic daemon configuration.
+   */
+  usernsUidOffset: optionalInt("USERNS_UID_OFFSET", -1),
+  usernsGidOffset: optionalInt("USERNS_GID_OFFSET", -1),
 
   /** Cap on how large a file the file manager will read or write, in bytes. */
   maxFileBytes: optionalInt("AGENT_MAX_FILE_BYTES", 8 * 1024 * 1024),

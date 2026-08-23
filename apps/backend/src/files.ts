@@ -13,6 +13,8 @@
 import { appendFile, readdir, rm, stat, mkdir, rename, cp } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 import { config } from "./config";
+import { docker } from "./docker/client";
+import { alignOwnership } from "./docker/userns";
 import { badRequest, conflict, HttpError, notFound, payloadTooLarge } from "./http";
 import { ssrfSafeFetch } from "./ssrf";
 import {
@@ -29,6 +31,19 @@ export interface FileEntry {
   type: "file" | "directory" | "other";
   sizeBytes: number;
   modifiedAt: Date;
+}
+
+/**
+ * `mkdir -p` that keeps a userns-remapped node coherent: any directory this
+ * call actually created is chowned to the container-side data owner, so the
+ * game can later write into folders the panel created for it. `mkdir` returns
+ * the *first* path it created (or undefined when everything existed), which
+ * bounds the alignment to the new subtree instead of re-owning siblings.
+ * A no-op on non-remapped nodes — see `docker/userns.ts`.
+ */
+async function mkdirAligned(path: string): Promise<void> {
+  const created = await mkdir(path, { recursive: true });
+  if (created) await alignOwnership(docker, created, { recursive: true });
 }
 
 /** Normalise a user-supplied path into a leading-slash POSIX path. */
@@ -142,8 +157,9 @@ export async function writeFile(
     throw badRequest("Refusing to overwrite the server's data directory.");
   }
 
-  await mkdir(dirname(target), { recursive: true });
+  await mkdirAligned(dirname(target));
   await Bun.write(target, contents);
+  await alignOwnership(docker, target);
 }
 
 /**
@@ -212,7 +228,7 @@ export async function createDirectory(
   userPath: string,
 ): Promise<void> {
   const target = await resolveWritableServerPath(serverId, userPath);
-  await mkdir(target, { recursive: true });
+  await mkdirAligned(target);
 }
 
 /**
@@ -234,7 +250,11 @@ export async function renamePath(
 ): Promise<void> {
   const root = serverDataPath(serverId);
   const source = await resolveExistingServerPath(serverId, fromPath);
-  const dest = resolveServerPath(serverId, toPath);
+  // The write-safe resolver, not the lexical one: the destination may not
+  // exist, but a symlink planted in an existing parent (`ln -s /etc plugins`)
+  // would otherwise let the `mkdir -p` + `rename` move a file *out* of the
+  // containment boundary — the same class of escape `writeFile` closes.
+  const dest = await resolveWritableServerPath(serverId, toPath);
 
   if (source === root) throw badRequest("Refusing to move the server's data directory.");
   if (dest === root) throw badRequest("Refusing to overwrite the server's data directory.");
@@ -250,7 +270,7 @@ export async function renamePath(
   const exists = await stat(dest).catch(() => null);
   if (exists) throw conflict("A file or folder with that name already exists.");
 
-  await mkdir(dirname(dest), { recursive: true });
+  await mkdirAligned(dirname(dest));
   await rename(source, dest);
 }
 
@@ -273,7 +293,9 @@ export async function copyPath(
 ): Promise<void> {
   const root = serverDataPath(serverId);
   const source = await resolveExistingServerPath(serverId, fromPath);
-  const dest = resolveServerPath(serverId, toPath);
+  // Write-safe for the same reason as renamePath: `cp` into a symlinked
+  // parent would materialise the tree outside the data directory.
+  const dest = await resolveWritableServerPath(serverId, toPath);
 
   if (source === root) throw badRequest("Refusing to copy the server's data directory.");
   if (dest === root) throw badRequest("Refusing to overwrite the server's data directory.");
@@ -285,8 +307,11 @@ export async function copyPath(
   const exists = await stat(dest).catch(() => null);
   if (exists) throw conflict("A file or folder with that name already exists.");
 
-  await mkdir(dirname(dest), { recursive: true });
+  await mkdirAligned(dirname(dest));
   await cp(source, dest, { recursive: true });
+  // The copy was performed by the agent, so on a remapped node the new tree is
+  // owned by the agent's uid — hand it to the data owner like any other write.
+  await alignOwnership(docker, dest, { recursive: true });
 }
 
 /**
@@ -339,8 +364,9 @@ async function finalizeStagedFile(
   target: string,
 ): Promise<number> {
   try {
-    await mkdir(dirname(target), { recursive: true });
+    await mkdirAligned(dirname(target));
     await rename(staged, target);
+    await alignOwnership(docker, target);
     return (await stat(target)).size;
   } catch (error) {
     // Best-effort cleanup; the rename failure is the real error.

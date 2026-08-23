@@ -303,6 +303,10 @@ export function buildToolConfig(spec: ToolRunSpec): Docker.ContainerCreateOption
       CapDrop: ["ALL"],
       CapAdd: TOOL_CAPABILITIES,
       SecurityOpt: ["no-new-privileges"],
+      // The same alternative-runtime knob as tenant containers (CONTAINER_RUNTIME):
+      // these are trusted images, but they parse untrusted tenant data — a
+      // node that pays for gVisor on games should get it here too.
+      ...(config.containerRuntime ? { Runtime: config.containerRuntime } : {}),
       // restic's index and cache for a multi-terabyte repository is the memory
       // consumer here; 2 GB is far above what a game-server-sized repository
       // needs and far below what would destabilise a node.

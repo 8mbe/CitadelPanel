@@ -20,7 +20,8 @@ import { requireAuth } from "./auth";
 import { config } from "./config";
 import { validateConsoleSession, recordConsoleCommand } from "./consoleAudit";
 import { probeDataRoot, reportDataRootAtBoot } from "./dataRoot";
-import { readDaemonInfo } from "./docker/client";
+import { docker, readDaemonInfo, reportContainerRuntimeAtBoot } from "./docker/client";
+import { reportUsernsAtBoot } from "./docker/userns";
 import { probeDockerSocket, reportDockerSocketAtBoot } from "./docker/socket";
 import { probePorts, type PortProtocol } from "./docker/ports";
 import {
@@ -1429,6 +1430,15 @@ await reportDockerSocketAtBoot();
 // Runs after `Bun.serve` so a slow or broken filesystem cannot delay the agent
 // accepting requests (see `dataRoot.ts` on why this does not exit).
 await reportDataRootAtBoot();
+
+// Detect userns-remap and cache the uid/gid offsets every file write consults;
+// also the one place a "remapped daemon, non-root agent" misconfiguration is
+// called out. See docker/userns.ts.
+await reportUsernsAtBoot(docker);
+
+// When CONTAINER_RUNTIME names a runtime this daemon does not have, say so
+// once here instead of failing every container create.
+await reportContainerRuntimeAtBoot();
 
 // A backup container that outlived the process holds a restic repository lock,
 // which fails every later backup of that subject. Boot is the only moment when

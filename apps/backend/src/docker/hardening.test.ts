@@ -321,3 +321,48 @@ describe("console attachment", () => {
     expect(config.Tty).toBe(true);
   });
 });
+
+describe("node stability under a hostile tenant", () => {
+  test("forbids core dumps so a crash loop cannot fill the node disk", () => {
+    const config = buildHardenedContainerConfig(baseSpec());
+    expect(config.HostConfig?.Ulimits).toContainEqual({ Name: "core", Soft: 0, Hard: 0 });
+  });
+
+  test("biases the host OOM killer toward the game, not the node's services", () => {
+    const config = buildHardenedContainerConfig(baseSpec());
+    expect(config.HostConfig?.OomScoreAdj).toBeGreaterThan(0);
+  });
+
+  test("runs docker-init as PID 1 so zombies cannot eat the pid limit", () => {
+    const config = buildHardenedContainerConfig(baseSpec());
+    expect(config.HostConfig?.Init).toBe(true);
+  });
+
+  test("gets a private cgroup namespace, hiding the host's cgroup tree", () => {
+    const config = buildHardenedContainerConfig(baseSpec());
+    expect(
+      (config.HostConfig as { CgroupnsMode?: string } | undefined)?.CgroupnsMode,
+    ).toBe("private");
+  });
+});
+
+describe("alternative runtimes", () => {
+  test("passes a configured runtime through to the daemon", () => {
+    const config = buildHardenedContainerConfig(baseSpec({ runtime: "runsc" }));
+    expect(config.HostConfig?.Runtime).toBe("runsc");
+  });
+
+  test("leaves the daemon default (runc) when no runtime is configured", () => {
+    // Omitting the field entirely matters: sending Runtime: "" or null is not
+    // the same request to every daemon version as not sending it.
+    const config = buildHardenedContainerConfig(baseSpec());
+    expect("Runtime" in (config.HostConfig ?? {})).toBe(false);
+  });
+
+  test("a custom runtime does not weaken any other protection", () => {
+    const config = buildHardenedContainerConfig(baseSpec({ runtime: "runsc" }));
+    expect(config.HostConfig?.CapDrop).toEqual(["ALL"]);
+    expect(config.HostConfig?.SecurityOpt).toContain("no-new-privileges");
+    expect(config.HostConfig?.Privileged).toBe(false);
+  });
+});

@@ -22,6 +22,14 @@
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { config } from "./config";
+import { docker } from "./docker/client";
+import {
+  alignOwnership,
+  CONTAINER_DATA_GID,
+  CONTAINER_DATA_UID,
+  containerOwnerForHost,
+  usernsOffsets,
+} from "./docker/userns";
 import { serviceUnavailable } from "./http";
 import { serverDataPath } from "./paths";
 
@@ -132,14 +140,35 @@ export async function ensureDirectory(
 
 /** Create a server's data directory below the configured root. */
 export async function ensureServerDataDir(serverId: string): Promise<string> {
-  return ensureDirectory(
+  const path = await ensureDirectory(
     serverDataPath(serverId),
     `the data directory for server ${serverId}`,
   );
+
+  // Under userns-remap the directory must be owned by the *shifted* data uid
+  // (offset + 1000) or the container cannot write into its own bind mount.
+  // Healed here rather than only chowned at first create because this runs on
+  // every provision, install and rebuild: a node that turns remapping on gets
+  // its pre-existing trees migrated the first time each container is rebuilt
+  // (which enabling remap forces anyway — the daemon starts with a fresh
+  // container store). Recursive only on mismatch, so the steady state is one
+  // stat per call, not a walk of a fifty-gigabyte world.
+  const offsets = await usernsOffsets(docker);
+  if (offsets.uid !== 0 || offsets.gid !== 0) {
+    const expectedUid = offsets.uid + CONTAINER_DATA_UID;
+    const expectedGid = offsets.gid + CONTAINER_DATA_GID;
+    const info = await stat(path).catch(() => null);
+    if (info && (info.uid !== expectedUid || info.gid !== expectedGid)) {
+      await alignOwnership(docker, path, { recursive: true });
+    }
+  }
+
+  return path;
 }
 
 /**
- * The `uid:gid` that owns a directory, for Docker's `--user`.
+ * The `uid:gid` a container must run as to own this directory's bytes
+ * (Docker's `--user`, so **container-side** ids).
  *
  * A container the agent creates has `CapDrop: ALL`, which takes
  * `CAP_DAC_OVERRIDE` with it — so uid 0 inside that container is *not* the root
@@ -153,15 +182,20 @@ export async function ensureServerDataDir(serverId: string): Promise<string> {
  * root-owned root. It is the same reasoning as a blueprint's `run_as`, applied
  * to the container the blueprint doesn't get to configure.
  *
+ * Under userns-remap the stat reports the *host-side* owner, which is shifted
+ * relative to what Docker's `User` means — so the owner is translated back
+ * through the effective offset (see `docker/userns.ts`) before it is returned.
+ *
  * Falls back to the agent's own uid: it created the directory, so on the odd
  * filesystem that cannot report an owner it remains the best guess available.
  */
 export async function directoryOwner(path: string): Promise<string> {
+  const offsets = await usernsOffsets(docker);
   try {
     const info = await stat(path);
-    return `${info.uid}:${info.gid}`;
+    return containerOwnerForHost(info.uid, info.gid, offsets);
   } catch {
-    return `${agentUid()}:${agentGid()}`;
+    return containerOwnerForHost(agentUid(), agentGid(), offsets);
   }
 }
 

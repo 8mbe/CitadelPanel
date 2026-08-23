@@ -117,6 +117,12 @@ Existing docs:
   must never call `docker stats` with `stream: false`, and why panel read
   endpoints are shaped around the number of database round trips (read the row
   once, batch across rows, and the two caches whose writers must invalidate).
+- `docs/node-hardening.md` — keeping a compromised server from becoming a
+  compromised node: the per-container controls (`hardening.ts`), user-namespace
+  remapping and the uid-offset bookkeeping it forces on every agent write, the
+  opt-in alternative-runtime knob, the `DOCKER-USER` firewall rule against
+  container→host lateral movement, and the accepted residual risks (`node_db_net`
+  ICC, no per-container disk quota, write TOCTOU).
 
 When adding a feature, create `docs/<feature>.md` in the same style and cross-link related docs. Don't duplicate what the code already says — document the *why* and the cross-cutting flow, the way the existing docs do.
 

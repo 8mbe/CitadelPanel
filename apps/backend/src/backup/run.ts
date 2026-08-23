@@ -28,6 +28,8 @@
  */
 
 import { config } from "../config";
+import { docker } from "../docker/client";
+import { alignOwnership } from "../docker/userns";
 import { serverDataPath } from "../paths";
 import { ensureServerDataDir } from "../dataRoot";
 import {
@@ -161,6 +163,9 @@ async function mountsFor(
 ): Promise<ToolMount[]> {
   const cacheDir = cachePath(target);
   await mkdir(cacheDir, { recursive: true });
+  // restic runs as image root — in-namespace uid 0, which on a userns-remapped
+  // node cannot write an agent-owned cache directory. No-op otherwise.
+  await alignOwnership(docker, cacheDir, { containerUid: 0, containerGid: 0 });
   const mounts: ToolMount[] = [{ hostPath: cacheDir, containerPath: CACHE_MOUNT }];
 
   if (target.scope === "server") {

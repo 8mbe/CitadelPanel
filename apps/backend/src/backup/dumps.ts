@@ -32,6 +32,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { docker } from "../docker/client";
+import { alignOwnership } from "../docker/userns";
 import { config } from "../config";
 import { serviceUnavailable } from "../http";
 import { assertValidDbIdentifier } from "../docker/database";
@@ -71,13 +72,20 @@ export function nodeStagingPath(): string {
 export async function resetNodeStagingDir(): Promise<string> {
   const path = nodeStagingPath();
   await rm(path, { recursive: true, force: true });
-  return ensureDirectory(path, "the database backup staging directory");
+  const dir = await ensureDirectory(path, "the database backup staging directory");
+  // The dump/restic containers run as image root — in-namespace uid 0 on a
+  // userns-remapped node, which is unmapped against an agent-owned directory
+  // and could not write a single dump. Hand the staging tree to that uid
+  // (a no-op when remapping is off). See docker/userns.ts.
+  await alignOwnership(docker, dir, { containerUid: 0, containerGid: 0, recursive: true });
+  return dir;
 }
 
 /** Ensure the staging directory exists without emptying it (restore path). */
 export async function ensureNodeStagingDir(): Promise<string> {
   const path = nodeStagingPath();
   await mkdir(path, { recursive: true });
+  await alignOwnership(docker, path, { containerUid: 0, containerGid: 0 });
   return path;
 }
 

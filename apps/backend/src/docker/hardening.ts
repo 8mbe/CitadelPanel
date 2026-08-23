@@ -87,6 +87,15 @@ export interface HardenedContainerSpec {
    * panel passes that network name here and the agent attaches it post-create.
    */
   extraNetworks?: string[];
+
+  /**
+   * OCI runtime to run under (Docker `--runtime`), e.g. `runsc` for gVisor.
+   * Unset means the daemon default (`runc`). A node-level knob sourced from
+   * the agent's `CONTAINER_RUNTIME` env — see `config.ts` — for operators who
+   * accept a syscall-performance cost in exchange for a userspace-kernel
+   * boundary under untrusted tenants.
+   */
+  runtime?: string;
 }
 
 /** Bytes per megabyte, for Docker's byte-denominated memory limits. */
@@ -94,6 +103,14 @@ const MB = 1024 * 1024;
 
 /** Docker expresses fractional CPUs as a quota over a 100ms period. */
 const CPU_PERIOD = 100_000;
+
+/**
+ * dockerode's `HostConfig` typing predates cgroup namespaces (Engine API 1.41);
+ * the daemon accepts the field on every version this agent supports.
+ */
+type HardenedHostConfig = NonNullable<Docker.ContainerCreateOptions["HostConfig"]> & {
+  CgroupnsMode?: "private" | "host";
+};
 
 /**
  * Guard against a caller passing values that would weaken isolation or let a
@@ -189,7 +206,9 @@ export function buildHardenedContainerConfig(
       "citadel.container-name": spec.name,
     },
 
-    HostConfig: {
+    // dockerode's HostConfig type lacks CgroupnsMode, so the literal is checked
+    // against the widened type and assigned back — no `any`, no silent typos.
+    HostConfig: ({
       // --- Resource caps (bounds the blast radius of an undetected miner) ---
       Memory: spec.memoryLimitMb * MB,
       // Equal to Memory => swap is disabled, so the memory cap is a hard cap
@@ -198,6 +217,13 @@ export function buildHardenedContainerConfig(
       CpuPeriod: CPU_PERIOD,
       CpuQuota: Math.round(spec.cpuLimit * CPU_PERIOD),
       PidsLimit: 512, // blunt fork bombs
+      // No core dumps: a crash-looping JVM writing multi-GB cores into the
+      // bind mount is a disk-fill vector, and nobody debugs a tenant's cores.
+      Ulimits: [{ Name: "core", Soft: 0, Hard: 0 }],
+      // When the *node* (not the container) runs out of memory, the kernel
+      // should sacrifice a game before dockerd, the agent, or sshd. Positive
+      // adjustment biases the host-wide OOM killer toward tenant processes.
+      OomScoreAdj: 500,
 
       // --- Privilege reduction ---
       Privileged: false,
@@ -206,13 +232,28 @@ export function buildHardenedContainerConfig(
       CapDrop: ["ALL"],
       CapAdd: [],
       SecurityOpt: ["no-new-privileges"],
+      // Opt into the alternative runtime when the node configures one (gVisor,
+      // Kata); undefined lets the daemon default (runc) stand.
+      ...(spec.runtime ? { Runtime: spec.runtime } : {}),
 
       // --- Host namespace separation ---
       // Never share the host's PID, IPC, UTS or network namespaces.
       PidMode: "",
       IpcMode: "private",
       UTSMode: "",
+      // "" inherits the daemon's user-namespace behaviour: identity mapping on
+      // a plain daemon, the subordinate-range shift when the operator enables
+      // `userns-remap` (see docker/userns.ts). Never "host", which would opt
+      // this one container *out* of an otherwise-remapped daemon.
       UsernsMode: "",
+      // A private cgroup namespace, so the container cannot read the host's
+      // cgroup tree (topology, other tenants' limits). Explicit because the
+      // daemon default is still "host" on cgroup v1 nodes.
+      CgroupnsMode: "private",
+      // The container gets docker-init as PID 1 to reap zombies: a game that
+      // spawns subprocesses without waiting on them would otherwise leak
+      // zombie PIDs until the PidsLimit above starves the actual server.
+      Init: true,
 
       // --- Networking: isolated per-server bridge, outbound NAT intact ---
       NetworkMode: spec.networkName,
@@ -239,7 +280,9 @@ export function buildHardenedContainerConfig(
         Type: "json-file",
         Config: { "max-size": "10m", "max-file": "3" },
       },
-    },
+    } satisfies HardenedHostConfig) as NonNullable<
+      Docker.ContainerCreateOptions["HostConfig"]
+    >,
   };
 }
 

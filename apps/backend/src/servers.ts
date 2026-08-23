@@ -12,7 +12,9 @@
 
 import { readdir, stat, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { config } from "./config";
 import { docker } from "./docker/client";
+import { defaultRunAsUser } from "./docker/userns";
 import {
   attachToContainer,
   type AttachHandlers,
@@ -157,7 +159,14 @@ export async function createServerContainer(
     networkName: serverNetworkName(serverId),
     readOnlyRootFilesystem: request.readOnlyRootFilesystem,
     command: request.command,
-    user: request.user,
+    // Under userns-remap a blueprint that pins no user must not fall through
+    // to the image default (usually root): in-namespace root has no
+    // CAP_DAC_OVERRIDE and does not own the shifted data directory, so its
+    // first write fails. The canonical data owner is the working default; on
+    // a non-remapped node this resolves to undefined and the image's own
+    // USER stands, exactly as before.
+    user: request.user ?? (await defaultRunAsUser(docker)),
+    runtime: config.containerRuntime || undefined,
     extraNetworks: request.extraNetworks,
     tty: request.tty === true,
   });
@@ -210,6 +219,7 @@ export async function installServer(
 
   const { exitCode, logs } = await runContainerToCompletion(docker, {
     user: await directoryOwner(hostDataPath),
+    runtime: config.containerRuntime || undefined,
     name: serverInstallContainerName(serverId),
     image: request.image,
     hostDataPath,
