@@ -32,11 +32,10 @@ describe("port handling", () => {
     expect(velocity.primaryPortEnv).toStartWith("CFG_");
   });
 
-  test("one primary TCP port, Velocity's own default number", () => {
+  test("one primary port, Velocity's own default number", () => {
     expect(velocity.defaultPorts).toHaveLength(1);
     expect(primaryPort(velocity)).toEqual({
       container: 25565,
-      protocol: "tcp",
       primary: true,
     });
   });

@@ -38,7 +38,6 @@ import {
   notFound,
   optionalString,
   parseJsonBody,
-  requireNumber,
   requireUuidParam,
 } from "../lib/http";
 import {
@@ -678,12 +677,12 @@ export async function handleListServerPorts(
 /**
  * POST /api/servers/:id/ports — publish an additional port.
  *
- * Body: { port, protocol, label? }
- *
- * The port is an identity mapping (host N → container N) and must be available:
- * in the node's port pool, unallocated, and free on the host. The container is
- * recreated so the new binding takes effect. Requires the "settings"
- * permission, matching the env-update action.
+ * Body: { label? } — the caller does **not** choose the number. The panel draws
+ * a random free port from the node's pool and publishes it as an identity
+ * mapping (host N → container N) on TCP and UDP both; the allocated number is
+ * in the returned server summary. The container is recreated so the new binding
+ * takes effect. Requires the "settings" permission, matching the env-update
+ * action.
  */
 export async function handleAddServerPort(
   request: Request,
@@ -693,16 +692,6 @@ export async function handleAddServerPort(
   const { user } = await requireServerPermission(request, id, "settings");
 
   const body = await parseJsonBody(request);
-  const port = requireNumber(body, "port", {
-    min: 1,
-    max: 65535,
-  });
-
-  const protocol = body.protocol;
-  if (protocol !== "tcp" && protocol !== "udp") {
-    throw badRequest('"protocol" must be "tcp" or "udp"');
-  }
-
   const label = optionalString(body, "label", { max: 64 });
 
   // A suspended server cannot have its container recreated (it must stay
@@ -717,8 +706,6 @@ export async function handleAddServerPort(
   const updated = await addServerPort({
     serverId: id,
     actorId: user.id,
-    port,
-    protocol,
     label,
   });
 
@@ -728,9 +715,10 @@ export async function handleAddServerPort(
 /**
  * DELETE /api/servers/:id/ports — remove an additional port.
  *
- * Query: ?port=&protocol= identifies the port to remove. Only owner-added
- * (additional) ports are removable; blueprint ports are rejected. The container
- * is recreated to release the binding. Requires "settings".
+ * Query: ?port= identifies the port to remove — one number, both protocols.
+ * Only owner-added (additional) ports are removable; blueprint ports are
+ * rejected. The container is recreated to release the binding. Requires
+ * "settings".
  */
 export async function handleRemoveServerPort(
   request: Request,
@@ -741,7 +729,6 @@ export async function handleRemoveServerPort(
 
   const url = new URL(request.url);
   const portRaw = url.searchParams.get("port");
-  const protocol = url.searchParams.get("protocol");
 
   if (portRaw === null) {
     throw badRequest('"port" query parameter is required');
@@ -749,9 +736,6 @@ export async function handleRemoveServerPort(
   const port = Number(portRaw);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw badRequest('"port" must be an integer between 1 and 65535');
-  }
-  if (protocol !== "tcp" && protocol !== "udp") {
-    throw badRequest('"protocol" must be "tcp" or "udp"');
   }
 
   const server = await getServer(id);
@@ -761,7 +745,7 @@ export async function handleRemoveServerPort(
     );
   }
 
-  const updated = await removeServerPort(id, port, protocol, user.id);
+  const updated = await removeServerPort(id, port, user.id);
 
   return json({ server: updated });
 }

@@ -88,12 +88,9 @@ function parsePorts(value: unknown): BlueprintPort[] {
     if (!Number.isInteger(container)) {
       throw badRequest(`"ports[${i}].container" must be a whole number`);
     }
-    const protocol = entry.protocol;
-    if (protocol !== "tcp" && protocol !== "udp") {
-      throw badRequest(`"ports[${i}].protocol" must be "tcp" or "udp"`);
-    }
-
-    const dedupeKey = `${container}/${protocol}`;
+    // No protocol: a published port is claimed on TCP and UDP both, so the
+    // number alone is the declaration — and the number alone must be unique.
+    const dedupeKey = String(container);
     if (seen.has(dedupeKey)) {
       throw badRequest(`Duplicate port ${dedupeKey}.`);
     }
@@ -102,7 +99,7 @@ function parsePorts(value: unknown): BlueprintPort[] {
     const primary = entry.primary === true;
     if (primary) primaryCount += 1;
 
-    return { container, protocol, ...(primary ? { primary: true } : {}) };
+    return { container, ...(primary ? { primary: true } : {}) };
   });
 
   // Exactly one primary. If the client marked none, promote the first, so a

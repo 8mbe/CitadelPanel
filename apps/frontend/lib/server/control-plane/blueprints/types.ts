@@ -22,12 +22,15 @@ export interface BlueprintPort {
   /**
    * The port this blueprint prefers for its game traffic (e.g. 25565 for
    * Minecraft Java). Allocation from the node's pool is best-effort — it is
-   * honored when the port is in the pool and free, otherwise another pool port
-   * is drawn. Whatever port lands, it is published as an identity mapping:
-   * host port and container port are the same number.
+   * honored when the port is in the pool and free, otherwise a random free
+   * pool port is drawn. Whatever port lands, it is published as an identity
+   * mapping: host port and container port are the same number.
+   *
+   * There is no protocol: a published port is claimed on both TCP and UDP, so
+   * a game that later needs the other half of its number (a Geyser or
+   * voice-chat plugin next to a Java server) already has it.
    */
   container: number;
-  protocol: "tcp" | "udp";
   /** The port players connect to. Exactly one port per blueprint is primary. */
   primary?: boolean;
 }

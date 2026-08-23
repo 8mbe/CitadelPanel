@@ -78,7 +78,8 @@ Existing docs:
   the admin-only install log are for), and how a container that vanished from
   its node is rebuilt on the next start instead of 404ing forever.
 - `docs/ports.md` — published ports as identity mappings (host N → container
-  N): per-node port pools, the `SERVER_PORT` env sync, and the owner's
+  N) claimed on TCP and UDP together: per-node port pools, why allocation is
+  random and nobody picks a number, the `SERVER_PORT` env sync, and the owner's
   publish-a-port flow.
 - `docs/server-links.md` — connecting a server to another of the owner's
   servers: the pairwise ICC-enabled link networks, stable container-name

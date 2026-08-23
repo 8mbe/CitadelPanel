@@ -256,7 +256,7 @@ describe("POST /api/admin/nodes/:id/ports (port-pool entry)", () => {
     const res = await api("/api/admin/nodes/not-a-uuid/ports", {
       method: "POST",
       key: config.adminKey,
-      body: { spec: "25565", protocol: "tcp" },
+      body: { spec: "25565" },
     });
     expect(res.status).toBe(400);
   });
@@ -267,14 +267,16 @@ describe("POST /api/admin/nodes/:id/ports (port-pool entry)", () => {
     expect(res.status).toBe(400);
   });
 
-  e2e("with an admin key + bad protocol is 400", async () => {
+  e2e("with an admin key + unparseable spec is 409", async () => {
+    // A pool entry is a set of numbers and nothing else — there is no protocol
+    // to get wrong, so a bad spec is the only rejectable input left.
     const { nodeId } = await loadFixtures();
     const res = await api(`/api/admin/nodes/${nodeId}/ports`, {
       method: "POST",
       key: config.adminKey,
-      body: { spec: "25565", protocol: "sctp" },
+      body: { spec: "25570-25565" },
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
   });
 });
 

@@ -95,7 +95,7 @@ describe("blueprint input validation (POST /api/admin/blueprints)", () => {
     const res = await api("/api/admin/blueprints", {
       method: "POST",
       key: config.adminKey,
-      body: { key: "UPPER CASE", name: "bad", dockerImage: "img", ports: [{ container: 25565, protocol: "tcp" }] },
+      body: { key: "UPPER CASE", name: "bad", dockerImage: "img", ports: [{ container: 25565 }] },
     });
     expect(res.status).toBe(400);
   });
@@ -109,11 +109,18 @@ describe("blueprint input validation (POST /api/admin/blueprints)", () => {
     expect(res.status).toBe(400);
   });
 
-  e2e("with an admin key + bad port protocol is 400", async () => {
+  e2e("with an admin key + duplicate port number is 400", async () => {
+    // Ports have no protocol any more, so the number alone must be unique:
+    // 25565 twice used to be legal as tcp + udp.
     const res = await api("/api/admin/blueprints", {
       method: "POST",
       key: config.adminKey,
-      body: { key: "valid-key", name: "bad", dockerImage: "img", ports: [{ container: 25565, protocol: "sctp" }] },
+      body: {
+        key: "valid-key",
+        name: "bad",
+        dockerImage: "img",
+        ports: [{ container: 25565 }, { container: 25565 }],
+      },
     });
     expect(res.status).toBe(400);
   });
@@ -126,7 +133,7 @@ describe("blueprint input validation (POST /api/admin/blueprints)", () => {
         key: "valid-key",
         name: "bad",
         dockerImage: "img",
-        ports: [{ container: 25565, protocol: "tcp" }],
+        ports: [{ container: 25565 }],
         expectedResourceProfile: "not-a-profile",
       },
     });
@@ -141,7 +148,7 @@ describe("blueprint input validation (POST /api/admin/blueprints)", () => {
         key: "valid-key",
         name: "bad",
         dockerImage: "img",
-        ports: [{ container: 25565, protocol: "tcp" }],
+        ports: [{ container: 25565 }],
         dataPath: "relative/path",
       },
     });

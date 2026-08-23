@@ -114,7 +114,7 @@ export const velocity: Blueprint = {
     // Velocity's own default, and the port players expect to type. Allocation
     // is best-effort, which is exactly why the bind is patched from the env
     // rather than assumed.
-    { container: 25565, protocol: "tcp", primary: true },
+    { container: 25565, primary: true },
   ],
 
   primaryPortEnv: PORT_ENV,

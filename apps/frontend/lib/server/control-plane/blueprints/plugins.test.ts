@@ -53,7 +53,7 @@ function blueprintWith(plugins?: BlueprintPluginSupport): Blueprint {
     key: "test",
     name: "Test",
     dockerImage: "test:latest",
-    defaultPorts: [{ container: 25565, protocol: "tcp", primary: true }],
+    defaultPorts: [{ container: 25565, primary: true }],
     envSchema,
     expectedResourceProfile: "bursty",
     dataPath: "/data",

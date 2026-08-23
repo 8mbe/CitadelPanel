@@ -231,20 +231,16 @@ export async function handleAddNodePortPoolEntry(
 
   const body = await parseJsonBody(request);
   const spec = requireString(body, "spec", { max: 1024 });
-  const protocolRaw = optionalString(body, "protocol");
-  const protocol = (protocolRaw ?? "tcp") as "tcp" | "udp";
-  if (protocol !== "tcp" && protocol !== "udp") {
-    throw badRequest('"protocol" must be "tcp" or "udp".');
-  }
 
-  const entry = await addPortPoolEntry({ nodeId: id, spec, protocol });
+  // No protocol: a reserved number covers TCP and UDP both.
+  const entry = await addPortPoolEntry({ nodeId: id, spec });
 
   await recordAuditFromRequest(request, {
     userId: admin.id,
     action: "node.portpool.add",
     targetType: "node",
     targetId: id,
-    metadata: { spec, protocol, ports: entry.ports },
+    metadata: { spec, ports: entry.ports },
   });
 
   return json({ entry }, 201);

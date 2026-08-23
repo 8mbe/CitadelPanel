@@ -93,8 +93,7 @@ export interface NodePortPoolEntry {
   nodeId: string;
   /** Raw entry as the admin typed it, e.g. "25565-25570" or "25565,25578". */
   spec: string;
-  protocol: "tcp" | "udp";
-  /** Expanded individual ports the spec resolves to. */
+  /** Expanded individual ports the spec resolves to (TCP and UDP each). */
   ports: number[];
   createdAt: string;
 }
@@ -115,7 +114,6 @@ export interface NodeDetail {
  */
 export interface NodePortAllocation {
   port: number;
-  protocol: string;
   isPrimary: boolean;
   serverId: string;
   serverName: string;
@@ -123,9 +121,8 @@ export interface NodePortAllocation {
 
 /** A published port on a server, as the UI displays it. */
 export interface ServerPortView {
-  /** The published port — identity mapping: host and container side are this number. */
+  /** The published port: identity-mapped host↔container, on TCP and UDP both. */
   port: number;
-  protocol: string;
   isPrimary: boolean;
   /** True for owner-added ports (removable); false for blueprint ports. */
   isAdditional: boolean;

@@ -54,7 +54,12 @@ export interface BlueprintFile {
   supportsReadOnlyRoot?: boolean;
   startupCommand?: string | null;
   stopCommand?: string | null;
-  defaultPorts: { container: number; protocol: "tcp" | "udp"; primary?: boolean }[];
+  /**
+   * Port numbers the blueprint declares. No protocol: a published port is
+   * claimed on TCP and UDP both. A `protocol` key in an older exported file is
+   * accepted and ignored on import.
+   */
+  defaultPorts: { container: number; primary?: boolean }[];
   envSchema?: Record<string, BlueprintFileEnvField>;
   install?: { image: string; script: string; entrypoint?: string[] | null } | null;
   /**
@@ -71,7 +76,6 @@ export interface BlueprintFile {
 
 export interface PortRow {
   container: string;
-  protocol: "tcp" | "udp";
   primary: boolean;
 }
 
@@ -148,7 +152,7 @@ export function emptyForm(): FormValues {
     minCpu: "1",
     minMemoryMb: "1024",
     minDiskMb: "2048",
-    ports: [{ container: "", protocol: "tcp", primary: true }],
+    ports: [{ container: "", primary: true }],
     env: [],
     installEnabled: false,
     installImage: "",
@@ -274,7 +278,6 @@ export function detailToForm(detail: AdminBlueprintDetail): FormValues {
     ports: ensurePrimary(
       detail.defaultPorts.map((p) => ({
         container: String(p.container),
-        protocol: p.protocol,
         primary: p.primary === true,
       })),
     ),
@@ -315,7 +318,6 @@ export function fileToForm(file: BlueprintFile): FormValues {
     ports: ensurePrimary(
       (file.defaultPorts ?? []).map((p) => ({
         container: String(p.container),
-        protocol: p.protocol === "udp" ? "udp" : "tcp",
         primary: p.primary === true,
       })),
     ),
@@ -350,7 +352,6 @@ export function formToPayload(values: FormValues): BlueprintPayload {
     stopCommand: values.stopCommand.trim() || null,
     ports: values.ports.map((p) => ({
       container: Number(p.container),
-      protocol: p.protocol,
       primary: p.primary,
     })),
     envFields: values.env.map((row) => ({
@@ -398,7 +399,6 @@ export function detailToFile(detail: AdminBlueprintDetail): BlueprintFile {
     stopCommand: detail.stopCommand,
     defaultPorts: detail.defaultPorts.map((p) => ({
       container: p.container,
-      protocol: p.protocol,
       ...(p.primary ? { primary: true } : {}),
     })),
     envSchema: detail.envSchema,

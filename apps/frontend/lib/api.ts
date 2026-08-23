@@ -284,7 +284,6 @@ export interface ApiServerSummary {
   diskLimitMb: number;
   ports: {
     port: number;
-    protocol: string;
     isPrimary: boolean;
     isAdditional: boolean;
     label: string | null;
@@ -311,7 +310,6 @@ export interface CreateServerPayload {
   diskLimitMb: number;
   /** Optional explicit node; the scheduler picks one when omitted. */
   nodeId?: string;
-  preferredPort?: number;
 }
 
 /** POST /api/admin/servers — provision a server for a user (admin only). */
@@ -517,9 +515,8 @@ export async function updateServerEnv(
 
 /** A published port on a server, as the ports card renders it. */
 export interface ServerPort {
-  /** The published port — identity mapping: host and container side are this number. */
+  /** The published port: identity-mapped host↔container, on TCP and UDP both. */
   port: number;
-  protocol: "tcp" | "udp";
   isPrimary: boolean;
   /** True for owner-added ports (removable); false for blueprint ports. */
   isAdditional: boolean;
@@ -717,20 +714,17 @@ export async function getServerPorts(id: string): Promise<ServerPort[]> {
 /**
  * POST /api/servers/:id/ports — publish an additional port.
  *
- * The port is an identity mapping (host N → container N) and must be available:
- * in the node's port pool, unallocated, and free on the host. The container is
- * recreated to apply the new binding, so a running server is briefly restarted.
- * Returns the updated server summary.
+ * The caller does not choose the number: the panel draws a random free port
+ * from the node's pool and publishes it as an identity mapping (host N →
+ * container N) on TCP and UDP both. The container is recreated to apply the new
+ * binding, so a running server is briefly restarted. Returns the updated server
+ * summary — the new port is in its `ports`.
  *
  * @param label Optional note shown in the ports card, e.g. "Metrics".
  */
 export async function addServerPort(
   id: string,
-  payload: {
-    port: number;
-    protocol: "tcp" | "udp";
-    label?: string;
-  },
+  payload: { label?: string } = {},
 ): Promise<ApiServerSummary> {
   const data = await request<{ server: ApiServerSummary }>(
     `/api/servers/${id}/ports`,
@@ -740,7 +734,7 @@ export async function addServerPort(
 }
 
 /**
- * DELETE /api/servers/:id/ports?port=&protocol= — remove an additional port.
+ * DELETE /api/servers/:id/ports?port= — remove an additional port.
  *
  * Only owner-added (additional) ports are removable; blueprint ports are
  * rejected. The container is recreated to release the binding. Returns the
@@ -749,10 +743,9 @@ export async function addServerPort(
 export async function removeServerPort(
   id: string,
   port: number,
-  protocol: "tcp" | "udp",
 ): Promise<ApiServerSummary> {
   const data = await request<{ server: ApiServerSummary }>(
-    `/api/servers/${id}/ports?port=${port}&protocol=${protocol}`,
+    `/api/servers/${id}/ports?port=${port}`,
     { method: "DELETE" },
   );
   return data.server;
@@ -2003,11 +1996,10 @@ export async function adminListNodePortPool(
 export async function adminAddNodePortPoolEntry(
   nodeId: string,
   spec: string,
-  protocol: "tcp" | "udp" = "tcp",
 ): Promise<NodePortPoolEntry> {
   const data = await request<{ entry: NodePortPoolEntry }>(
     `/api/admin/nodes/${nodeId}/ports`,
-    { method: "POST", body: JSON.stringify({ spec, protocol }) },
+    { method: "POST", body: JSON.stringify({ spec }) },
   );
   return data.entry;
 }
@@ -2204,7 +2196,6 @@ export type BlueprintResourceProfile = "bursty" | "steady-low" | "steady-high";
 
 export interface BlueprintPortSpec {
   container: number;
-  protocol: "tcp" | "udp";
   primary?: boolean;
 }
 

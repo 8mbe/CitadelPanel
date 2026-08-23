@@ -1,21 +1,25 @@
 /**
  * Per-node port pool registry (plan.md: admin-managed, host-verified pools).
  *
- * An admin reserves a set of host ports per node per protocol; new servers draw
+ * An admin reserves a set of host port *numbers* per node; new servers draw
  * their published ports exclusively from that pool
  * (see {@link ./scheduler.ts allocateHostPort}). Each entry keeps the raw spec
  * the admin typed alongside the expanded port array.
  *
+ * A reserved number covers both protocols: publishing it publishes TCP and UDP
+ * together, so the pool has no protocol dimension to ask about (see migration
+ * `023_ports_dual_protocol.sql` for why that question was always the wrong one).
+ *
  * Adding an entry verifies, through the node's agent, that every port is
- * actually free on the host — not just free in the panel's `server_ports`
- * table — so a port held by another process is caught before it is reserved.
- * Overlaps between entries are rejected at add time so the pool stays a clean
- * disjoint set per protocol.
+ * actually free on the host — on *both* protocols, not just in the panel's
+ * `server_ports` table — so a port held by another process is caught before it
+ * is reserved. Overlaps between entries are rejected at add time so the pool
+ * stays a clean disjoint set.
  */
 
 import { sql } from "../db/client";
 import { conflict } from "../lib/http";
-import { checkPortsFree, type PortProtocol } from "./nodePortsApi";
+import { checkPortNumbersFree } from "./nodePortsApi";
 import { parsePortSpec, PortSpecError } from "./portSpec";
 
 /** A reserved port-pool entry, as the admin manages it. */
@@ -24,8 +28,7 @@ export interface PortPoolEntry {
   nodeId: string;
   /** Raw entry as the admin typed it, e.g. "25565-25570". */
   spec: string;
-  protocol: PortProtocol;
-  /** Expanded individual ports the spec resolves to. */
+  /** Expanded individual ports the spec resolves to (TCP and UDP each). */
   ports: number[];
   createdAt: string;
 }
@@ -34,7 +37,6 @@ interface PortPoolRow {
   id: string;
   node_id: string;
   spec: string;
-  protocol: PortProtocol;
   ports: number[];
   created_at: Date;
 }
@@ -44,7 +46,6 @@ function toEntry(row: PortPoolRow): PortPoolEntry {
     id: row.id,
     nodeId: row.node_id,
     spec: row.spec,
-    protocol: row.protocol,
     ports: row.ports,
     createdAt: row.created_at.toISOString(),
   };
@@ -53,7 +54,7 @@ function toEntry(row: PortPoolRow): PortPoolEntry {
 /** Every pool entry for a node, oldest first. */
 export async function listNodePortPool(nodeId: string): Promise<PortPoolEntry[]> {
   const rows = (await sql`
-    SELECT id, node_id, spec, protocol, ports, created_at
+    SELECT id, node_id, spec, ports, created_at
     FROM node_port_pools
     WHERE node_id = ${nodeId}
     ORDER BY created_at ASC
@@ -62,17 +63,14 @@ export async function listNodePortPool(nodeId: string): Promise<PortPoolEntry[]>
 }
 
 /**
- * All ports reserved on a node for a protocol, flattened and sorted ascending.
+ * All ports reserved on a node, flattened and sorted ascending.
  *
  * What {@link allocateHostPort} consumes to draw a candidate set from.
  */
-export async function expandNodePortPool(
-  nodeId: string,
-  protocol: PortProtocol,
-): Promise<number[]> {
+export async function expandNodePortPool(nodeId: string): Promise<number[]> {
   const rows = (await sql`
     SELECT ports FROM node_port_pools
-    WHERE node_id = ${nodeId} AND protocol = ${protocol}
+    WHERE node_id = ${nodeId}
   `) as { ports: number[] }[];
 
   const all = new Set<number>();
@@ -85,17 +83,16 @@ export async function expandNodePortPool(
 export interface AddPortPoolInput {
   nodeId: string;
   spec: string;
-  protocol: PortProtocol;
 }
 
 /**
  * Reserve a port-pool entry.
  *
  * Steps, in order: parse the spec; reject ports that already belong to another
- * entry for this node+protocol (a clean disjoint set); ask the agent to confirm
- * every port is actually free on the host; then persist. A taken or overlapping
- * port is a 409 with the offending ports named in the message so the admin can
- * act on it without inspecting a structured `details` blob.
+ * entry for this node (a clean disjoint set); ask the agent to confirm every
+ * port is actually free on the host, on both protocols; then persist. A taken
+ * or overlapping port is a 409 with the offending ports named in the message so
+ * the admin can act on it without inspecting a structured `details` blob.
  *
  * The host check makes this call depend on the agent being reachable; an
  * unreachable node returns a 502, which is correct — unverifiable ports are not
@@ -117,7 +114,7 @@ export async function addPortPoolEntry(
   }
 
   // Reject overlaps with existing entries so the pool is a disjoint set.
-  const existing = await expandNodePortPool(input.nodeId, input.protocol);
+  const existing = await expandNodePortPool(input.nodeId);
   const existingSet = new Set(existing);
   const overlaps = ports.filter((port) => existingSet.has(port));
   if (overlaps.length > 0) {
@@ -126,14 +123,12 @@ export async function addPortPoolEntry(
     );
   }
 
-  // Verify every port is actually free on the host through the agent.
-  const results = await checkPortsFree(
-    input.nodeId,
-    ports.map((port) => ({ hostPort: port, protocol: input.protocol })),
-  );
+  // Verify every port is actually free on the host through the agent. A number
+  // held on either protocol is not reservable — the claim is indivisible.
+  const results = await checkPortNumbersFree(input.nodeId, ports);
   const taken = results
     .filter((result) => !result.free)
-    .map((result) => result.hostPort);
+    .map((result) => `${result.hostPort} (${result.reason ?? "in use"})`);
   if (taken.length > 0) {
     throw conflict(
       `These ports are already in use on the host: ${taken.join(", ")}.`,
@@ -141,9 +136,9 @@ export async function addPortPoolEntry(
   }
 
   const rows = (await sql`
-    INSERT INTO node_port_pools (node_id, spec, protocol, ports)
-    VALUES (${input.nodeId}, ${input.spec}, ${input.protocol}, ${sql.array(ports, 23)})
-    RETURNING id, node_id, spec, protocol, ports, created_at
+    INSERT INTO node_port_pools (node_id, spec, ports)
+    VALUES (${input.nodeId}, ${input.spec}, ${sql.array(ports, 23)})
+    RETURNING id, node_id, spec, ports, created_at
   `) as PortPoolRow[];
 
   return toEntry(rows[0]!);

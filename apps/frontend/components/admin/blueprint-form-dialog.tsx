@@ -122,7 +122,7 @@ export function BlueprintFormDialog({
   const addPort = () =>
     setValues((prev) => ({
       ...prev,
-      ports: [...prev.ports, { container: "", protocol: "tcp", primary: false }],
+      ports: [...prev.ports, { container: "", primary: false }],
     }));
 
   const removePort = (index: number) =>
@@ -342,8 +342,9 @@ export function BlueprintFormDialog({
               <FieldLegend>Ports</FieldLegend>
               <FieldDescription>
                 The game&apos;s preferred ports — allocated from the node&apos;s
-                port pool when free, and always published as the same number
-                inside and outside the container. Exactly one is the primary
+                port pool when free, otherwise a random free pool port is drawn.
+                Each is published as the same number inside and outside the
+                container, on TCP and UDP both. Exactly one is the primary
                 (player-facing) port.
               </FieldDescription>
               <div className="flex flex-col gap-2">
@@ -360,20 +361,7 @@ export function BlueprintFormDialog({
                       onChange={(e) => updatePort(i, { container: e.target.value })}
                       aria-label={`Port ${i + 1}`}
                     />
-                    <Select
-                      value={port.protocol}
-                      onValueChange={(v) => {
-                        if (v) updatePort(i, { protocol: v as "tcp" | "udp" });
-                      }}
-                    >
-                      <SelectTrigger className="w-24">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="tcp">TCP</SelectItem>
-                        <SelectItem value="udp">UDP</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <span className="text-xs text-muted-foreground">TCP + UDP</span>
                     <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
                       <input
                         type="radio"

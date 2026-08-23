@@ -16,9 +16,7 @@ export const minecraftJava: Blueprint = {
     "Vanilla, Paper, Purpur, Fabric, Forge or Spigot via the itzg image. Type and version are selected with environment variables.",
   dockerImage: "itzg/minecraft-server:latest",
 
-  defaultPorts: [
-    { container: 25565, protocol: "tcp", primary: true },
-  ],
+  defaultPorts: [{ container: 25565, primary: true }],
 
   // The published primary port is an identity mapping, so the image is told to
   // bind that exact port inside the container (it writes server.properties'

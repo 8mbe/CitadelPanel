@@ -69,13 +69,6 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
@@ -297,7 +290,6 @@ function NodeDetailBody({
         .flatMap((server) =>
           server.ports.map((port) => ({
             port: port.port,
-            protocol: port.protocol,
             isPrimary: port.isPrimary,
             serverId: server.id,
             serverName: server.name,
@@ -1268,7 +1260,6 @@ function PortPoolCard({
   onChanged: () => void | Promise<void>;
 }) {
   const [spec, setSpec] = React.useState("");
-  const [protocol, setProtocol] = React.useState<"tcp" | "udp">("tcp");
   const [adding, setAdding] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -1298,7 +1289,7 @@ function PortPoolCard({
     setAdding(true);
     setError(null);
     try {
-      await adminAddNodePortPoolEntry(nodeId, trimmed, protocol);
+      await adminAddNodePortPoolEntry(nodeId, trimmed);
       // Clearing `spec` also clears the derived `hint`.
       setSpec("");
       await onChanged?.();
@@ -1336,8 +1327,9 @@ function PortPoolCard({
           </span>
         </CardTitle>
         <CardDescription>
-          Reserved host ports new servers draw from. The backend verifies each
-          port is free on the node before adding it.
+          Reserved host ports new servers draw from, at random. Each number is
+          reserved on TCP and UDP together; the backend verifies both are free on
+          the node before adding it.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -1365,23 +1357,6 @@ function PortPoolCard({
                 </FieldDescription>
               )}
             </Field>
-            <Field>
-              <FieldLabel>Protocol</FieldLabel>
-              <Select
-                value={protocol}
-                onValueChange={(v) => {
-                  if (v === "tcp" || v === "udp") setProtocol(v);
-                }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="tcp">TCP</SelectItem>
-                  <SelectItem value="udp">UDP</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
           </FieldGroup>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div>
@@ -1397,8 +1372,8 @@ function PortPoolCard({
         {/* Entries */}
         {entries.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No ports reserved. New servers will fall back to the default
-            25565–26565 range.
+            No ports reserved. This node cannot host servers until at least one
+            entry is added — there is no default range.
           </p>
         ) : (
           <div className="grid gap-2">
@@ -1412,7 +1387,7 @@ function PortPoolCard({
                   className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3"
                 >
                   <Badge variant="outline" className="font-mono text-xs uppercase">
-                    {entry.protocol}
+                    tcp + udp
                   </Badge>
                   <div className="min-w-0 flex-1">
                     <p className="font-mono text-sm">{entry.spec}</p>
@@ -1448,7 +1423,7 @@ function PortPoolCard({
             </DialogTitle>
             <DialogDescription>
               Remove <span className="font-mono text-foreground">{pendingDelete?.spec}</span>{" "}
-              ({pendingDelete?.protocol.toUpperCase()}) from the pool.
+              from the pool.
             </DialogDescription>
           </DialogHeader>
           {pendingDelete && pendingDelete.ports.some((p) => allocatedHostPorts.has(p)) ? (
@@ -1495,7 +1470,6 @@ function PortsCard({ ports }: { ports: NodePortAllocation[] }) {
           <TableHeader>
             <TableRow>
               <TableHead className="text-right">Port</TableHead>
-              <TableHead>Protocol</TableHead>
               <TableHead>Server</TableHead>
               <TableHead className="w-10" />
             </TableRow>
@@ -1504,7 +1478,7 @@ function PortsCard({ ports }: { ports: NodePortAllocation[] }) {
             {ports.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={4}
+                  colSpan={3}
                   className="h-24 text-center text-sm text-muted-foreground"
                 >
                   No ports allocated on this node.
@@ -1512,14 +1486,9 @@ function PortsCard({ ports }: { ports: NodePortAllocation[] }) {
               </TableRow>
             ) : (
               ports.map((port) => (
-                <TableRow key={`${port.serverId}:${port.port}:${port.protocol}`} className="group">
+                <TableRow key={`${port.serverId}:${port.port}`} className="group">
                   <TableCell className="text-right tabular-nums font-mono">
                     {port.port}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="font-mono text-xs uppercase">
-                      {port.protocol}
-                    </Badge>
                   </TableCell>
                   <TableCell className="flex items-center gap-2">
                     {port.serverName}

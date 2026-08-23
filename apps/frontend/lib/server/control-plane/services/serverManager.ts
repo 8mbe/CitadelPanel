@@ -30,7 +30,6 @@ import {
 } from "../blueprints/types";
 import {
   allocateHostPort,
-  allocateSpecificHostPort,
   scheduleServer,
   scheduleServerOnNode,
   type ResourceRequest,
@@ -47,10 +46,9 @@ import {
   stopServerContainer,
   provisionServerDatabase,
   dropServerDatabase,
+  portBindingsFor,
   type PortBinding,
 } from "../nodes/nodeServerApi";
-import { checkPortsFree, type PortProtocol } from "../nodes/nodePortsApi";
-import { expandNodePortPool } from "../nodes/portPool";
 import { assertNodeReadyToProvision } from "../nodes/nodeApi";
 import { getNodeWithSecrets } from "../nodes/nodeRegistry";
 import { recordAudit } from "./auditLog";
@@ -115,9 +113,8 @@ export interface ServerSummary {
   memoryLimitMb: number;
   diskLimitMb: number;
   ports: {
-    /** The published port — identity mapping: host and container side are this number. */
+    /** The published port: identity-mapped host↔container, on TCP and UDP both. */
     port: number;
-    protocol: string;
     isPrimary: boolean;
     isAdditional: boolean;
     label: string | null;
@@ -166,14 +163,13 @@ async function loadPortsForMany(
   if (serverIds.length === 0) return byServer;
 
   const rows = (await sql`
-    SELECT server_id, host_port, protocol, is_primary, is_additional, label
+    SELECT server_id, host_port, is_primary, is_additional, label
     FROM server_ports
     WHERE server_id = ANY(${sql.array(serverIds, 2950)})
     ORDER BY server_id, is_primary DESC, is_additional ASC, host_port ASC
   `) as {
     server_id: string;
     host_port: number;
-    protocol: string;
     is_primary: boolean;
     is_additional: boolean;
     label: string | null;
@@ -190,7 +186,6 @@ async function loadPortsForMany(
     // part of the API surface.
     list.push({
       port: row.host_port,
-      protocol: row.protocol,
       isPrimary: row.is_primary,
       isAdditional: row.is_additional,
       label: row.label,
@@ -461,8 +456,6 @@ export interface CreateServerInput {
   memoryLimitMb: number;
   diskLimitMb: number;
   env?: Record<string, unknown>;
-  /** Requested host port for the primary game port; best-effort. */
-  preferredPort?: number;
   /**
    * Explicit target node. When omitted the scheduler picks the most suitable
    * node; when given, that node's free capacity is validated instead.
@@ -723,7 +716,6 @@ interface ProvisionPlan {
   // on the data directory rather than by anything the container spec carries.
   cpuLimit: number;
   memoryLimitMb: number;
-  preferredPort?: number;
 }
 
 /**
@@ -761,34 +753,27 @@ async function provisionServer(
 
     for (const port of blueprint.defaultPorts) {
       const isPrimary = port === mainPort;
-      // Best-effort preference: the admin's explicit choice for the primary
-      // port, otherwise the blueprint's preferred number (e.g. 25565) when it
-      // happens to be in the node's pool and free.
-      const hostPort = await allocateHostPort(
-        nodeId,
-        port.protocol,
-        isPrimary ? plan.preferredPort ?? port.container : port.container,
-      );
+      // The blueprint's declared number (e.g. 25565) is a best-effort
+      // preference — honored when it is in the node's pool and free. Anything
+      // else is a random free pool port; nobody gets to pick one.
+      const hostPort = await allocateHostPort(nodeId, port.container);
 
       // Identity mapping: the same number is published on the host and bound
       // inside the container (host N → container N), so a port is one number,
       // not a pair.
       await sql`
         INSERT INTO server_ports (
-          server_id, node_id, host_port, container_port, protocol, is_primary
+          server_id, node_id, host_port, container_port, is_primary
         ) VALUES (
-          ${serverId}, ${nodeId}, ${hostPort}, ${hostPort},
-          ${port.protocol}, ${isPrimary}
+          ${serverId}, ${nodeId}, ${hostPort}, ${hostPort}, ${isPrimary}
         )
       `;
 
       if (isPrimary) primaryHostPort = hostPort;
 
-      bindings.push({
-        hostPort,
-        containerPort: hostPort,
-        protocol: port.protocol,
-      });
+      // One number, both protocols: the agent's spec is still per-protocol, so
+      // the claim is expanded here rather than stored twice.
+      bindings.push(...portBindingsFor(hostPort));
     }
 
     // The game must listen on the number that was actually published, so the
@@ -1003,7 +988,6 @@ export async function createServer(
     secretKeys: resolved.secretKeys,
     cpuLimit: input.cpuLimit,
     memoryLimitMb: input.memoryLimitMb,
-    preferredPort: input.preferredPort,
   }).finally(() => {
     inFlightProvisions.delete(server.id);
   });
@@ -1762,23 +1746,21 @@ async function recreateServerContainer(serverId: string): Promise<void> {
   // The full port set the recreated container must publish: blueprint defaults
   // plus any owner-added additional ports, all read from `server_ports`.
   const portRows = (await sql`
-    SELECT host_port, protocol, is_primary
+    SELECT host_port, is_primary
     FROM server_ports
     WHERE server_id = ${serverId}
     ORDER BY is_primary DESC, host_port ASC
-  `) as { host_port: number; protocol: string; is_primary: boolean }[];
+  `) as { host_port: number; is_primary: boolean }[];
 
   if (portRows.length === 0) {
     throw badRequest("Server has no ports to publish");
   }
 
   // Identity mapping by construction: the published number is the number the
-  // game binds inside the container.
-  const ports: PortBinding[] = portRows.map((row) => ({
-    hostPort: row.host_port,
-    containerPort: row.host_port,
-    protocol: row.protocol as PortProtocol,
-  }));
+  // game binds inside the container — on TCP and UDP both.
+  const ports: PortBinding[] = portRows.flatMap((row) =>
+    portBindingsFor(row.host_port),
+  );
 
   const env = await loadEnvForContainer(serverId);
 
@@ -1890,21 +1872,20 @@ export async function countAdditionalPorts(serverId: string): Promise<number> {
 export interface AddServerPortInput {
   serverId: string;
   actorId: string;
-  /** The port to publish (1-65535) — identity-mapped, host and container. */
-  port: number;
-  protocol: PortProtocol;
   /** Optional owner note shown in the ports card, e.g. "Metrics". */
   label?: string;
 }
 
 /**
- * Add an owner-configured additional port to a server.
+ * Add an additional port to a server. **The panel picks the number.**
  *
- * The port is an identity mapping — the same number is published on the host
- * and bound in the container — and must be available: a member of the node's
- * port pool for this protocol, unallocated in the panel, and free on the host
- * (verified through the agent). A port that fails any check is a readable 409;
- * no fallback is substituted because the owner chose that exact number.
+ * The owner asks for "one more port", not for a specific one: a number is drawn
+ * at random from the node's pool, then published as an identity mapping (host N
+ * → container N) on TCP and UDP both. Letting the owner name the number meant
+ * every failure mode was theirs to debug — not in the pool, taken by another
+ * server, held by a host process — for a number that has no meaning until it is
+ * allocated anyway. The allocated port comes back in the returned summary, and
+ * the owner points their plugin config at it.
  *
  * The container is then recreated so the new binding takes effect — Docker
  * cannot apply a new port binding to a running container.
@@ -1917,14 +1898,6 @@ export async function addServerPort(
   input: AddServerPortInput,
 ): Promise<ServerSummary> {
   const server = await loadServerRow(input.serverId);
-
-  if (
-    !Number.isInteger(input.port) ||
-    input.port < 1 ||
-    input.port > 65535
-  ) {
-    throw badRequest("port must be an integer between 1 and 65535");
-  }
 
   const label =
     input.label !== undefined && input.label !== null
@@ -1941,32 +1914,19 @@ export async function addServerPort(
     );
   }
 
-  // A (port, protocol) pair must be unique per server — the table's PRIMARY KEY
-  // enforces it, but a pre-check gives a readable 409 instead of a raw
-  // constraint violation.
-  const existing = (await sql`
-    SELECT 1 FROM server_ports
-    WHERE server_id = ${input.serverId}
-      AND host_port = ${input.port}
-      AND protocol = ${input.protocol}
-  `) as { 1: number }[];
-  if (existing.length > 0) {
-    throw conflict(
-      `Port ${input.port}/${input.protocol} is already published on this server.`,
-    );
-  }
-
-  // The port must be reservable exactly as asked — see the function doc for why
-  // there is no fallback here, unlike at create.
-  await allocateSpecificHostPort(server.node_id, input.protocol, input.port);
+  // A random free number from the node's pool, verified bindable on both
+  // protocols. Allocation is what decides the number, so there is no
+  // already-published pre-check to run: a number this server already holds is
+  // in `server_ports` and therefore not a candidate.
+  const port = await allocateHostPort(server.node_id);
 
   await sql`
     INSERT INTO server_ports (
-      server_id, node_id, host_port, container_port, protocol,
+      server_id, node_id, host_port, container_port,
       is_primary, is_additional, label
     ) VALUES (
-      ${input.serverId}, ${server.node_id}, ${input.port}, ${input.port},
-      ${input.protocol}, FALSE, TRUE, ${label}
+      ${input.serverId}, ${server.node_id}, ${port}, ${port},
+      FALSE, TRUE, ${label}
     )
   `;
 
@@ -1977,11 +1937,7 @@ export async function addServerPort(
     action: "server.port.add",
     targetType: "server",
     targetId: input.serverId,
-    metadata: {
-      port: input.port,
-      protocol: input.protocol,
-      label,
-    },
+    metadata: { port, label },
   });
 
   return getServer(input.serverId);
@@ -2001,7 +1957,6 @@ export async function addServerPort(
 export async function removeServerPort(
   serverId: string,
   port: number,
-  protocol: PortProtocol,
   actorId: string,
 ): Promise<ServerSummary> {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -2012,7 +1967,6 @@ export async function removeServerPort(
     DELETE FROM server_ports
     WHERE server_id = ${serverId}
       AND host_port = ${port}
-      AND protocol = ${protocol}
       AND is_additional = TRUE
     RETURNING host_port, is_primary
   `) as { host_port: number; is_primary: boolean }[];
@@ -2044,10 +1998,7 @@ export async function removeServerPort(
     action: "server.port.remove",
     targetType: "server",
     targetId: serverId,
-    metadata: {
-      port,
-      protocol,
-    },
+    metadata: { port },
   });
 
   return getServer(serverId);

@@ -21,13 +21,6 @@ import {
 } from "@/components/ui/empty";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { useServerData } from "@/components/server/server-data-context";
 import {
@@ -39,10 +32,11 @@ import {
 } from "@/lib/api";
 
 /**
- * One published port row: {PORT}/{proto}.
+ * One published port row.
  *
  * Bindings are identity mappings — the same number is published on the host and
- * bound inside the container — so a port is a single number, not a pair.
+ * bound inside the container — and every port is claimed on TCP and UDP both,
+ * so a port is a single number with no protocol to qualify it.
  *
  * Blueprint ports (the game's built-in ports, including the primary player port)
  * are shown read-only with a badge, so the owner understands why they cannot be
@@ -62,7 +56,7 @@ function PortRow({
       <div className="flex min-w-0 flex-col gap-0.5">
         <span className="font-mono text-sm tabular-nums">
           {port.port}
-          <span className="text-muted-foreground">/{port.protocol}</span>
+          <span className="text-muted-foreground"> · TCP + UDP</span>
         </span>
         {port.label && (
           <span className="truncate text-xs text-muted-foreground">
@@ -98,11 +92,13 @@ function PortRow({
 /**
  * The Ports tab.
  *
- * Shows every published port for this server as {PORT}/{protocol}. The game's
- * blueprint ports are fixed by the game and cannot be removed here. The owner
- * may publish additional ports by their exact number — the port must be in the
- * node's reserved port pool and free; it is forwarded to the container as the
- * same number (host N → container N).
+ * Shows every published port for this server. The game's blueprint ports are
+ * fixed by the game and cannot be removed here. The owner may publish an
+ * additional port, but does **not** pick its number: the panel draws a free one
+ * from the node's pool at random and reports which it got. Asking the owner for
+ * a number only ever produced errors that were not theirs to fix ("not in the
+ * pool", "already allocated"), for a number that means nothing until the panel
+ * has allocated it.
  *
  * Adding or removing a port recreates the container (Docker cannot re-bind ports
  * on a running container), so a running server restarts briefly. That is stated
@@ -117,12 +113,10 @@ export function PortsTab({ serverId }: { serverId: string }) {
   // Bumped after a mutation to reload without a synchronous setState in an effect.
   const [refreshKey, setRefreshKey] = React.useState(0);
 
-  // Add-form state.
-  const [port, setPort] = React.useState("");
-  const [protocol, setProtocol] = React.useState<"tcp" | "udp">("tcp");
+  // Add-form state: a label is the only thing the owner supplies.
   const [label, setLabel] = React.useState("");
   const [adding, setAdding] = React.useState(false);
-  const [removingKey, setRemovingKey] = React.useState<string | null>(null);
+  const [removingKey, setRemovingKey] = React.useState<number | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -153,27 +147,24 @@ export function PortsTab({ serverId }: { serverId: string }) {
   const additionalCount = ports?.filter((p) => p.isAdditional).length ?? 0;
 
   const add = async () => {
-    const p = Number(port);
-    if (!Number.isInteger(p) || p < 1 || p > 65535) {
-      setError("Port must be a whole number between 1 and 65535.");
-      return;
-    }
-
     setAdding(true);
     setError(null);
     setNote(null);
     try {
-      await addServerPort(serverId, {
-        port: p,
-        protocol,
+      const known = new Set(ports?.map((p) => p.port) ?? []);
+      const updated = await addServerPort(serverId, {
         label: label.trim() || undefined,
       });
-      setPort("");
       setLabel("");
       setRefreshKey((k) => k + 1);
       await refresh();
+      // Name the allocated number: the owner did not choose it, so this is the
+      // only place they learn what to point a plugin config at.
+      const allocated = updated.ports.find((p) => !known.has(p.port));
       setNote(
-        "Port published. The container was recreated to apply the new binding.",
+        allocated
+          ? `Port ${allocated.port} published (TCP and UDP). The container was recreated to apply the new binding.`
+          : "Port published. The container was recreated to apply the new binding.",
       );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to add port.");
@@ -183,12 +174,11 @@ export function PortsTab({ serverId }: { serverId: string }) {
   };
 
   const remove = async (port: ServerPort) => {
-    const key = `${port.port}/${port.protocol}`;
-    setRemovingKey(key);
+    setRemovingKey(port.port);
     setError(null);
     setNote(null);
     try {
-      await removeServerPort(serverId, port.port, port.protocol);
+      await removeServerPort(serverId, port.port);
       setRefreshKey((k) => k + 1);
       await refresh();
       setNote(
@@ -224,11 +214,11 @@ export function PortsTab({ serverId }: { serverId: string }) {
         <CardHeader>
           <CardTitle>Ports</CardTitle>
           <CardDescription>
-            Ports published for this server, shown as{" "}
-            <span className="font-mono">port/protocol</span>. Each port is
-            forwarded to the container as the same number. The game&apos;s
-            blueprint ports (including the primary player port) are fixed by the
-            game and cannot be removed here.
+            Ports published for this server. Each one is forwarded to the
+            container as the same number, on TCP and UDP both, so there is never
+            a protocol to pick. The game&apos;s blueprint ports (including the
+            primary player port) are fixed by the game and cannot be removed
+            here.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -244,17 +234,14 @@ export function PortsTab({ serverId }: { serverId: string }) {
             </p>
           ) : (
             <div className="flex flex-col gap-2">
-              {ports.map((port) => {
-                const key = `${port.port}/${port.protocol}`;
-                return (
-                  <PortRow
-                    key={key}
-                    port={port}
-                    onRemove={() => void remove(port)}
-                    removing={removingKey === key}
-                  />
-                );
-              })}
+              {ports.map((port) => (
+                <PortRow
+                  key={port.port}
+                  port={port}
+                  onRemove={() => void remove(port)}
+                  removing={removingKey === port.port}
+                />
+              ))}
             </div>
           )}
           {error && <p className="text-sm text-destructive">{error}</p>}
@@ -272,40 +259,13 @@ export function PortsTab({ serverId }: { serverId: string }) {
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <FieldDescription>
-            Enter the exact port to publish — it is forwarded to the container as
-            the same number (host → container), and the game or plugin should be
-            configured to listen on it. The port must belong to the node&apos;s
-            reserved port pool and be free; anything else is rejected. Publishing
-            a port recreates the container, so a running server restarts briefly.
+            The port number is assigned for you — a free one is drawn at random
+            from this node&apos;s pool and published on TCP and UDP as the same
+            number inside and outside the container. Configure the game or plugin
+            to listen on the number you get back. Publishing a port recreates the
+            container, so a running server restarts briefly.
           </FieldDescription>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <Field className="flex-1">
-              <FieldLabel htmlFor="port-number">Port</FieldLabel>
-              <Input
-                id="port-number"
-                type="number"
-                min={1}
-                max={65535}
-                value={port}
-                onChange={(e) => setPort(e.target.value)}
-                placeholder="25566"
-              />
-            </Field>
-            <Field className="w-full sm:w-28">
-              <FieldLabel htmlFor="port-protocol">Protocol</FieldLabel>
-              <Select
-                value={protocol}
-                onValueChange={(v) => v && setProtocol(v as "tcp" | "udp")}
-              >
-                <SelectTrigger id="port-protocol">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="tcp">TCP</SelectItem>
-                  <SelectItem value="udp">UDP</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
             <Field className="flex-1">
               <FieldLabel htmlFor="port-label">
                 Label{" "}
@@ -319,11 +279,7 @@ export function PortsTab({ serverId }: { serverId: string }) {
                 maxLength={64}
               />
             </Field>
-            <Button
-              type="button"
-              disabled={adding || port.trim() === ""}
-              onClick={add}
-            >
+            <Button type="button" disabled={adding} onClick={add}>
               {adding && <Spinner />}
               Publish port
             </Button>

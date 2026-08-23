@@ -17,6 +17,22 @@ export interface PortBinding {
 }
 
 /**
+ * Expand one published port number into the bindings the agent expects.
+ *
+ * The panel stores a port as a number and claims it on both protocols (see
+ * migration `023_ports_dual_protocol.sql`); the agent's container spec is still
+ * per-protocol, so the pair is produced here rather than stored twice. Keeping
+ * the wire format protocol-aware means no node has to be upgraded in lockstep
+ * with the panel.
+ */
+export function portBindingsFor(port: number): PortBinding[] {
+  return [
+    { hostPort: port, containerPort: port, protocol: "tcp" },
+    { hostPort: port, containerPort: port, protocol: "udp" },
+  ];
+}
+
+/**
  * The container spec the panel is allowed to specify.
  *
  * Deliberately missing `hostDataPath`: the agent derives it from its own data

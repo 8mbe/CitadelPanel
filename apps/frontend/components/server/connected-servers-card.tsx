@@ -384,8 +384,8 @@ function ConnectServersDialog({
                   </SelectTrigger>
                   <SelectContent>
                     {target.ports.map((p) => (
-                      <SelectItem key={`${p.port}/${p.protocol}`} value={String(p.port)}>
-                        {p.port}/{p.protocol}
+                      <SelectItem key={p.port} value={String(p.port)}>
+                        {p.port}
                         {p.isPrimary ? " · primary" : ""}
                         {p.label ? ` · ${p.label}` : ""}
                       </SelectItem>

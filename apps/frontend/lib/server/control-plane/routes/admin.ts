@@ -288,10 +288,8 @@ export async function handleAdminCreateServer(request: Request): Promise<Respons
     max: 2_000_000,
   });
   const nodeId = optionalString(body, "nodeId");
-  const preferredPort =
-    body.preferredPort === undefined
-      ? undefined
-      : requireNumber(body, "preferredPort", { min: 1024, max: 65535 });
+  // No port input: the panel draws the server's ports at random from the target
+  // node's pool. See `allocateHostPort`.
 
   const envInput =
     typeof body.env === "object" && body.env !== null && !Array.isArray(body.env)
@@ -315,7 +313,6 @@ export async function handleAdminCreateServer(request: Request): Promise<Respons
     memoryLimitMb,
     diskLimitMb,
     env: envInput,
-    preferredPort,
     nodeId,
   });
 
