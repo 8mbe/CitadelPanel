@@ -1,5 +1,5 @@
 /**
- * Node database backups — the administrator-facing half of the feature.
+ * Node database backups, the administrator-facing half of the feature.
  *
  * One snapshot per node, containing a SQL dump of every database provisioned on
  * that node's shared MariaDB. This is admin-only for a structural reason rather
@@ -8,7 +8,7 @@
  * owner holds. A per-server database backup would have meant the owner-triggered
  * path reaching into infrastructure shared by every other tenant.
  *
- * The dumps carry **data only** — no `mysql.user`, no grants. The panel is already
+ * The dumps carry **data only**: no `mysql.user`, no grants. The panel is already
  * the source of truth for database credentials (it stores each scoped user's
  * password encrypted), so a restore re-imports the data and the panel can
  * re-provision the users. That also means a snapshot never contains another
@@ -46,7 +46,7 @@ import {
 /**
  * The node's MariaDB admin credential, or a clear refusal.
  *
- * A node without one configured cannot have its databases dumped — and the fix is
+ * A node without one configured cannot have its databases dumped, and the fix is
  * an operator action (`setup-db` plus re-registering the node), so the message says
  * that rather than surfacing a connection error later.
  */
@@ -263,11 +263,11 @@ export interface StartDatabaseRestoreInput {
  * more this layer can usefully add beyond refusing to run it concurrently with
  * anything else on the same node.
  *
- * Servers are **not** stopped first. Unlike a file restore — where restic and a
- * running game would fight over the same files — a database import goes through
- * MariaDB, which serialises it correctly. A game holding stale rows in memory is a
- * reason to restart it afterwards, which the UI says, not a reason for the panel to
- * stop every server on the node on its own initiative.
+ * Servers are **not** stopped first. In a file restore, restic and a running game
+ * would fight over the same files. A database import goes through MariaDB, which
+ * serialises it correctly. A game holding stale rows in memory is a reason to
+ * restart it afterwards, which the UI says, not a reason for the panel to stop
+ * every server on the node on its own initiative.
  */
 export async function startDatabaseRestore(
   input: StartDatabaseRestoreInput,

@@ -79,8 +79,8 @@ function toConnection(node: NodeWithSecrets): CachedConnection {
 /**
  * Drop everything cached about a node, after it is deleted or reconfigured.
  *
- * Covers the registry's credential cache as well as the resolved connection —
- * the two are refreshed together or not at all, and callers should not have to
+ * Covers the registry's credential cache as well as the resolved connection.
+ * The two are refreshed together or not at all, and callers should not have to
  * know there are two.
  */
 export function invalidateNodeConnection(nodeId: string): void {
@@ -166,7 +166,7 @@ export async function nodeRequestFor<T>(
       const payload = (await response.json()) as { error?: string };
       if (payload.error) message = `${message}: ${payload.error}`;
     } catch {
-      // Non-JSON error body — the status alone will have to do.
+      // Non-JSON error body, so the status alone will have to do.
     }
     throw new HttpError(response.status, message);
   }
@@ -187,7 +187,7 @@ export async function nodeRequest<T>(
 }
 
 /**
- * Call a node's agent and return the raw `Response` — for streaming endpoints
+ * Call a node's agent and return the raw `Response`. For streaming endpoints
  * (file downloads) where the body must not be buffered into memory.
  *
  * Same auth and failure-mode mapping as {@link nodeRequestFor}, but does not
@@ -219,7 +219,7 @@ export async function nodeRequestRaw(
   let response: Response;
   try {
     // Build the fetch init. When forwarding a streaming body (a file upload),
-    // Node's fetch requires `duplex: "half"` — it refuses to send a
+    // Node's fetch requires `duplex: "half"`. It refuses to send a
     // ReadableStream body without it. The option is a Node extension to
     // RequestInit (not in the DOM spec), so it is only set for the streaming
     // path and cast through to satisfy the TS lib type.
@@ -283,7 +283,7 @@ export interface NodeHealth {
   error?: string;
   /**
    * The agent rejected the bearer token (401/403). Distinct from `reachable`
-   * so a wrong token is not reported as "unreachable" — the host is there, the
+   * so a wrong token is not reported as "unreachable". The host is there, the
    * credential is not. Only ever true when `reachable` is false.
    */
   unauthorized?: boolean;
@@ -389,7 +389,7 @@ export async function probeAgent(
  * failure with a server stuck in `error`. Checking first turns that into one
  * actionable message and no wreckage.
  *
- * Deliberately not silent about a missing `dataRoot` field — an older agent that
+ * Deliberately not silent about a missing `dataRoot` field. An older agent that
  * does not report it is allowed through, because the alternative is refusing to
  * provision on a node that may be perfectly fine.
  */

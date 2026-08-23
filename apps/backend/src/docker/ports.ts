@@ -5,13 +5,13 @@
  * before reserving them into a pool or allocating them to a new server. A port
  * that is free in the panel's `server_ports` table can still be held on the host
  * by a non-CitadelPanel process or container, and binding it would fail at
- * container-create time — so the check happens here, on the node, where the
+ * container-create time, so the check happens here, on the node, where the
  * sockets live.
  *
  * Method: attempt to bind a socket on `0.0.0.0:<port>`, then close it
  * immediately. This matches `hardening.ts`, which publishes container ports on
  * all interfaces (no `HostIp`), so a port bound only on loopback by another
- * process correctly fails the all-interface probe — which is the real
+ * process correctly fails the all-interface probe, which is the real
  * allocation semantic. A Docker-bound port holds a host socket and fails the
  * probe just like any other process, so no separate `docker.listContainers`
  * call is needed.
@@ -45,7 +45,7 @@ const PROBE_TIMEOUT_MS = 2000;
 /**
  * Probe one host port by binding it briefly on 0.0.0.0.
  *
- * Never throws for a taken port — that is a result (`free: false`), not an
+ * Never throws for a taken port. That is a result (`free: false`), not an
  * error. Only truly unexpected failures are reported as not-free with a reason.
  */
 function probePort(hostPort: number, protocol: PortProtocol): Promise<PortProbeResult> {
@@ -64,7 +64,7 @@ function probePort(hostPort: number, protocol: PortProtocol): Promise<PortProbeR
         });
       });
       server.listen(hostPort, "0.0.0.0", () => {
-        // Bound successfully — the port is free. Close immediately.
+        // Bound successfully, so the port is free. Close immediately.
         server.close(() =>
           settle({ hostPort, protocol, free: true }),
         );

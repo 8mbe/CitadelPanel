@@ -10,13 +10,13 @@ import type { CaptchaProvider, PublicCaptchaSettings } from "@/lib/api";
  *
  * Dynamic loading rather than three bundled SDKs: the operator picks one provider
  * (or none), so bundling all three would ship two unused third-party scripts to
- * every visitor — and the default configuration is no captcha at all, in which
+ * every visitor, and the default configuration is no captcha at all, in which
  * case nothing should be loaded. It also means changing provider in the admin
  * settings takes effect on next page load, with no rebuild.
  *
  * The token is handed up through `onToken`. The parent sends it in the
  * `x-captcha-response` header, and the backend verifies it before the credential
- * handler runs — the widget itself proves nothing.
+ * handler runs. The widget itself proves nothing.
  */
 
 const SCRIPT_URLS: Record<CaptchaProvider, string> = {
@@ -110,8 +110,9 @@ export interface CaptchaWidgetProps {
  *
  * The one operation a parent needs after a failed submit is `reset()`: captcha
  * tokens are single-use, so the widget must return to its unsolved state for the
- * user to solve again. Clearing the token in parent state alone is not enough —
- * the hosted widgets keep showing "verified" until their own `reset` is called.
+ * user to solve again. Clearing the token in parent state alone is not enough,
+ * because the hosted widgets keep showing "verified" until their own `reset` is
+ * called.
  */
 export interface CaptchaWidgetHandle {
   reset: () => void;
@@ -123,7 +124,7 @@ export const CaptchaWidget = React.forwardRef<CaptchaWidgetHandle, CaptchaWidget
     const [error, setError] = React.useState<string | null>(null);
 
     // The hosted provider's widget id (Turnstile/reCAPTCHA) once rendered, or
-    // the Cap custom element — whichever applies — so `reset()` can reach it.
+    // the Cap custom element, whichever applies, so `reset()` can reach it.
     const widgetIdRef = React.useRef<string | number | undefined>(undefined);
     const capWidgetRef = React.useRef<HTMLElement | null>(null);
 

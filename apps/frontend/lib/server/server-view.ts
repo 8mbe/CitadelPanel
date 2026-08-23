@@ -15,15 +15,17 @@ import type { ServerView } from "@/lib/types";
  * Resolve the server detail view for the signed-in viewer, server-side.
  *
  * This is what the server page's layout calls instead of the browser calling
- * `GET /api/servers/:id`. Same authorization as that endpoint — `console` is
- * the baseline "can look at this server" grant, no access at all returns null
- * so a missing server and an inaccessible one are indistinguishable — but it
- * runs during rendering, so every section of the page can start fetching its
- * own data immediately instead of waiting for the shell's round trip first.
+ * `GET /api/servers/:id`. Authorization is the same as that endpoint's.
+ * `console` is the baseline "can look at this server" grant, and no access at
+ * all returns null, so a missing server and an inaccessible one are
+ * indistinguishable. The difference is that this runs during rendering, so
+ * every section of the page can start fetching its own data immediately
+ * instead of waiting for the shell's round trip first.
  *
- * The access check and the read start together (performance.md Rule 2): the
- * check still gates what is surfaced — nothing is returned to a viewer without
- * access — the same compensation the polled stats endpoint already relies on.
+ * The access check and the read start together (performance.md Rule 2). The
+ * check still gates what is surfaced, and nothing is returned to a viewer
+ * without access, the same compensation the polled stats endpoint already
+ * relies on.
  */
 export async function resolveServerView(
   serverId: string,

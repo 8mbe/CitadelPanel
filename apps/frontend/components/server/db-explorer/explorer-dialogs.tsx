@@ -4,7 +4,7 @@
  * Dialogs for the database explorer: create table, add/edit column, insert/
  * edit row, and a destructive-confirm wrapper.
  *
- * Every form here submits *structured* specs (`DbColumnSpec`, value maps) —
+ * Every form here submits *structured* specs (`DbColumnSpec`, value maps) and
  * never SQL. The type dropdown mirrors the server's fixed allowlist; anything
  * else the browser sends is rejected server-side.
  */
@@ -46,7 +46,7 @@ import {
   type DbTableSchema,
 } from "@/lib/api";
 
-/** The column types the server accepts — mirrors dbExplorerSql's allowlist. */
+/** The column types the server accepts, mirroring dbExplorerSql's allowlist. */
 export const COLUMN_TYPE_OPTIONS = [
   "TINYINT",
   "SMALLINT",
@@ -104,7 +104,7 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
 /**
  * Parse a column's full type text (e.g. "int unsigned", "varchar(255)") into
  * the base/length/unsigned triple the form works with. Returns null when the
- * type is not representable in the dropdown (enum, set, …) — the caller then
+ * type is not representable in the dropdown (enum, set, …). The caller then
  * blocks editing rather than silently changing the type.
  */
 export function parseColumnType(
@@ -212,7 +212,7 @@ export function CreateTableDialog({
     setColumns((prev) => [...prev, { key: `col-${keySeed.current}`, spec: blankColumn() }]);
   };
 
-  // Opening the dialog starts from one blank id column — the common shape.
+  // Opening the dialog starts from one blank id column, the common shape.
   const openDialog = (next: boolean) => {
     setOpen(next);
     if (next) {
@@ -577,7 +577,7 @@ export function ColumnDialog({
           <DialogTitle>{editing ? `Edit column “${editing.name}”` : "Add column"}</DialogTitle>
           <DialogDescription>
             {editing
-              ? "Editing restates the whole column definition — anything you change here replaces what the table had."
+              ? "Editing restates the whole column definition. Anything you change here replaces what the table had."
               : "Adds a column to this table with ALTER TABLE … ADD COLUMN."}
           </DialogDescription>
         </DialogHeader>
@@ -689,7 +689,7 @@ export function ColumnDialog({
                 <Input
                   id="column-default-value"
                   disabled={defaultKind !== "literal"}
-                  placeholder={defaultKind === "literal" ? "value" : "—"}
+                  placeholder={defaultKind === "literal" ? "value" : undefined}
                   className="font-mono"
                   value={defaultValue}
                   onChange={(e) => setDefaultValue(e.target.value)}
@@ -735,7 +735,7 @@ export interface RowSnapshot {
 /**
  * Insert-or-edit row dialog. Each field pairs an input with a NULL checkbox so
  * the two "empty" states (empty string vs NULL) stay distinguishable. On edit,
- * only fields whose value or null-ness changed are submitted — untouched
+ * only fields whose value or null-ness changed are submitted. Untouched
  * columns (including values that don't round-trip as text) are left alone.
  */
 export function RowDialog({
@@ -893,7 +893,7 @@ export function RowDialog({
                     <Input
                       id={`row-field-${column.name}`}
                       disabled={f.isNull || isPk}
-                      placeholder={f.auto ? "auto" : isPk ? undefined : "—"}
+                      placeholder={f.auto ? "auto" : undefined}
                       className="font-mono text-xs"
                       value={f.value}
                       onChange={(e) =>

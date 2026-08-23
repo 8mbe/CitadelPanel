@@ -75,8 +75,8 @@ export function isAdmin(user: AuthenticatedUser): boolean {
  *
  * The subuser grant is LEFT JOINed rather than looked up after the owner check
  * fails. Every guarded endpoint passes through here, so the second query cost a
- * database round trip on every request a subuser made — and the join is free
- * for the owner and admin cases, where the joined column is simply ignored.
+ * database round trip on every request a subuser made. The join is free for
+ * the owner and admin cases, where the joined column is simply ignored.
  */
 /** What the database knows about one user's relationship to one server. */
 export interface ServerAccessRow {
@@ -90,7 +90,7 @@ export interface ServerAccessRow {
  * The read half of {@link resolveServerAccess}, split from the decision.
  *
  * It needs only the caller's *id*, which the session carries without a database
- * read — so a guard can start this at the same time as the ban/role lookup
+ * read, so a guard can start this at the same time as the ban/role lookup
  * instead of after it. The decision below still waits for both.
  */
 export async function loadServerAccessRow(
@@ -157,7 +157,7 @@ export function accessAllows(
 }
 
 /**
- * Actions that only a server owner (or admin) may perform, never a subuser —
+ * Actions that only a server owner (or admin) may perform, never a subuser,
  * regardless of which flags the owner granted. Managing subusers and deleting
  * the server itself are deliberately non-delegable.
  */

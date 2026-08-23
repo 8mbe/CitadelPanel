@@ -7,10 +7,10 @@
  *   - GET /api/setup/status is public and reports the latch
  *   - POST /api/setup/admin refuses with 409 once an admin exists (the window
  *     is closed; the count is derived from real accounts, not the writable
- *     latch — see the route comment)
+ *     latch, see the route comment)
  *   - PATCH /api/setup/settings (== PATCH /api/admin/settings) is admin-only
  *     and validates its nested input
- *   - POST /api/setup/complete is idempotent — re-running on a completed
+ *   - POST /api/setup/complete is idempotent, and re-running on a completed
  *     install returns the existing timestamp rather than erroring
  *
  * No setup action actually mutates panel state: the suite asserts the refusal
@@ -28,7 +28,7 @@ describe("setup status (public)", () => {
     expect(res.status).toBe(200);
     const body = res.body as { needsSetup?: boolean; canCreateAdmin?: boolean };
     expect(body.needsSetup).toBe(false);
-    // An admin already exists on the dev panel — the bootstrap window is closed.
+    // An admin already exists on the dev panel, so the bootstrap window is closed.
     expect(body.canCreateAdmin).toBe(false);
   });
 });
@@ -45,7 +45,7 @@ describe("first-admin bootstrap is closed once an admin exists", () => {
   });
 
   test("POST /api/setup/admin with a malformed body is 400 even before the gate", async () => {
-    // Missing required fields — the body parser rejects before the admin-count
+    // Missing required fields, so the body parser rejects before the admin-count
     // gate is checked. (Both 400 and 409 are acceptable refusals; what matters
     // is that no account is created.)
     const res = await api("/api/setup/admin", { method: "POST", body: {} });

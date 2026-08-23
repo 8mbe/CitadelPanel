@@ -6,12 +6,12 @@ import type { AnalyticsSettings } from "@/lib/server/control-plane/services/sett
  * Third-party web analytics, emitted only when an operator has configured them.
  *
  * Two providers, chosen because they are the two an operator actually asks for
- * and because both are pure script tags — no server-side key, no request
+ * and because both are pure script tags. No server-side key, no request
  * proxying, nothing for the panel to store encrypted:
  *
- *   - **Plausible** — cookieless and self-hostable. `plausibleScriptUrl` points
+ *   - **Plausible**: cookieless and self-hostable. `plausibleScriptUrl` points
  *     at a self-hosted instance; omitted, it falls back to plausible.io.
- *   - **Google Analytics 4** — the standard gtag snippet.
+ *   - **Google Analytics 4**: the standard gtag snippet.
  *
  * When analytics are off this component renders `null`, which is the whole point
  * of the toggle: a private panel makes zero third-party requests, rather than
@@ -23,8 +23,8 @@ import type { AnalyticsSettings } from "@/lib/server/control-plane/services/sett
  *
  * Note for operators in consent jurisdictions: Google Analytics sets cookies and
  * shares data with Google, so enabling it generally requires consent from the
- * visitor before this script loads. The panel does not ship a consent banner —
- * see `docs/site-settings.md`.
+ * visitor before this script loads. The panel does not ship a consent banner.
+ * See `docs/site-settings.md`.
  */
 export function Analytics({ settings }: { settings: AnalyticsSettings | null }) {
   if (!settings) return null;

@@ -9,8 +9,8 @@
 --      node. An owner-triggered backup should not reach into that. Database
 --      backups are therefore now **node-scoped and admin-owned**, and a server
 --      backup is files only.
---   2. Retention is now a plain snapshot count per subject — "keep 5, a new
---      backup removes the oldest" — which is what an operator can actually
+--   2. Retention is now a plain snapshot count per subject, "keep 5, a new
+--      backup removes the oldest", which is what an operator can actually
 --      reason about and multiply by their fleet size.
 --
 -- This runs on databases that already applied 020, so every step is written to be
@@ -102,8 +102,8 @@ ALTER TABLE nodes ADD COLUMN IF NOT EXISTS database_backups_enabled BOOLEAN NOT 
 -- --- Retire the old single-scope tables ---------------------------------------------
 
 -- Dropped rather than migrated. Their rows describe backups whose snapshots mixed
--- files and database dumps in one tree, which nothing can now restore correctly —
--- a server restore would try to write `/dumps` that the new code does not mount,
+-- files and database dumps in one tree, which nothing can now restore correctly.
+-- A server restore would try to write `/dumps` that the new code does not mount,
 -- and a database restore would not find the per-node layout it expects. Keeping
 -- rows that point at unrestorable snapshots would be worse than an empty history,
 -- because the UI would offer a Restore button that cannot work.
@@ -111,7 +111,7 @@ ALTER TABLE nodes ADD COLUMN IF NOT EXISTS database_backups_enabled BOOLEAN NOT 
 -- The snapshots themselves are left in S3. Anything already uploaded stays where it
 -- is under the old `<prefix>/<serverId>` path (the new code addresses
 -- `<prefix>/servers/<serverId>`), so nothing is deleted behind the operator's
--- back — but it is also no longer referenced, and can be removed from the bucket by
+-- back. It is also no longer referenced, and can be removed from the bucket by
 -- hand once they are satisfied they do not want it.
 DROP TABLE IF EXISTS server_backup_logs;
 DROP TABLE IF EXISTS server_backups;
@@ -126,7 +126,7 @@ DROP TABLE IF EXISTS server_backups;
 --
 -- `useTls` defaults to true so an upgrade never quietly starts sending bucket
 -- credentials in the clear. Operators pointing at a self-hosted Garage or MinIO on
--- a LAN — which usually has no certificate — turn it off deliberately in the UI.
+-- a LAN, which usually has no certificate, turn it off deliberately in the UI.
 --
 -- The old calendar retention (`keepLast`/`keepDaily`/`keepWeekly`/`keepMonthly`) has
 -- no faithful translation into a single count, so it is dropped rather than guessed

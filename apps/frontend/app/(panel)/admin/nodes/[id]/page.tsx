@@ -100,7 +100,7 @@ import { cn } from "@/lib/utils";
  * Node detail page.
  *
  * One aggregated fetch (`adminGetNode`) for the whole page, plus a parallel
- * `adminTestNodeConnection` on mount for live reachability — which also records
+ * `adminTestNodeConnection` on mount for live reachability, which also records
  * a heartbeat, so simply opening the node keeps its online status fresh. The
  * read endpoint works without the agent being reachable: capacity, servers and
  * ports still render; only the live usage sample and the reachability badge
@@ -341,8 +341,8 @@ function NodeDetailBody({
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
           <div className="flex flex-col gap-1">
             <span className="font-medium text-destructive">
-              This node&apos;s agent cannot reach Docker — every container action will
-              fail.
+              This node&apos;s agent cannot reach Docker, so every container
+              action will fail.
             </span>
             <span className="text-muted-foreground">
               {health.dockerSocket.error ??
@@ -354,7 +354,7 @@ function NodeDetailBody({
 
       {/* A reachable agent that cannot write its data root will refuse every
         provision, so it gets its own callout rather than a footnote on the
-        status line above — the message carries the command that fixes it. */}
+        status line above. The message carries the command that fixes it. */}
       {health?.reachable && health.dataRoot && !health.dataRoot.writable && (
         <div
           role="alert"
@@ -363,7 +363,7 @@ function NodeDetailBody({
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
           <div className="flex flex-col gap-1">
             <span className="font-medium text-destructive">
-              This node cannot store server data — provisioning will fail.
+              This node cannot store server data, so provisioning will fail.
             </span>
             <span className="text-muted-foreground">
               {health.dataRoot.error ??
@@ -790,8 +790,8 @@ function NodeHeader({
                   Allow overcommit
                 </FieldLabel>
                 <FieldDescription>
-                  Ignore the reservation and allocate against the full total —
-                  for nodes that intentionally oversubscribe.
+                  Ignore the reservation and allocate against the full total.
+                  For nodes that intentionally oversubscribe.
                 </FieldDescription>
               </Field>
             </FieldGroup>
@@ -823,11 +823,11 @@ function NodeHeader({
  * A single capacity stat card.
  *
  * Shows the node's total for a resource, what is *allocated* (the sum of server
- * limits — committed by the scheduler), what is *live in use* right now (from
+ * limits, committed by the scheduler), what is *live in use* right now (from
  * docker stats samples), and what is free. The bar fills to the allocated
  * fraction of the total; the live-used fraction is annotated beneath so an
- * admin can see overcommit (allocated can exceed live usage by design — limits
- * are ceilings, not reservations).
+ * admin can see overcommit (allocated can exceed live usage by design, since
+ * limits are ceilings, not reservations).
  */
 function CapacityCard({
   label,
@@ -995,8 +995,8 @@ function CapacityCards({ detail }: { detail: NodeDetail }) {
         ) : (
           <>
             <span className="tabular-nums">{totalServers}</span> server
-            {totalServers === 1 ? "" : "s"} on this node. No live usage samples —
-            the node may be unreachable or no servers are running.
+            {totalServers === 1 ? "" : "s"} on this node. No live usage samples.
+            The node may be unreachable, or no servers are running.
           </>
         )}
       </p>
@@ -1008,7 +1008,7 @@ function CapacityCards({ detail }: { detail: NodeDetail }) {
           <TriangleAlert className="size-3.5 shrink-0 text-amber-500" />
           {node.allowOvercommit ? (
             <span>
-              Overcommit is on — the scheduler allocates against the full totals
+              Overcommit is on. The scheduler allocates against the full totals
               and ignores the reservation below.
             </span>
           ) : (
@@ -1205,15 +1205,15 @@ function ServersCard({
                     <TableCell className="text-right tabular-nums">
                       {server.cpuPercent !== null
                         ? `${Math.round(server.cpuPercent)}%`
-                        : "—"}
+                        : "Unknown"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {server.memoryUsageMb !== null
                         ? formatMb(server.memoryUsageMb)
-                        : "—"}
+                        : "Unknown"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {primary ? primary.port : "—"}
+                      {primary ? primary.port : "None"}
                     </TableCell>
                     <TableCell>
                       <Button
@@ -1245,7 +1245,7 @@ function ServersCard({
  * (see the backend `allocateHostPort`). Distinct from {@link PortsCard}, which
  * shows ports already bound to servers. Adding an entry parses the spec
  * client-side for immediate feedback, then asks the backend to verify every
- * port is free on the host — a 409 surfaces the offending ports inline.
+ * port is free on the host. A 409 surfaces the offending ports inline.
  */
 function PortPoolCard({
   nodeId,
@@ -1269,8 +1269,8 @@ function PortPoolCard({
   const [deleting, setDeleting] = React.useState(false);
   const [deleteError, setDeleteError] = React.useState<string | null>(null);
 
-  // Live validation hint, derived purely from `spec` — no effect needed, so it
-  // does not trip the set-state-in-effect rule. Recomputed each render.
+  // Live validation hint, derived purely from `spec`, so no effect is needed
+  // and it does not trip the set-state-in-effect rule. Recomputed each render.
   const hint = React.useMemo(() => {
     const trimmed = spec.trim();
     if (trimmed.length === 0) return null;
@@ -1373,7 +1373,7 @@ function PortPoolCard({
         {entries.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             No ports reserved. This node cannot host servers until at least one
-            entry is added — there is no default range.
+            entry is added. There is no default range.
           </p>
         ) : (
           <div className="grid gap-2">
@@ -1430,7 +1430,7 @@ function PortPoolCard({
             <p className="text-sm text-amber-600 dark:text-amber-400">
               {pendingDelete.ports.filter((p) => allocatedHostPorts.has(p)).length} of
               these ports are currently allocated to running servers. Those
-              servers keep their bindings — only future allocations are affected.
+              servers keep their bindings. Only future allocations are affected.
             </p>
           ) : (
             <p className="text-sm text-muted-foreground">

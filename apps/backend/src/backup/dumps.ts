@@ -23,7 +23,7 @@
  * and never enter the agent's memory.
  *
  * **One file per database, not `--all-databases`.** A single stream would also
- * capture `mysql.user` — every tenant's password hash — and would make a
+ * capture `mysql.user`, every tenant's password hash, and would make a
  * per-database restore impossible. The panel is already the source of truth for
  * database credentials (it stores them encrypted and can re-provision the user
  * and its grants), so the dumps only need to carry *data*.
@@ -52,8 +52,8 @@ const DUMP_TIMEOUT_MS = 60 * 60_000;
 /**
  * Where a node's database dumps are staged.
  *
- * Under `config.backupStagingRoot`, which is a sibling of the server data root —
- * a dump inside a server's own data directory would be readable through the file
+ * Under `config.backupStagingRoot`, which is a sibling of the server data root.
+ * A dump inside a server's own data directory would be readable through the file
  * manager and over SFTP by anyone with the `files` permission, which is not the
  * same set of people as those with `database`. Here it is worse still: this is
  * *every* tenant's data, so it must not be under any one server's tree.
@@ -73,7 +73,7 @@ export async function resetNodeStagingDir(): Promise<string> {
   const path = nodeStagingPath();
   await rm(path, { recursive: true, force: true });
   const dir = await ensureDirectory(path, "the database backup staging directory");
-  // The dump/restic containers run as image root — in-namespace uid 0 on a
+  // The dump/restic containers run as image root, in-namespace uid 0 on a
   // userns-remapped node, which is unmapped against an agent-owned directory
   // and could not write a single dump. Hand the staging tree to that uid
   // (a no-op when remapping is off). See docker/userns.ts.
@@ -107,7 +107,7 @@ export async function clearNodeStagingDir(): Promise<void> {
  * pinning a version here: whatever engine is serving the data ships a
  * `mariadb-dump` that can read it, and a mismatched client is a class of dump
  * corruption that only shows up at restore time. A missing container fails
- * loudly — a silent fallback to some other MariaDB version is the thing being
+ * loudly. A silent fallback to some other MariaDB version is the thing being
  * avoided.
  */
 async function resolveDbClientImage(): Promise<string> {
@@ -151,7 +151,7 @@ export interface DumpResult {
  *
  * A database that cannot be dumped does **not** fail the whole run. On a node
  * with fifty databases, one that was dropped out from under us (or is corrupt)
- * must not cost the other forty-nine their backup — the failure is reported and
+ * must not cost the other forty-nine their backup. The failure is reported and
  * the sweep continues.
  */
 export async function dumpNodeDatabases(
@@ -230,15 +230,15 @@ export async function dumpNodeDatabases(
  *
  * `CREATE DATABASE IF NOT EXISTS` runs first, because the reason to restore a
  * node's databases is usually that they are gone. The panel re-provisions the
- * scoped *users* and their grants separately from its own encrypted records —
+ * scoped *users* and their grants separately from its own encrypted records,
  * which is why the dumps only need to carry data.
  *
  * As with dumping, one database's failure does not abort the rest: a restore that
  * recovers forty-nine of fifty databases and says which one it could not is far
  * more useful than one that stops at the first problem.
  *
- * An import is not transactional — `mariadb-dump` output contains its own
- * `DROP`/`CREATE TABLE` DDL, which MariaDB cannot roll back — so a failure
+ * An import is not transactional. `mariadb-dump` output contains its own
+ * `DROP`/`CREATE TABLE` DDL, which MariaDB cannot roll back, so a failure
  * leaves that one database partially restored. That is reported, not hidden.
  */
 export async function importNodeDatabases(
@@ -260,7 +260,7 @@ export async function importNodeDatabases(
     const fileName = dumpFileName(name);
     if (!(await Bun.file(join(staging, fileName)).exists())) {
       onLog(
-        `No dump for ${name} in this snapshot — it was created after the backup ` +
+        `No dump for ${name} in this snapshot. It was created after the backup ` +
           `was taken. Leaving it untouched.`,
         "warn",
       );

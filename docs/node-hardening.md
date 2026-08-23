@@ -16,7 +16,7 @@ file APIs these guards sit under).
 
 The isolation boundary is **"a tenant cannot attack the panel or another
 tenant"**, not "a tenant cannot reach the internet". Outbound HTTPS is left
-intact on purpose — plugins and mods fetch from Modrinth/CurseForge/Maven at
+intact on purpose. Plugins and mods fetch from Modrinth/CurseForge/Maven at
 runtime, and breaking that breaks normal use (`hardening.ts` top comment).
 
 What we defend against is therefore lateral movement and host takeover from
@@ -57,7 +57,7 @@ single kernel-level container escape is instant host root. `dockerd`'s
 `userns-remap` shifts container uids into an unprivileged subordinate range:
 container uid *N* becomes host uid *base + N*, and an escape lands in an
 otherwise-unused host account. This is most of what a sandbox runtime buys, at
-none of the syscall cost — enable it before reaching for gVisor.
+none of the syscall cost. Enable it before reaching for gVisor.
 
 **Enable it on the node** (`/etc/docker/daemon.json`, then restart dockerd):
 
@@ -68,7 +68,7 @@ none of the syscall cost — enable it before reaching for gVisor.
 Docker creates a `dockremap` user, allocates it a range in `/etc/subuid` and
 `/etc/subgid` (e.g. `dockremap:231072:65536`), and stores remapped containers
 under `/var/lib/docker/<base>.<base>/`. Enabling it **recreates the container
-store** — existing containers vanish and the panel rebuilds each on next start,
+store**. Existing containers vanish and the panel rebuilds each on next start,
 which is also when their data directories get re-owned into the new range.
 
 **The agent handles the bookkeeping** (`apps/backend/src/docker/userns.ts`).
@@ -84,7 +84,7 @@ container sees, the agent:
   boot.
 - owns server data as `offset + 1000` (the canonical `CONTAINER_DATA_UID`, the
   uid every shipped blueprint already pins), and re-owns a directory only when
-  it finds a mismatch — steady state is one `stat`, not a walk.
+  it finds a mismatch. Steady state is one `stat`, not a walk.
 - re-owns every file it writes on the tenant's behalf (editor save, upload,
   `pull-from-url`, SFTP write, rename/copy destinations) to that same owner, so
   the game can read and modify what the panel created. Backup/restic staging is
@@ -109,7 +109,7 @@ container sees, the agent:
 
 For a node that hosts genuinely untrusted tenants and will accept a
 syscall-performance cost, set `CONTAINER_RUNTIME` on the agent to a runtime
-installed on that host — `runsc` (gVisor) or `kata-runtime`. It is threaded
+installed on that host: `runsc` (gVisor) or `kata-runtime`. It is threaded
 into `HostConfig.Runtime` for both tenant containers and the backup tool
 containers (which parse untrusted tenant data), and defaults to unset =
 `runc`.
@@ -121,14 +121,14 @@ so a typo is one log line rather than a failed create on every provision.
 
 This is deliberately **not** the default. gVisor's gofer path taxes exactly the
 file-heavy chunk I/O a Minecraft world does most, its netstack adds UDP
-latency, and some native modpacks hit unimplemented syscalls and break — a
-support cost, not a security win. Reach for it only after remapping, and only
-for tenants you actually distrust.
+latency, and some native modpacks hit unimplemented syscalls and break. That
+is a support cost, not a security win. Reach for it only after remapping, and
+only for tenants you actually distrust.
 
 ## Host firewall: block container → host services
 
 Outbound NAT is intact, which means a container can reach the **host's own IP**
-and anything else on the node's LAN — including services bound to `0.0.0.0` on
+and anything else on the node's LAN, including services bound to `0.0.0.0` on
 the host: the agent (`:8081`, whose token is root-equivalent), the SFTP port,
 SSH, a database, another node. The per-server bridge stops container↔container;
 it does not stop container→host-network.
@@ -157,14 +157,14 @@ request directly, which the agent never sees.
 - **`node_db_net` has ICC on.** It must, so a server can reach the shared
   MariaDB. But two servers that *both* have a provisioned database sit on that
   bridge together with ICC enabled, so one could reach the other's game port
-  directly — the per-server isolation network does not cover this path.
+  directly, and the per-server isolation network does not cover this path.
   Cross-tenant *database* access is still blocked by MariaDB's per-database user
   grants (`docs/database-explorer.md`); cross-tenant *network* reachability on
   this one bridge is the accepted gap. A node that needs it closed should run
   the DB tenants under an L3-filtered network policy or give MariaDB a
   per-server network fan-out.
 - **No per-container disk quota.** The memory/CPU/PID caps have no disk
-  equivalent — a server can fill `SERVER_DATA_ROOT` and starve its neighbours.
+  equivalent, so a server can fill `SERVER_DATA_ROOT` and starve its neighbours.
   Core dumps and logs are capped (above), but the game's own writes are not.
   Mitigate at the host: put `SERVER_DATA_ROOT` on its own filesystem/mount, or
   enable XFS project quotas per server directory. Tracked as future work; the

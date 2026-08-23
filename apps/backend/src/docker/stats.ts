@@ -87,7 +87,7 @@ export function readCpuCounters(raw: RawDockerStats): CpuCounters {
 /**
  * Convert two readings of Docker's cumulative CPU counters into a percentage.
  *
- * CPU usage is a rate, so it only exists between two readings — Docker reports
+ * CPU usage is a rate, so it only exists between two readings. Docker reports
  * counters, not a percentage. Returns 0 when the pair cannot yield one: no time
  * passed on the host clock, or the container's counter went *backwards*, which
  * means it restarted and the two readings belong to different processes.
@@ -188,16 +188,16 @@ export function normalizeStats(
  *
  * This map is what lets a stats sample be cheap. `stats?stream=false` looks like
  * a one-shot call but is not: the daemon takes a reading, waits out its own
- * collection interval, takes a second, and only then answers — **one to two
- * seconds**, every time. The panel polls stats per open server page and sweeps
- * every server for the admin list, so that delay was the single largest source
- * of latency in the product.
+ * collection interval, takes a second, and only then answers, taking **one to
+ * two seconds** every time. The panel polls stats per open server page and
+ * sweeps every server for the admin list, so that delay was the single largest
+ * source of latency in the product.
  *
  * `one-shot=true` returns immediately (~5ms) but zeroes `precpu_stats`, so the
  * daemon-supplied delta is gone. Keeping the previous reading here restores it:
  * we difference against our own last sample instead of against one Docker
  * blocked a request to collect. The pairing is strictly better for a poller,
- * too — the percentage covers the interval between polls rather than an
+ * too, because the percentage covers the interval between polls rather than an
  * arbitrary one-second window inside the request.
  */
 interface CpuBaseline extends CpuCounters {
@@ -213,7 +213,7 @@ const cpuBaselines = new Map<string, CpuBaseline>();
  * How far apart two readings must be for their delta to mean anything.
  *
  * Below this, the host's CPU counter has barely advanced and the quotient is
- * mostly quantisation noise — so a baseline younger than this is kept and its
+ * mostly quantisation noise, so a baseline younger than this is kept and its
  * percentage reused, rather than replaced with a number derived from a few
  * milliseconds. This is what makes two viewers polling the same server (or the
  * admin sweep landing on top of a page poll) cheap instead of destructive.
@@ -239,7 +239,7 @@ function evictStaleBaselines(now: number): void {
   }
 }
 
-/** Drop a container's CPU baseline — it is gone, or about to be replaced. */
+/** Drop a container's CPU baseline. It is gone, or about to be replaced. */
 export function forgetCpuBaseline(containerId: string): void {
   cpuBaselines.delete(containerId);
 }

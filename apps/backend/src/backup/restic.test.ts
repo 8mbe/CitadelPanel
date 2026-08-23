@@ -54,7 +54,7 @@ describe("repositoryUrl", () => {
 
   test("keeps the two scopes apart even for the same id", () => {
     // Both ids are UUIDs, so without the scope segment a server and a node could
-    // collide on one repository — and a server backup would overwrite a node's
+    // collide on one repository, and a server backup would overwrite a node's
     // database snapshots.
     expect(repositoryUrl(s3, "server", SERVER)).not.toBe(
       repositoryUrl(s3, "node", SERVER),

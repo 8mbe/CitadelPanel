@@ -39,8 +39,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 /**
- * The site theme editor — the third theme in the switcher, next to light and
- * dark. See `docs/theming.md`.
+ * The site theme editor. This is the third theme in the switcher, next to
+ * light and dark. See `docs/theming.md`.
  *
  * Two things shape this form:
  *
@@ -233,9 +233,9 @@ export function ThemeCard({
           </div>
           <p className="text-sm text-muted-foreground">
             Blank follows the base palette. Type a hex value or an{" "}
-            <code>oklch()</code> triple, or use the swatch — everything is stored
-            as <code>oklch</code>, which is what the rest of the design tokens
-            use.
+            <code>oklch()</code> triple, or use the swatch. Everything is
+            stored as <code>oklch</code>, which is what the rest of the design
+            tokens use.
           </p>
 
           {SITE_THEME_GROUPS.map((group) => (
@@ -293,10 +293,10 @@ export function ThemeCard({
  * browser targets, so the inherited values arrive in a syntax `parseColor`
  * deliberately refuses. Rather than teach the parser every colour space a build
  * step might emit, hand the string to the one component that already knows all
- * of them — a canvas context — and take the sRGB it resolves to.
+ * of them, a canvas context, and take the sRGB it resolves to.
  *
  * The answer is read back as pixels rather than from `fillStyle`, because the
- * getter round-trips a wide-gamut colour in its own space — ask it about a
+ * getter round-trips a wide-gamut colour in its own space. Ask it about a
  * `lab()` and it says `lab()` again. Painting one pixel forces the conversion
  * into the canvas's sRGB backing store, which is the same gamut
  * `<input type="color">` is limited to anyway.

@@ -3,8 +3,8 @@
 @import "shadcn/tailwind.css";
 
 /* The panel has three themes: light, dark, and the operator's own (see
-   docs/theming.md). The site theme carries its base in its class name —
-   `.site-dark` is matched by `dark:` exactly like `.dark` is — because half the
+   docs/theming.md). The site theme carries its base in its class name, so
+   `.site-dark` is matched by `dark:` exactly like `.dark` is. Half the
    component library reaches for `dark:` utilities, and a dark-based site theme
    that did not match them would render light text on light chrome. */
 @custom-variant dark (&:is(.dark *, .site-dark *));
@@ -87,7 +87,7 @@
   --radius: 0.625rem;
   /* Syntax colors for the code editor (docs/file-editor.md). Warm hues tuned to
      the stone/red palette. Monaco cannot read a var(), so these are resolved to
-     literals in code-editor-theme.ts — they stay declared here so the editor's
+     literals in code-editor-theme.ts. They stay declared here so the editor's
      palette lives with every other color and a site theme can override it. */
   --syntax-keyword: oklch(0.514 0.18 16.935);
   --syntax-string: oklch(0.47 0.09 150);

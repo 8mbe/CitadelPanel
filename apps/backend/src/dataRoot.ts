@@ -3,7 +3,7 @@
  *
  * Every directory the agent creates lives under `config.serverDataRoot` and is
  * created as the agent's own user. When that root is missing, owned by another
- * user, or on a read-only mount, *every* provision fails at `mkdir` — and the
+ * user, or on a read-only mount, *every* provision fails at `mkdir`. The
  * original symptom was an unhandled `EACCES` that reached the panel as a bare
  * "Internal agent error", which tells the admin nothing about the actual fix.
  *
@@ -150,7 +150,7 @@ export async function ensureServerDataDir(serverId: string): Promise<string> {
   // Healed here rather than only chowned at first create because this runs on
   // every provision, install and rebuild: a node that turns remapping on gets
   // its pre-existing trees migrated the first time each container is rebuilt
-  // (which enabling remap forces anyway — the daemon starts with a fresh
+  // (which enabling remap forces anyway, since the daemon starts with a fresh
   // container store). Recursive only on mismatch, so the steady state is one
   // stat per call, not a walk of a fifty-gigabyte world.
   const offsets = await usernsOffsets(docker);
@@ -171,19 +171,19 @@ export async function ensureServerDataDir(serverId: string): Promise<string> {
  * (Docker's `--user`, so **container-side** ids).
  *
  * A container the agent creates has `CapDrop: ALL`, which takes
- * `CAP_DAC_OVERRIDE` with it — so uid 0 inside that container is *not* the root
+ * `CAP_DAC_OVERRIDE` with it, so uid 0 inside that container is *not* the root
  * that ignores permission bits. Against a data directory the agent created as
  * itself (uid 1000, mode 0755) a nominally-root container gets plain "other"
  * access, and the first write into `/server` fails with EACCES.
  *
  * Hence: don't guess a uid, read the one that actually owns the bytes. The panel
- * cannot supply this — the owner is whatever uid the node's agent runs as, which
- * is a per-node fact — and hardcoding 1000 would break the equally common
+ * cannot supply this. The owner is whatever uid the node's agent runs as, which
+ * is a per-node fact, and hardcoding 1000 would break the equally common
  * root-owned root. It is the same reasoning as a blueprint's `run_as`, applied
  * to the container the blueprint doesn't get to configure.
  *
  * Under userns-remap the stat reports the *host-side* owner, which is shifted
- * relative to what Docker's `User` means — so the owner is translated back
+ * relative to what Docker's `User` means, so the owner is translated back
  * through the effective offset (see `docker/userns.ts`) before it is returned.
  *
  * Falls back to the agent's own uid: it created the directory, so on the odd
@@ -203,7 +203,7 @@ export async function directoryOwner(path: string): Promise<string> {
  * Log the data root's state at boot.
  *
  * Deliberately does not exit on failure. The agent is still useful when the root
- * is broken — health, stats, port probes and existing containers all work — and
+ * is broken. Health, stats, port probes and existing containers all work, and
  * a process that refuses to start reads to the panel as "node unreachable",
  * which is exactly the wrong diagnosis to hand an operator.
  */

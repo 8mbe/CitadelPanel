@@ -7,7 +7,7 @@
  * panel callback (`sftpAuth.ts`) and then chroots the SFTP session to that
  * server's data directory.
  *
- * Containment reuses `paths.ts` — the same boundary the file-manager HTTP routes
+ * Containment reuses `paths.ts`, the same boundary the file-manager HTTP routes
  * use. The SFTP virtual root `/` maps to `serverDataPath(serverId)`; reads
  * resolve through `resolveExistingServerPath` and writes/creates through
  * `resolveWritableServerPath`, so `..` traversal and symlink escapes (including
@@ -16,7 +16,7 @@
  *
  * The agent stays stateless about users: it holds open file handles for the
  * duration of an SFTP session (ssh2 requires it) but validates the credential
- * fresh on every SSH connection — no session table, no cached auth.
+ * fresh on every SSH connection. No session table, no cached auth.
  */
 
 import {
@@ -61,7 +61,7 @@ const STATUS = {
  * The key is reused across restarts so clients see a stable fingerprint. RSA
  * rather than ed25519 because ssh2's server host-key loading is broadest there
  * (and OpenSSH clients accept it universally). The key file is created with
- * 0600 perms — it is a private key.
+ * 0600 perms, because it is a private key.
  */
 async function ensureHostKey(): Promise<Buffer> {
   const path = config.sftpHostKeyPath;
@@ -122,8 +122,8 @@ interface SessionState {
 /**
  * Build the ssh2 server. Returned to `server.ts` to be `listen()`ed.
  *
- * The server is constructed with the host key already loaded (synchronously, so
- * `listen` can be called immediately after) — `ensureHostKey` runs first.
+ * `ensureHostKey` runs first, so the server is constructed with the host key
+ * already loaded and `listen` can be called synchronously right after.
  */
 export async function createSftpServer(): Promise<Server> {
   const hostKey = await ensureHostKey();
@@ -137,8 +137,8 @@ export async function createSftpServer(): Promise<Server> {
     } satisfies SessionState;
 
     client.on("authentication", async (ctx) => {
-      // Only password auth is supported — publickey/keyboard-interactive would
-      // require shipping a key to the user, which defeats the "generate a
+      // Only password auth is supported. Publickey and keyboard-interactive
+      // would require shipping a key to the user, which defeats the "generate a
       // password in the panel" UX.
       if (ctx.method !== "password") {
         ctx.reject(["password"]);
@@ -151,9 +151,10 @@ export async function createSftpServer(): Promise<Server> {
         state.userId = result.userId;
         ctx.accept();
       } catch {
-        // Any rejection — bad password, unknown user, no access, panel down —
-        // is a generic auth failure to the client. We do not distinguish, so an
-        // attacker cannot enumerate valid usernames from the error.
+        // Any rejection is a generic auth failure to the client, whether it
+        // was a bad password, an unknown user, no access, or the panel being
+        // down. We do not distinguish, so an attacker cannot enumerate valid
+        // usernames from the error.
         ctx.reject(["password"]);
       }
     });
@@ -175,7 +176,7 @@ export async function createSftpServer(): Promise<Server> {
     });
 
     client.on("close", () => {
-      // The connection is gone. Close any file handles the client left open —
+      // The connection is gone. Close any file handles the client left open.
       // ssh2 does not synthesize CLOSE events for a dropped connection, so
       // without this a client that disconnects mid-transfer would leak one fd
       // per open file. Directory handles need no cleanup (they're just arrays).
@@ -216,9 +217,9 @@ async function resolveExisting(state: SessionState, clientPath: string): Promise
  *
  * The lexical {@link resolveSafe} is not enough for these: the game can plant
  * `ln -s /etc plugins` inside its own data dir, and a later create of
- * `plugins/x` would follow the symlinked parent and land outside the boundary
- * — as this process, whose access on the node is root-equivalent. Same
- * reasoning (and same resolver) as `writeFile` in `files.ts`.
+ * `plugins/x` would follow the symlinked parent and land outside the boundary,
+ * as this process, whose access on the node is root-equivalent. Same reasoning
+ * (and same resolver) as `writeFile` in `files.ts`.
  */
 async function resolveWritable(state: SessionState, clientPath: string): Promise<string> {
   requireServerId(state.serverId);
@@ -245,7 +246,7 @@ function toAttrs(info: Stats): Attributes {
 /** Build an `ls -l`-style longname for a READDIR entry. Best-effort, not parsed by clients. */
 function longname(name: string, info: Stats): string {
   const type = info.isDirectory() ? "d" : info.isSymbolicLink() ? "l" : "-";
-  // Octal perms are fine here — this string is display-only, never parsed.
+  // Octal perms are fine here. This string is display-only, never parsed.
   const perms = (info.mode & 0o777).toString(8).padStart(3, "0");
   return `${type}${perms} ${info.size} ${name}`;
 }
@@ -486,7 +487,7 @@ function wireSftpEvents(sftp: SFTPWrapper, state: SessionState): void {
     }
     if (h.cursor >= h.entries.length) {
       // A second READDIR after the stream is exhausted is how the client
-      // learns the listing is done — respond with EOF.
+      // learns the listing is done, so respond with EOF.
       sftp.status(reqId, STATUS.EOF);
       return;
     }
@@ -505,7 +506,7 @@ function wireSftpEvents(sftp: SFTPWrapper, state: SessionState): void {
       sftp.status(reqId, STATUS.PERMISSION_DENIED);
       return;
     }
-    // Refuse to delete the data root itself — same guard as files.ts.
+    // Refuse to delete the data root itself, same guard as files.ts.
     if (hostPath === serverDataPath(state.serverId)) {
       sftp.status(reqId, STATUS.PERMISSION_DENIED);
       return;
@@ -580,7 +581,7 @@ function wireSftpEvents(sftp: SFTPWrapper, state: SessionState): void {
       sftp.status(reqId, STATUS.PERMISSION_DENIED);
       return;
     }
-    // Moving into self/descendant — same guard as files.ts.
+    // Moving into self/descendant, same guard as files.ts.
     if (to === from || to.startsWith(from + "/")) {
       sftp.status(reqId, STATUS.FAILURE);
       return;
@@ -636,7 +637,7 @@ function wireSftpEvents(sftp: SFTPWrapper, state: SessionState): void {
 
   sftp.on("SYMLINK", async (reqId, targetPath, linkPath) => {
     // linkPath is the symlink to create; targetPath is what it points at.
-    // Both must resolve inside the data dir — a symlink pointing outside would
+    // Both must resolve inside the data dir. A symlink pointing outside would
     // be caught on read by resolveExistingServerPath, but we block at create
     // time too so a hostile client can't even plant one. The link itself goes
     // through the write-safe resolver so it cannot be *created through* a
@@ -659,7 +660,7 @@ function wireSftpEvents(sftp: SFTPWrapper, state: SessionState): void {
   });
 }
 
-/** `lstat` that doesn't throw on missing path — returns null. */
+/** `lstat` that doesn't throw on missing path. Returns null instead. */
 async function lstatSafe(path: string): Promise<Stats | null> {
   return lstat(path).catch(() => null);
 }

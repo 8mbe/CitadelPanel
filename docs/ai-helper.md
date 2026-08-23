@@ -3,7 +3,7 @@
 A server-side AI assistant that reads a server's recent console output and
 helps the user diagnose what went wrong. The admin configures an
 OpenAI-compatible endpoint once; every server console then gets a helper
-button. When AI is not configured, the button is hidden — users never see a
+button. When AI is not configured, the button is hidden. Users never see a
 feature the operator has not turned on.
 
 ## Admin configuration
@@ -13,24 +13,24 @@ mirroring the captcha/mail pattern: a runtime knob, with the API key
 AES-256-GCM encrypted at rest before it is written (`lib/crypto`). The admin
 settings page (`components/admin/general-settings.tsx`, `AiCard`) exposes:
 
-- **API URL** — the OpenAI-compatible base URL (e.g. `https://api.openai.com/v1`).
+- **API URL** is the OpenAI-compatible base URL (e.g. `https://api.openai.com/v1`).
   The panel appends `/models` and `/chat/completions`.
-- **API key** — write-only, like every secret in the settings table: the form
+- **API key** is write-only, like every secret in the settings table: the form
   never round-trips it, and "leave blank to keep unchanged" is the only way to
   keep an already-stored key.
-- **Fetch models** button — calls the provider's `/models` endpoint with the
+- **Fetch models** button calls the provider's `/models` endpoint with the
   form's current URL+key (or the stored config when a field is blank) and
   populates a select. Lets an operator probe a provider *before* saving it.
-- **Test** button — sends a trivial ping and waits for the reply, so the
+- **Test** button sends a trivial ping and waits for the reply, so the
   operator can confirm the round trip works (URL reachable, key valid, model
   answering) before relying on it.
-- **Enable** switch — gates whether the console helper button is shown at all.
+- **Enable** switch gates whether the console helper button is shown at all.
   `enabled` is reported false unless the config is actually usable (URL + key +
   model all present), so a half-entered provider is never treated as "AI is on".
 
 The fetch-models and test routes (`POST /api/admin/settings/ai/models`,
 `POST /api/admin/settings/ai/test`) accept the form's current values and fall
-back to stored config when a field is omitted — the natural flow is type →
+back to stored config when a field is omitted. The natural flow is type →
 fetch → pick → test → save. The decrypted API key lives only inside the
 request; it is never returned to the browser.
 
@@ -38,7 +38,7 @@ request; it is never returned to the browser.
 
 `POST /api/servers/:id/ai-helper` is the user-facing endpoint. It gates on the
 `console` permission (a subuser with console access can use it). The browser
-sends only `{ message: string }` — the free-text question. **Everything else is
+sends only `{ message: string }`, the free-text question. **Everything else is
 gathered server-side**:
 
 1. The route loads the server row (name, blueprint, node, container).
@@ -48,7 +48,7 @@ gathered server-side**:
 4. It pulls the last ~200 console lines from the node agent's logs endpoint
    (`getServerLogs`), best-effort: a node being unreachable yields an empty tail
    rather than a failed call, because the user is often asking about exactly
-   that — a server that won't start — and the env/blueprint context is still
+   that, a server that won't start, and the env/blueprint context is still
    useful.
 5. The panel composes a system prompt from that context and the user's message,
    and calls the provider's `/chat/completions` endpoint (`services/aiClient.ts`).
@@ -65,7 +65,7 @@ trail) plus the model used.
   posture the database explorer takes with SQL (`docs/database-explorer.md`):
   the browser only supplies the free-text question, and the panel assembles the
   full context. A hostile client cannot redirect the model with injected
-  context (prompt injection is bounded — the user's message is the *only*
+  context (prompt injection is bounded, since the user's message is the *only*
   client-controlled input, appended as a single user turn after a system prompt
   the client never shaped).
 - **The API key never reaches the browser.** It is stored encrypted, decrypted
@@ -97,6 +97,6 @@ trail) plus the model used.
 The console panel fetches `/api/settings/public` once on mount and reads
 `ai.enabled`. That endpoint is already cached server-side (10s TTL) and used by
 the login page for the captcha site key, so it is a cheap, single round-trip
-that does not need a dedicated AI-status route. Only the boolean is exposed —
-no URL, key, or model — so an unauthenticated page can decide whether to show
-the button without leaking configuration.
+that does not need a dedicated AI-status route. Only the boolean is exposed.
+No URL, key, or model goes out, so an unauthenticated page can decide whether
+to show the button without leaking configuration.

@@ -1,7 +1,7 @@
 /**
  * E2E tests for the server plugin/mod routes (see routes/plugins.ts + docs/plugins.md).
  *
- * All of these require the `files` permission — installing, removing, or
+ * All of these require the `files` permission. Installing, removing, or
  * toggling a plugin is a filesystem write, so the same grant that lets a
  * subuser manage files lets them manage plugins. Catalog calls (search,
  * version lists) are proxied through the panel so the browser never learns
@@ -9,8 +9,9 @@
  * the seeded minecraft-java blueprint may or may not declare.
  *
  * The admin key reaches the seeded server's plugin routes; the user key gets
- * 404 (no access — info-leak prevention). Mutations (install/remove/toggle)
- * are gated + validated, not exercised against real plugin state.
+ * 404, since hiding existence prevents an info leak. Mutations
+ * (install/remove/toggle) are gated + validated, not exercised against real
+ * plugin state.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -57,7 +58,7 @@ describe("GET /api/servers/:id/plugins/search (catalog proxy)", () => {
 describe("GET /api/servers/:id/plugins/versions/:projectId", () => {
   e2e("with an invalid projectId is 400", async () => {
     const { serverId } = await loadFixtures();
-    // The project-id pattern is `/^[A-Za-z0-9_-]{1,64}$/` — a slash is rejected.
+    // The project-id pattern is `/^[A-Za-z0-9_-]{1,64}$/`, so a slash is rejected.
     const res = await api(`/api/servers/${serverId}/plugins/versions/bad%2Fid`, { key: config.adminKey });
     expect(res.status).toBe(400);
   });

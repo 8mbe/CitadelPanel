@@ -1,7 +1,7 @@
 /**
  * Capacity-aware node scheduler (plan.md section 7).
  *
- * Strategy: most-free-capacity-first bin packing. Simple and predictable — it
+ * Strategy: most-free-capacity-first bin packing. Simple and predictable. It
  * spreads load rather than tightly packing, which suits game servers where a
  * noisy neighbour hurts perceived quality more than node count does.
  *
@@ -53,7 +53,7 @@ export interface NodeFreeCapacity extends NodeCapacity {
  *
  * A reservation is a percentage that must stay FREE for the host: with a 20%
  * reserve only 80% of the total is allocable. `allowOvercommit` bypasses the
- * reserve, restoring the full total — for nodes that intentionally
+ * reserve, restoring the full total. That is for nodes that intentionally
  * oversubscribe where limits are ceilings rather than reservations.
  *
  * Exported so the capacity UI can show the effective allocable total without
@@ -89,7 +89,7 @@ export function withFreeCapacity(capacity: NodeCapacity): NodeFreeCapacity {
     ...capacity,
     // Free headroom floored at 0: a node already over its allocable ceiling
     // (e.g. reserve raised after servers were placed) reports no free space,
-    // so the scheduler won't add to it — but existing servers keep running.
+    // so the scheduler won't add to it, but existing servers keep running.
     cpuFree: Math.max(0, cpuAllocable - capacity.cpuAllocated),
     memoryFreeMb: Math.max(0, memoryAllocable - capacity.memoryAllocatedMb),
     diskFreeMb: Math.max(0, diskAllocable - capacity.diskAllocatedMb),
@@ -207,7 +207,7 @@ export async function loadNodeCapacities(): Promise<NodeCapacity[]> {
  * it was carrying, and the node detail page needs to show that committed load,
  * not pretend the node is empty because it is out of rotation.
  *
- * Returns null only when the node row itself is missing — the route layer 404s
+ * Returns null only when the node row itself is missing. The route layer 404s
  * before that, so callers can treat the result as non-null after that check.
  */
 export async function loadNodeCapacity(
@@ -329,10 +329,10 @@ function shuffled<T>(items: T[]): T[] {
 }
 
 /**
- * Allocate a free host port on a node — a number, claimed on TCP and UDP both.
+ * Allocate a free host port on a node. One number, claimed on TCP and UDP both.
  *
  * Candidate source: the node's reserved port pool (admin-managed). There is no
- * default port range — every published host port is drawn from a pool an admin
+ * default port range. Every published host port is drawn from a pool an admin
  * explicitly reserved, so a node with no pool configured cannot host servers
  * until one is added.
  *
@@ -340,7 +340,7 @@ function shuffled<T>(items: T[]): T[] {
  * provisioning the server. Walking the pool in ascending order made allocation
  * predictable from the outside (the Nth server on a node got the Nth port) and
  * packed every fleet against the bottom of the pool, so a freed port was
- * immediately re-handed to the next server — inheriting whatever scanners and
+ * immediately re-handed to the next server, inheriting whatever scanners and
  * stale client entries the previous tenant had attracted. A random draw does
  * neither.
  *
@@ -352,7 +352,7 @@ function shuffled<T>(items: T[]): T[] {
  * Two freeness checks, layered:
  *   - `server_ports` (the panel's own bindings) filters out what CitadelPanel
  *     has already allocated. The UNIQUE(node_id, host_port) constraint is the
- *     real concurrency safety net — this scan is an optimisation.
+ *     real concurrency safety net. This scan is an optimisation.
  *   - The node agent confirms the number is actually bindable on the host right
  *     now, on both protocols, so a port held by another process or container is
  *     caught before the Docker bind at container-create fails.
@@ -366,7 +366,7 @@ export async function allocateHostPort(
   nodeId: string,
   preferredPort?: number,
 ): Promise<number> {
-  // The pool is the only candidate source — no default range fallback.
+  // The pool is the only candidate source. There is no default range fallback.
   const candidates = await expandNodePortPool(nodeId);
   if (candidates.length === 0) {
     throw conflict(

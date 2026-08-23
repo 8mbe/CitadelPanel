@@ -4,7 +4,7 @@
  * composing the one provider URL that reaches the browser (a project's page).
  *
  * Split from `engine.ts` because none of this touches the network, the panel's
- * env or the database — it is the part of the provider spec's semantics worth
+ * env or the database. It is the part of the provider spec's semantics worth
  * testing directly (`mapping.test.ts`), and the part a wrong cap or a missing
  * `encodeURIComponent` silently breaks.
  */
@@ -54,10 +54,10 @@ export function asStringList(value: unknown, cap: number): string[] {
 }
 
 /**
- * Game-version lists are the one mapped array that must arrive **whole** — no
- * cap at all. Compatibility is decided by `includes(currentVersion)`, and
+ * Game-version lists are the one mapped array that must arrive **whole**, with
+ * no cap at all. Compatibility is decided by `includes(currentVersion)`, and
  * catalogs return these lists oldest-first (Modrinth's search index does), so
- * *any* cap cuts off the newest entries — exactly the ones a current server
+ * *any* cap cuts off the newest entries, exactly the ones a current server
  * runs. A long-lived project easily passes 250 supported versions, and a
  * truncated list made the panel claim "Not for 26.2" about a project whose
  * every recent release supports 26.2. The engine's response size cap is what
@@ -76,8 +76,8 @@ export function asChannel(value: unknown): "release" | "beta" | "alpha" {
 // --- Project page link -----------------------------------------------------------
 
 /**
- * The catalog's human-facing page for a project — the only provider URL that
- * reaches the browser, so the panel composes it rather than letting the UI
+ * The catalog's human-facing page for a project. This is the only provider URL
+ * that reaches the browser, so the panel composes it rather than letting the UI
  * assemble one from spec fields. Undefined when the spec declares no site, and
  * re-validated at compose time (https, not a blocked host) for the same reason
  * the engine re-checks `baseUrl` before every fetch: the spec lives in a

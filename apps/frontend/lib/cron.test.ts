@@ -134,7 +134,7 @@ describe("cronMatches", () => {
   });
 
   test("restricting BOTH day fields is a union, per POSIX crontab", () => {
-    // "0 4 1 * mon" means the 1st, and also every Monday — not their
+    // "0 4 1 * mon" means the 1st, and also every Monday, not their
     // intersection. Getting this backwards would silently skip most runs.
     const cron = parseCron("0 4 1 * mon");
     // 2026-09-01 is a Tuesday: matches on day-of-month alone.

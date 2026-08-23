@@ -89,7 +89,7 @@ function parsePorts(value: unknown): BlueprintPort[] {
       throw badRequest(`"ports[${i}].container" must be a whole number`);
     }
     // No protocol: a published port is claimed on TCP and UDP both, so the
-    // number alone is the declaration — and the number alone must be unique.
+    // number alone is the declaration, and the number alone must be unique.
     const dedupeKey = String(container);
     if (seen.has(dedupeKey)) {
       throw badRequest(`Duplicate port ${dedupeKey}.`);
@@ -194,7 +194,7 @@ function parseBlueprintInput(body: Record<string, unknown>): BlueprintInput {
 
   // The plugins section is pure data but security-relevant (it names the
   // hosts the panel's plugin fetch engine and auto-updater will contact), so
-  // it is validated as strictly as the install script — see plugins.ts.
+  // it is validated as strictly as the install script. See plugins.ts.
   let plugins: BlueprintInput["plugins"] = null;
   if (body.plugins !== undefined && body.plugins !== null) {
     try {
@@ -314,7 +314,7 @@ const FETCH_TIMEOUT_MS = 8_000;
  *
  * Server-side fetch of a blueprint JSON file, so an admin can import from a link
  * without the browser hitting CORS. Returns the parsed object under `file`; the
- * client validates it and opens the create form prefilled for review — it is
+ * client validates it and opens the create form prefilled for review. It is
  * not created here.
  */
 export async function handleAdminImportBlueprintUrl(

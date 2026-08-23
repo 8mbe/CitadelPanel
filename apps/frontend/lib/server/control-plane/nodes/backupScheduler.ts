@@ -2,8 +2,8 @@
  * The backup scheduler: one timer, two jobs.
  *
  *   1. **Reconcile.** Poll every in-flight run's agent job, drain its new log lines
- *      into Postgres, and record its outcome. The agent cannot call in — it has no
- *      panel credential and may be behind NAT — so the panel polls, the same way
+ *      into Postgres, and record its outcome. The agent cannot call in. It has no
+ *      panel credential and may be behind NAT, so the panel polls, the same way
  *      `security/watcher.ts` polls for stats.
  *
  *   2. **Fire.** Evaluate the operator's two cron expressions and start the runs
@@ -12,8 +12,8 @@
  * Reconciliation is what makes the whole feature durable. The agent's job state is
  * in memory; the panel's row is on disk. Every tick moves information from the
  * former to the latter, so the worst an agent restart costs is the progress
- * percentage of one run — and a job that has disappeared becomes a failed run with
- * that stated as the reason, rather than a row stuck at "running" forever.
+ * percentage of one run. A job that has disappeared becomes a failed run with that
+ * stated as the reason, rather than a row stuck at "running" forever.
  *
  * One timer rather than three because they must not race: firing a new backup for a
  * subject whose previous run has not been reconciled yet would start a second restic
@@ -60,7 +60,7 @@ const TICK_MS = 30_000;
  * How long a run may sit with no job id before it is declared failed.
  *
  * A `pending` row with no job id means the panel died between writing the row and
- * calling the agent. Nothing will ever advance it, so it must not stay pending — a
+ * calling the agent. Nothing will ever advance it, so it must not stay pending. A
  * stuck row blocks every later backup of that subject through the already-running
  * check.
  */
@@ -99,7 +99,7 @@ async function reconcileOne(run: ActiveRun): Promise<void> {
     if (age > PENDING_GRACE_MS) {
       await failRun(
         run.id,
-        "The panel never received a job id for this run — it most likely restarted " +
+        "The panel never received a job id for this run. It most likely restarted " +
           "between recording the request and reaching the node. Start a new backup.",
       );
     }
@@ -125,7 +125,7 @@ async function reconcileOne(run: ActiveRun): Promise<void> {
       return;
     }
 
-    // Anything else is a transport problem. Wait it out — a node rebooting does not
+    // Anything else is a transport problem. Wait it out. A node rebooting does not
     // stop the restic container it started.
     if (age > STALE_RUNNING_MS) {
       await failRun(
@@ -178,7 +178,7 @@ async function reconcileOne(run: ActiveRun): Promise<void> {
     await completeRun(run.id, job.result, cursor);
     await markRepositoryInitialized(run.scope, subjectId);
 
-    // Null is "could not measure", which must not be recorded as zero — that would
+    // Null is "could not measure", which must not be recorded as zero. That would
     // understate the fleet's storage, the one number the report exists to get right.
     if (typeof job.result.repoSizeBytes === "number") {
       await recordRepositorySize(run.scope, subjectId, job.result.repoSizeBytes);
@@ -208,7 +208,7 @@ async function reconcileAll(): Promise<number> {
  * Whether a cron expression is due right now, in the panel's timezone.
  *
  * An expression that no longer parses is logged rather than silently never
- * running — the settings form would have caught it, so reaching here means the
+ * running. The settings form would have caught it, so reaching here means the
  * stored value was written by something else.
  */
 async function isDue(schedule: string, label: string, now: Date): Promise<boolean> {
@@ -265,7 +265,7 @@ async function fireServerBackups(minuteStart: Date, concurrency: number): Promis
  * Fire scheduled node database backups.
  *
  * Not throttled by `concurrency`: that setting is about how many *servers* read
- * their disks at once, and there is one database backup per node — a node cannot
+ * their disks at once, and there is one database backup per node. A node cannot
  * contend with itself, and the dumps within one run are already sequential.
  */
 async function fireDatabaseBackups(minuteStart: Date): Promise<number> {
@@ -294,7 +294,7 @@ async function fireScheduled(): Promise<number> {
   if (!isBackupConfigUsable(settings)) return 0;
 
   const now = new Date();
-  // Top of the current minute, in real time — the window a duplicate would fall in.
+  // Top of the current minute in real time, the window a duplicate would fall in.
   const minuteStart = new Date(now.getTime());
   minuteStart.setUTCSeconds(0, 0);
 
@@ -320,7 +320,7 @@ async function fireScheduled(): Promise<number> {
  * scheduler is started once from `instrumentation.ts`, which Next.js runs at boot
  * and never re-runs. When this module is then hot-replaced, a module-level `timer`
  * would be `null` in the new instance while the *old* instance's interval kept
- * firing — still executing the previous version of the code, against whatever
+ * firing, still executing the previous version of the code, against whatever
  * schema and tables that version knew about. The symptom is a tick failing on a
  * table a migration has since renamed, from a stack frame in a file that no longer
  * exists, which is a genuinely baffling thing to debug.
@@ -342,7 +342,7 @@ let tickInFlight = false;
  * Start the scheduler, replacing any interval a previous module instance left
  * running.
  *
- * Overlapping ticks are skipped rather than queued — the same reasoning as the
+ * Overlapping ticks are skipped rather than queued, the same reasoning as the
  * abuse watcher: a slow node would otherwise cause ticks to pile up and hammer
  * every agent. Skipping is safe because nothing here is a deadline; a schedule
  * missed by one tick fires on the next.

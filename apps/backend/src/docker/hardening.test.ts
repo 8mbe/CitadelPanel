@@ -193,7 +193,7 @@ describe("networking", () => {
   test("enables inter-container communication on link networks only", () => {
     // ICC is the entire point of a link: without it, two containers on the
     // pairwise bridge could never reach each other. The isolated config must
-    // never inherit this — that would collapse tenant isolation.
+    // never inherit this. That would collapse tenant isolation.
     expect(buildLinkNetworkConfig("citadel_link_aaa_bbb").Options[
       "com.docker.network.bridge.enable_icc"
     ]).toBe("true");
@@ -251,7 +251,7 @@ describe("link naming", () => {
 
   test("is canonical: the same pair yields one network however it is ordered", () => {
     // The panel stores a link as (server, target) but the network is
-    // bidirectional — if the names differed, A→B and B→A would silently get
+    // bidirectional. If the names differed, A→B and B→A would silently get
     // two networks and unlinking one would tear down the other's.
     expect(linkNetworkName(a, b)).toBe(linkNetworkName(b, a));
   });
@@ -296,7 +296,7 @@ describe("environment and labels", () => {
 describe("console attachment", () => {
   test("keeps stdin open so the console can send commands", () => {
     // Without OpenStdin the container has no stdin to attach to, and the
-    // console silently becomes read-only — you can watch a server but never
+    // console silently becomes read-only. You can watch a server but never
     // type "stop" or "op someone".
     const config = buildHardenedContainerConfig(baseSpec());
 
@@ -314,7 +314,7 @@ describe("console attachment", () => {
 
   test("allocates a TTY when the blueprint opts in", () => {
     // A TTY container merges stdout/stderr into a raw stream that carries the
-    // server's own ANSI color codes — needed for software like JLine3 that
+    // server's own ANSI color codes, needed for software like JLine3 that
     // only emits color to a terminal. The attach layer detects this and reads
     // the stream without 8-byte framing.
     const config = buildHardenedContainerConfig(baseSpec({ tty: true }));

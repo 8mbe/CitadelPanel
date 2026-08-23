@@ -11,10 +11,10 @@
  * `023_ports_dual_protocol.sql` for why that question was always the wrong one).
  *
  * Adding an entry verifies, through the node's agent, that every port is
- * actually free on the host — on *both* protocols, not just in the panel's
- * `server_ports` table — so a port held by another process is caught before it
- * is reserved. Overlaps between entries are rejected at add time so the pool
- * stays a clean disjoint set.
+ * actually free on the host, on *both* protocols. Checking the panel's
+ * `server_ports` table alone would miss a port held by another process, so that
+ * is caught before the port is reserved. Overlaps between entries are rejected
+ * at add time so the pool stays a clean disjoint set.
  */
 
 import { sql } from "../db/client";
@@ -95,7 +95,7 @@ export interface AddPortPoolInput {
  * the admin can act on it without inspecting a structured `details` blob.
  *
  * The host check makes this call depend on the agent being reachable; an
- * unreachable node returns a 502, which is correct — unverifiable ports are not
+ * unreachable node returns a 502, which is correct. Unverifiable ports are not
  * reserved.
  */
 export async function addPortPoolEntry(
@@ -124,7 +124,7 @@ export async function addPortPoolEntry(
   }
 
   // Verify every port is actually free on the host through the agent. A number
-  // held on either protocol is not reservable — the claim is indivisible.
+  // held on either protocol is not reservable, because the claim is indivisible.
   const results = await checkPortNumbersFree(input.nodeId, ports);
   const taken = results
     .filter((result) => !result.free)

@@ -19,7 +19,7 @@ export const minecraftBedrock: Blueprint = {
 
   // Identity port mapping: the image is told to bind the allocated port inside
   // the container (it rewrites server.properties' server-port from this env,
-  // overriding manual edits — by design of the image).
+  // overriding manual edits, by design of the image).
   primaryPortEnv: "SERVER_PORT",
 
   envSchema: {
@@ -92,7 +92,7 @@ export const minecraftBedrock: Blueprint = {
   expectedResourceProfile: "bursty",
 
   // Run as the data directory's owner (uid 1000) so the image needs no
-  // setuid/chown capabilities — see SKIP_SUDO/SKIP_CHOWN_DATA above.
+  // setuid/chown capabilities. See SKIP_SUDO/SKIP_CHOWN_DATA above.
   user: "1000:1000",
 
   dataPath: "/data",

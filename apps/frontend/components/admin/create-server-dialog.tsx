@@ -39,7 +39,7 @@ import { formatMb } from "@/lib/format";
 import type { BlueprintView, NodeView } from "@/lib/types";
 
 /**
- * Admin-only provisioning dialog. Ordinary users never see this control — a
+ * Admin-only provisioning dialog. Ordinary users never see this control. A
  * fresh account simply has no servers until an admin creates one for it.
  *
  * Game blueprints and nodes are loaded from the backend when the dialog opens;
@@ -164,7 +164,7 @@ export function CreateServerDialog({
           <DialogTitle>Provision a server</DialogTitle>
           <DialogDescription>
             Create a game server on behalf of a user. The server is created
-            right away and then installs on its node in the background — open it
+            right away and then installs on its node in the background. Open it
             to follow the install log. The owner sees an &quot;installing&quot;
             notice until it is ready to start.
           </DialogDescription>

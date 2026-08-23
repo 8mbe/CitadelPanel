@@ -11,7 +11,7 @@ export const metadata: Metadata = { title: "Page not found" };
  * The 404 page, for both an unmatched URL and an explicit `notFound()` call.
  *
  * It sends the visitor to `/`, not to `/login`, on purpose: `/` already resolves
- * correctly for either audience — a signed-in user lands on their servers, and
+ * correctly for either audience. A signed-in user lands on their servers, and
  * everyone else is redirected to sign in by the panel layout. Linking straight
  * to `/login` would bounce a signed-in user through a redirect for no reason.
  */

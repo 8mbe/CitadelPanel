@@ -25,7 +25,7 @@ const RECONNECT_MS = 3_000;
 /**
  * Live console.
  *
- * Opens a direct WebSocket to the node agent — the panel mints a short-lived,
+ * Opens a direct WebSocket to the node agent. The panel mints a short-lived,
  * single-use capability token (`POST /api/servers/:id/console/session`) and
  * hands back a `wss://` URL the browser connects to. The panel is then out of
  * the data path: output and input both flow over the one socket. The agent
@@ -34,7 +34,7 @@ const RECONNECT_MS = 3_000;
  * transits the panel.
  *
  * On open the agent replays the last {@link MAX_LINES} lines as `output` frames
- * before signaling `ready`, so no separate backlog fetch is needed — and
+ * before signaling `ready`, so no separate backlog fetch is needed, and
  * reloading the page shows the same recent tail rather than an ever-growing
  * history. After that backlog, live output accumulates without a cap so a full
  * session stays readable in the view; only the on-open replay is bounded.
@@ -44,7 +44,7 @@ const RECONNECT_MS = 3_000;
  * readable so shutdown output (world-save, crash traces) can be inspected.
  *
  * The panel auto-scrolls to the newest line as output arrives, but stops doing
- * so the moment the user scrolls up to read history — so scrolling up to
+ * so the moment the user scrolls up to read history, so scrolling up to
  * inspect old logs is not yanked away by new output. It resumes when the user
  * scrolls back to the bottom.
  */
@@ -89,7 +89,7 @@ export function ConsolePanel({
 
   // Raw-text accumulator for the current incomplete line. Live output frames
   // arrive on arbitrary byte boundaries (not newline-aligned), and ANSI escape
-  // sequences can be split across frames — so we buffer until a newline arrives
+  // sequences can be split across frames, so we buffer until a newline arrives
   // and parse the whole line as one unit. The remainder (no trailing newline)
   // is shown as a live "pending" line at the bottom and re-parsed as it grows.
   const bufferRef = React.useRef("");
@@ -98,7 +98,7 @@ export function ConsolePanel({
   // without the socket being a render-tracked dependency.
   const wsRef = React.useRef<WebSocket | null>(null);
   // The token for the currently (or soon-to-be) open socket. Tracked so a
-  // genuine page-leave can revoke the exact token — not "all my sessions for
+  // genuine page-leave can revoke the exact token, not "all my sessions for
   // this server", which would clobber another tab's console. Tokens are
   // single-use, so a fresh mint overwrites this and the stale token is dead
   // anyway; revoke only matters for the live one.
@@ -123,7 +123,7 @@ export function ConsolePanel({
   }, [running]);
 
   const append = React.useCallback((text: string) => {
-    // Live output arrives on arbitrary byte boundaries — a single frame can
+    // Live output arrives on arbitrary byte boundaries. A single frame can
     // carry a partial line, several lines, or an ANSI sequence split across a
     // frame edge. Buffer until newlines and parse each complete line as one
     // unit so escapes never break across runs. The trailing partial line is
@@ -132,7 +132,7 @@ export function ConsolePanel({
     bufferRef.current += text;
     const buf = bufferRef.current;
     // Split on true line terminators only: \r\n (Windows) and \n (Unix). A
-    // bare \r (not followed by \n) is NOT a newline — it is a carriage return,
+    // bare \r (not followed by \n) is NOT a newline. It is a carriage return,
     // meaning "move cursor to column 0 so subsequent output overwrites the
     // current line." This is how JLine3's interactive prompt works: it prints
     // a prompt (e.g. ">...."), then when log output arrives it does \r + erase
@@ -140,7 +140,7 @@ export function ConsolePanel({
     // a line break would render the prompt as its own visible line.
     //
     // To emulate the overwrite: within each \n-delimited segment, keep only the
-    // content after the LAST bare \r — the final overwrite wins, which is what
+    // content after the LAST bare \r. The final overwrite wins, which is what
     // a terminal user sees. This also collapses progress-bar refreshes
     // (" 10%\r 20%\r 30%\n") to just the final " 30%".
     const parts = buf.split(/\r\n|\n/);
@@ -159,7 +159,7 @@ export function ConsolePanel({
     // The pending (partial) line: apply the same last-\r overwrite so a prompt
     // fragment followed by \r doesn't linger in the live view. For a TTY
     // container the trailing partial line is JLine3's interactive prompt
-    // (e.g. ">...."), not log content — suppress it entirely.
+    // (e.g. ">...."), not log content, so suppress it entirely.
     if (ttyRef.current) {
       setPendingRuns([]);
     } else {
@@ -202,13 +202,13 @@ export function ConsolePanel({
     // user should be able to read history while the server is offline. When the
     // container exits the agent ends the attach stream and sends `{type:"closed"}`;
     // the socket then closes. Like the old EventSource, we keep retrying on a
-    // backoff — but a retry only actually opens a socket while the server is
+    // backoff, but a retry only actually opens a socket while the server is
     // running, so a stopped server doesn't thrash. This also covers the
     // stopped→start case: the pending retry fires once `running` is true again.
     const connect = async () => {
       if (closed) return;
       if (!runningRef.current) {
-        // Not running yet — re-arm and wait for the server to come up.
+        // Not running yet. Re-arm and wait for the server to come up.
         reconnect = setTimeout(connect, RECONNECT_MS);
         return;
       }
@@ -251,7 +251,7 @@ export function ConsolePanel({
         switch (parsed.type) {
           case "ready":
             // History frames arrive before `ready` (the agent replays them on
-            // open), so the buffer is already populated — just mark connected.
+            // open), so the buffer is already populated. Just mark connected.
             setConnected(true);
             break;
           case "output":
@@ -261,10 +261,10 @@ export function ConsolePanel({
             break;
           case "closed":
             // Container exited. The agent follows this frame with ws.close(),
-            // which fires `onclose` below — that's where the single reconnect is
-            // scheduled. Scheduling here too would double-fire `connect()` and
-            // open two sockets (duplicate history replay, accumulating per
-            // restart), so this case just updates the UI.
+            // which fires `onclose` below, and that is where the single
+            // reconnect is scheduled. Scheduling here too would double-fire
+            // `connect()` and open two sockets (duplicate history replay,
+            // accumulating per restart), so this case just updates the UI.
             setConnected(false);
             break;
           case "error": {
@@ -286,7 +286,7 @@ export function ConsolePanel({
       ws.onclose = () => {
         setConnected(false);
         // The token for this socket is now spent (single-use). Clear it so a
-        // later page-leave revoke doesn't fire against a dead token — the next
+        // later page-leave revoke doesn't fire against a dead token. The next
         // `connect()` mints a fresh one. This is the lag/reconnect path, NOT a
         // leave, so no revoke here.
         tokenRef.current = null;
@@ -375,7 +375,7 @@ export function ConsolePanel({
         {lines.length === 0 ? (
           <div className="flex h-full items-center justify-center text-zinc-500">
             {!running
-              ? "Server is offline — start it to see live console output."
+              ? "Server is offline. Start it to see live console output."
               : connected
                 ? "Waiting for output…"
                 : "Connecting…"}
@@ -384,7 +384,7 @@ export function ConsolePanel({
           <>
             {!running && (
               <div className="mb-2 rounded border border-zinc-800 bg-zinc-900/60 px-2 py-1 text-center text-zinc-500">
-                Server is offline — showing the last console output.
+                Server is offline, showing the last console output.
               </div>
             )}
             {lines.map((line) => (
@@ -400,7 +400,7 @@ export function ConsolePanel({
                 )}
               </div>
             ))}
-            {/* Trailing partial line — no newline yet. Rendered live so
+            {/* Trailing partial line, no newline yet. Rendered live so
                 in-progress output shows immediately. */}
             {pendingRuns.length > 0 && (
               <div className="whitespace-pre-wrap">

@@ -11,7 +11,7 @@ import type { SessionUser } from "@/components/session-provider";
  * Resolve the signed-in account from the request cookies, server-side.
  *
  * The panel layout is an async server component, so it can read the session
- * here — where Better Auth's cookie is already in the request headers — and
+ * here, where Better Auth's cookie is already in the request headers, and
  * hand it to the client-side {@link SessionProvider} as `initialUser`. That
  * makes the provider start with a user in hand on first paint, instead of
  * blocking every panel page behind a `GET /api/me` round trip that fires only

@@ -110,7 +110,7 @@ const CodeEditor = nextDynamic(() => import("@/components/code-editor"), {
 });
 
 // ---------------------------------------------------------------------------
-// Path helpers — the agent speaks POSIX paths rooted at the server data dir.
+// Path helpers. The agent speaks POSIX paths rooted at the server data dir.
 // ---------------------------------------------------------------------------
 
 /** Join a POSIX directory path with a name segment, normalising the result. */
@@ -153,8 +153,8 @@ function pathSegments(path: string): { name: string; path: string }[] {
 /**
  * Normalise a directory path that came in from the URL. Query strings are
  * user-editable, so anything unusable (missing, relative, trailing slashes,
- * `..` segments) collapses to the root rather than being sent to the agent —
- * which would reject it anyway, but as an error banner instead of a listing.
+ * `..` segments) collapses to the root rather than being sent to the agent. The
+ * agent would reject it anyway, but as an error banner instead of a listing.
  */
 function normalizeDir(raw: string | null): string {
   if (!raw) return "/";
@@ -187,7 +187,7 @@ function suggestCopyName(originalPath: string): string {
  * the tree rather than typing a path. Clicking a file opens the in-place
  * code editor (file-editor.tsx), which replaces the listing while open.
  *
- * The SFTP button shows an info dialog with connection details — there is no
+ * The SFTP button shows an info dialog with connection details. There is no
  * SFTP server in the stack, so it surfaces the node's hostname and the panel's
  * file manager as the supported access method.
  */
@@ -237,9 +237,9 @@ export function FilesManager({ serverId }: { serverId: string }) {
   // --- Data fetching ---------------------------------------------------------
 
   // Which listing request is the current one. Back/forward can outrun the
-  // network — hold the button and several directories are in flight at once —
-  // so a response that is no longer the directory on screen is dropped instead
-  // of overwriting a newer listing.
+  // network. Hold the button and several directories are in flight at once, so
+  // a response that is no longer the directory on screen is dropped instead of
+  // overwriting a newer listing.
   const requestRef = React.useRef(0);
 
   const refresh = React.useCallback(
@@ -306,7 +306,7 @@ export function FilesManager({ serverId }: { serverId: string }) {
         "file" in next ? { file: next.file } : { path: next.path },
       );
       // Slashes are legal unescaped in a query value, and paths are the whole
-      // point of this URL — keep it readable/shareable instead of %2F soup.
+      // point of this URL, so keep it readable/shareable instead of %2F soup.
       const url = `?${params.toString().replace(/%2F/g, "/")}`;
       if (replace) window.history.replaceState(null, "", url);
       else window.history.pushState(null, "", url);
@@ -329,9 +329,10 @@ export function FilesManager({ serverId }: { serverId: string }) {
   // shows first.
   const editing = filePath ? entries.find((entry) => entry.path === filePath) ?? null : null;
 
-  // A `file` param with no matching row — a stale link, or the file was deleted
-  // or renamed from another tab — drops back to the directory instead of
-  // sitting on an empty editor. Replace, so back still leaves the page.
+  // A `file` param with no matching row drops back to the directory instead of
+  // sitting on an empty editor. That happens with a stale link, or when the file
+  // was deleted or renamed from another tab. Replace, so back still leaves the
+  // page.
   React.useEffect(() => {
     if (!filePath || loading || error) return;
     if (entries.some((entry) => entry.path === filePath)) return;
@@ -445,7 +446,7 @@ export function FilesManager({ serverId }: { serverId: string }) {
    * Upload a batch of files into the current directory, sequencing them one at
    * a time. Each file's progress is tracked individually; the caller passes an
    * `onProgress` callback that updates the modal's file list. A failure on one
-   * file does not abort the rest — partial progress is more useful than an
+   * file does not abort the rest. Partial progress is more useful than an
    * all-or-nothing batch, and the user can see exactly which files failed.
    *
    * Returns the list of files that uploaded successfully, so the caller can
@@ -503,7 +504,7 @@ export function FilesManager({ serverId }: { serverId: string }) {
 
   // --- Render ---------------------------------------------------------------
 
-  // The editor replaces the listing entirely — files get the full content
+  // The editor replaces the listing entirely, so files get the full content
   // width while being edited.
   if (editing) {
     return (
@@ -550,7 +551,7 @@ export function FilesManager({ serverId }: { serverId: string }) {
         </div>
       )}
 
-      {/* File list — wrapped in a drop zone so files can be dragged onto it. */}
+      {/* File list, wrapped in a drop zone so files can be dragged onto it. */}
       <DropZone
         disabled={loading}
         // When files are dropped, hand them to the upload modal as the initial
@@ -821,7 +822,7 @@ function FileTable({
               <span className="truncate text-sm">{entry.name}</span>
             </button>
             <span className="hidden w-24 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
-              {isDir ? "—" : formatBytes(entry.sizeBytes)}
+              {isDir ? "" : formatBytes(entry.sizeBytes)}
             </span>
             <span className="hidden w-28 shrink-0 text-right text-xs text-muted-foreground md:block">
               {formatRelative(entry.modifiedAt)}
@@ -937,7 +938,7 @@ function FloatingActionBar({
 }
 
 // ---------------------------------------------------------------------------
-// Folder picker — used by Move and Clone
+// Folder picker, used by Move and Clone
 // ---------------------------------------------------------------------------
 
 function FolderPickerModal({
@@ -993,7 +994,7 @@ function FolderPickerModal({
   }, [serverId, current]);
 
   // A directory is disabled if it is one of the items being moved (can't move
-  // a folder into itself), or — for the single-item rename case — if it's the
+  // a folder into itself), or, for the single-item rename case, if it's the
   // source's own parent (no-op move).
   const isDisabled = (dir: FileEntry): boolean => {
     if (excludePaths.includes(dir.path)) return true;
@@ -1447,7 +1448,7 @@ function SftpModal({ serverId, onClose }: { serverId: string; onClose: () => voi
 
   const hasOwn = connection?.hasCredential ?? false;
   // An sftp:// URL that opens in the OS's default SFTP client (FileZilla, etc.).
-  // We omit the password from the URL for security — the user pastes it in the
+  // We omit the password from the URL for security. The user pastes it in the
   // client. Including it would leave the password in browser history / logs.
   const sftpUrl = connection?.username
     ? `sftp://${connection.username}@${connection.hostname}:${connection.port}`
@@ -1492,7 +1493,7 @@ function SftpModal({ serverId, onClose }: { serverId: string; onClose: () => voi
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-muted-foreground">Username</span>
                     <CopyableCode
-                      value={connection.username ?? "— (no credential yet)"}
+                      value={connection.username ?? "(no credential yet)"}
                     />
                   </div>
                   {sftpUrl && (
@@ -1611,7 +1612,7 @@ function SftpModal({ serverId, onClose }: { serverId: string; onClose: () => voi
                 : "Password regenerated"}
             </DialogTitle>
             <DialogDescription>
-              Copy the password now — it is shown only this once and cannot be
+              Copy the password now. It is shown only this once and cannot be
               retrieved later.{" "}
               {revealed?.isNew
                 ? ""
@@ -1738,7 +1739,7 @@ function CopyableCode({
 }
 
 // ---------------------------------------------------------------------------
-// Drop zone — wraps the file list so files can be dragged onto it to upload
+// Drop zone. Wraps the file list so files can be dragged onto it to upload
 // ---------------------------------------------------------------------------
 
 /**
@@ -1834,7 +1835,7 @@ function DropZone({
 }
 
 // ---------------------------------------------------------------------------
-// Upload modal — file picker / drag-drop + pull from URL
+// Upload modal: file picker / drag-drop + pull from URL
 // ---------------------------------------------------------------------------
 
 /**
@@ -1883,8 +1884,8 @@ function UploadModal({
 }) {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   // Seed from drag-dropped files that opened the modal. Lazy initial state
-  // (rather than a seeding effect) because `initialFiles` is fixed at mount —
-  // the modal is remounted each time it opens.
+  // (rather than a seeding effect) because `initialFiles` is fixed at mount,
+  // and the modal is remounted each time it opens.
   const [items, setItems] = React.useState<UploadItem[]>(() =>
     initialFiles && initialFiles.length > 0
       ? initialFiles.map((file) => ({ file, status: "pending", loaded: 0, total: file.size }))
@@ -2002,7 +2003,7 @@ function UploadModal({
           </TabsList>
 
           <TabsContent value="file" className="mt-3">
-            {/* Drop target inside the modal — drag files here to add them. */}
+            {/* Drop target inside the modal. Drag files here to add them. */}
             <div
               onDragEnter={(e) => e.preventDefault()}
               onDragOver={(e) => {

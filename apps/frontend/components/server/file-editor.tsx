@@ -124,7 +124,7 @@ export default function FileEditor({
   const dirty = status === "ready" && contents !== savedContents;
 
   // The parent renders this component with key={entry.path}, so each file
-  // gets a fresh instance — no state reset is needed when the path changes,
+  // gets a fresh instance, so no state reset is needed when the path changes,
   // which keeps this effect free of synchronous setState calls.
   React.useEffect(() => {
     let cancelled = false;
@@ -266,7 +266,7 @@ export default function FileEditor({
             </EmptyMedia>
             <EmptyTitle>This file cannot be edited in the browser</EmptyTitle>
             <EmptyDescription>
-              {basename} does not look like text — saving it here would
+              {basename} does not look like text, so saving it here would
               corrupt it. Download it to edit locally, or use SFTP.
             </EmptyDescription>
           </EmptyHeader>
@@ -315,7 +315,7 @@ export default function FileEditor({
         <span className="tabular-nums">{formatBytes(sizeBytes)}</span>
         <span>{languageName}</span>
         {contents.length > 1_000_000 && (
-          <span className="text-foreground">Large file — editing may be slow</span>
+          <span className="text-foreground">Large file, editing may be slow</span>
         )}
         <span className="ml-auto hidden sm:inline">
           {dirty ? (
@@ -329,7 +329,7 @@ export default function FileEditor({
         </span>
       </div>
 
-      {/* Discard guard — closing with unsaved changes must never lose work. */}
+      {/* Discard guard. Closing with unsaved changes must never lose work. */}
       <Dialog open={pendingDir !== null} onOpenChange={(open) => !open && setPendingDir(null)}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>

@@ -30,8 +30,8 @@ export const notFound = (message = "Not found", code?: string) =>
 export const conflict = (message: string) => new HttpError(409, message);
 export const payloadTooLarge = (message: string) => new HttpError(413, message);
 /**
- * The node is correctly refusing work it cannot currently do — an unwritable
- * data root, say. Distinct from 500: nothing here is a bug, and the message is
+ * The node is correctly refusing work it cannot currently do, say because the
+ * data root is unwritable. Distinct from 500: nothing here is a bug, and the message is
  * written for the admin who will fix the node.
  */
 export const serviceUnavailable = (message: string) => new HttpError(503, message);
@@ -89,7 +89,7 @@ function sseData(payload: string): Uint8Array {
  *
  * A `: ping` SSE comment is emitted every few seconds of silence. Game servers
  * go quiet between events, and Bun's HTTP server closes idle connections after
- * ~10s — without the keepalive the stream dies and the browser's EventSource
+ * ~10s. Without the keepalive the stream dies and the browser's EventSource
  * reconnect-storms. A comment line is valid SSE that EventSource ignores, so it
  * keeps the connection alive without polluting the console.
  */
@@ -114,7 +114,7 @@ export function sseWrap(
       };
 
       // Re-armed each time data flows, so pings only appear during genuine
-      // silence — not interleaved with a burst of log lines.
+      // silence, never interleaved with a burst of log lines.
       pingTimer = setInterval(() => {
         if (!stopped) controller.enqueue(ping);
       }, keepaliveMs);

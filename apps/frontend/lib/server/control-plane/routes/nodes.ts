@@ -2,7 +2,7 @@
  * Node management routes (plan.md section 7). Admin-only, without exception:
  * a node's agent token is root-equivalent access to that machine.
  *
- * No endpoint here ever returns the agent token or DB passwords — responses go
+ * No endpoint here ever returns the agent token or DB passwords. Responses go
  * through `toPublicNode`, which strips every secret. The one exception is the
  * create response, which echoes a *generated* token once so the operator can
  * configure the agent with it; it is never readable again.
@@ -65,7 +65,7 @@ function assertValidApiUrl(apiUrl: string): void {
   }
 }
 
-/** GET /api/admin/nodes — nodes with capacity and health. */
+/** GET /api/admin/nodes. Lists nodes with capacity and health. */
 export async function handleListNodes(request: Request): Promise<Response> {
   await requireAdmin(request);
 
@@ -87,7 +87,7 @@ export async function handleListNodes(request: Request): Promise<Response> {
 }
 
 /**
- * GET /api/admin/nodes/:id — one node's full detail for the admin page.
+ * GET /api/admin/nodes/:id. Returns one node's full detail for the admin page.
  *
  * Aggregates the node row, its committed allocation, the servers on it (with
  * owner emails and a live usage sample), and an abuse summary, in a single
@@ -95,7 +95,7 @@ export async function handleListNodes(request: Request): Promise<Response> {
  *
  * Pure read: it does not probe the agent or record a heartbeat. Live
  * reachability (and the heartbeat that comes with it) is the client's job on
- * mount, via the existing `GET /api/admin/nodes/:id/health` — that keeps this
+ * mount, via the existing `GET /api/admin/nodes/:id/health`. That keeps this
  * endpoint cacheable and free of side effects.
  *
  * Sampling uses a short timeout so a dead node cannot hang the page; the
@@ -125,7 +125,7 @@ async function loadOwnerEmails(
  * One usage sample per server, from one request to the node's agent.
  *
  * A node that cannot be reached reports null usage for its servers rather than
- * failing the page — the servers, ports and abuse data are all still real.
+ * failing the page. The servers, ports and abuse data are all still real.
  */
 async function sampleNodeUsage(
   nodeId: string,
@@ -148,7 +148,7 @@ async function sampleNodeUsage(
       });
     }
   } catch {
-    // Node unreachable — its servers report null usage.
+    // Node unreachable, so its servers report null usage.
   }
   return byServer;
 }
@@ -163,7 +163,7 @@ export async function handleGetNode(
   // Everything the detail page needs, in one wave. `getNode` joins it rather
   // than gating it: the other five reads are keyed by node id and return empty
   // for an id that does not exist, so the 404 below is just as correct after
-  // them as before — and this page no longer waits for the row before starting.
+  // them as before, and this page no longer waits for the row before starting.
   const [node, allocation, servers, abuse, portPool] = await Promise.all([
     getNode(id),
     loadNodeCapacity(id),
@@ -174,8 +174,8 @@ export async function handleGetNode(
   if (!node) throw notFound("Node not found");
 
   // Owner emails and the usage sample both depend on `servers` but not on each
-  // other, so they go together. The owner lookup is one query for every owner —
-  // it used to be one query *per* owner, which made this page's cost scale with
+  // other, so they go together. The owner lookup is one query for every owner.
+  // It used to be one query *per* owner, which made this page's cost scale with
   // how many different people had servers on the node.
   const ownerIds = [...new Set(servers.map((server) => server.ownerId))];
   const [ownersById, usageByServer] = await Promise.all([
@@ -200,7 +200,8 @@ export async function handleGetNode(
 // --- Port pool ---------------------------------------------------------------
 
 /**
- * GET /api/admin/nodes/:id/ports — the node's reserved port-pool entries.
+ * GET /api/admin/nodes/:id/ports. Returns the node's reserved port-pool
+ * entries.
  *
  * Folded into {@link handleGetNode} for the detail page's initial load, but kept
  * as its own endpoint so the page can refresh just the pool after an add/delete
@@ -216,7 +217,7 @@ export async function handleListNodePortPool(
 }
 
 /**
- * POST /api/admin/nodes/:id/ports — reserve a port-pool entry.
+ * POST /api/admin/nodes/:id/ports. Reserves a port-pool entry.
  *
  * Parses the spec, rejects overlaps with existing entries, and verifies every
  * port is free on the host through the agent before persisting. A 409 names the
@@ -247,7 +248,7 @@ export async function handleAddNodePortPoolEntry(
 }
 
 /**
- * DELETE /api/admin/nodes/ports/:entryId — remove a pool entry.
+ * DELETE /api/admin/nodes/ports/:entryId. Removes a pool entry.
  *
  * Existing server bindings are grandfathered (no FK); only future allocations
  * are affected. A missing entry 404s.
@@ -274,13 +275,13 @@ export async function handleDeleteNodePortPoolEntry(
 }
 
 /**
- * POST /api/admin/nodes/probe — reachability check before registering.
+ * POST /api/admin/nodes/probe. A reachability check before registering.
  *
  * Takes raw connection details (no node row exists yet) and pings the agent
  * without persisting anything. The register dialog uses this for its "Test
  * connection" button, so a wrong URL or token is caught at entry rather than
- * after the row is written. Never returns an error for an unreachable agent —
- * that is the answer the caller asked for.
+ * after the row is written. Never returns an error for an unreachable agent,
+ * because that is the answer the caller asked for.
  */
 export async function handleProbeNode(request: Request): Promise<Response> {
   await requireAdmin(request);
@@ -292,7 +293,7 @@ export async function handleProbeNode(request: Request): Promise<Response> {
   // A probe is only meaningful with a token: an empty one would 401 against a
   // correctly-configured agent and read as "wrong token". The register flow
   // generates a token when none is supplied, but that token cannot be tested
-  // until the operator has set it on the agent — so require one here.
+  // until the operator has set it on the agent, so require one here.
   const token = requireString(body, "token", { min: 1, max: 512 });
 
   const health = await probeAgent(apiUrl, token);
@@ -302,7 +303,7 @@ export async function handleProbeNode(request: Request): Promise<Response> {
 }
 
 /**
- * POST /api/admin/nodes — register a node.
+ * POST /api/admin/nodes. Registers a node.
  *
  * The node must already be running the CitadelPanel agent. When no token is
  * supplied one is generated and returned **once** in the response: that is the
@@ -388,8 +389,8 @@ export async function handleCreateNode(request: Request): Promise<Response> {
     body.allowOvercommit === undefined ? undefined : body.allowOvercommit === true;
 
   // Optional public browser URL for the direct console WebSocket. When omitted,
-  // the panel derives it from apiUrl (ws/wss from its scheme) — the zero-config
-  // homelab case. Only validated for shape when supplied.
+  // the panel derives it from apiUrl (ws/wss from its scheme), which is the
+  // zero-config homelab case. Only validated for shape when supplied.
   const consoleUrl = optionalString(body, "consoleUrl", { max: 512 });
   if (consoleUrl) assertValidApiUrl(consoleUrl);
 
@@ -443,7 +444,7 @@ export async function handleCreateNode(request: Request): Promise<Response> {
     {
       node,
       health,
-      // Shown once, then unrecoverable — the operator must copy it now.
+      // Shown once, then unrecoverable. The operator must copy it now.
       ...(generatedToken
         ? {
             token: generatedToken,
@@ -463,7 +464,7 @@ export async function handleCreateNode(request: Request): Promise<Response> {
   );
 }
 
-/** GET /api/admin/nodes/:id/health — live reachability check. */
+/** GET /api/admin/nodes/:id/health. A live reachability check. */
 export async function handleNodeHealth(
   request: Request,
   nodeId: string,
@@ -484,7 +485,7 @@ export async function handleNodeHealth(
   return json({ health });
 }
 
-/** GET /api/admin/nodes/health — health of every active node. */
+/** GET /api/admin/nodes/health. Returns the health of every active node. */
 export async function handleAllNodesHealth(request: Request): Promise<Response> {
   await requireAdmin(request);
 
@@ -505,7 +506,7 @@ export async function handleAllNodesHealth(request: Request): Promise<Response> 
 }
 
 /**
- * PATCH /api/admin/nodes/:id — activate or drain a node.
+ * PATCH /api/admin/nodes/:id. Activates or drains a node.
  *
  * Draining is reversible and does not touch running containers; it only stops
  * new servers being scheduled onto the node.
@@ -632,7 +633,7 @@ export async function handleUpdateNode(
  *    would pull it out of the scheduler mid-provision and surprise owners whose
  *    next server-create lands on a node that no longer exists.
  * 2. It must host **no servers**. `servers.node_id` is ON DELETE RESTRICT, so
- *    Postgres would refuse the delete anyway — but a pre-check lets the message
+ *    Postgres would refuse the delete anyway, but a pre-check lets the message
  *    name the count, instead of surfacing a raw constraint error. The FK is kept
  *    as the race-condition backstop.
  *
@@ -671,9 +672,9 @@ export async function handleDeleteNode(
     deleted = await deleteNode(id);
   } catch (error) {
     // ON DELETE RESTRICT throws SQLSTATE 23001 (restrict_violation), not 23503
-    // (foreign_key_violation) — a concurrent server create between the pre-check
-    // and the delete would land here. Catch both so it surfaces as a 409, not a
-    // 500.
+    // (foreign_key_violation). A concurrent server create between the
+    // pre-check and the delete would land here. Catch both so it surfaces as a
+    // 409, not a 500.
     const code = (error as { code?: string }).code;
     if (code === "23001" || code === "23503") {
       throw conflict(

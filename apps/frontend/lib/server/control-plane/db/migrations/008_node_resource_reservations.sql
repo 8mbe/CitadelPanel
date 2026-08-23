@@ -3,7 +3,7 @@
 -- A node's full nominal capacity is not necessarily safe to hand to the
 -- scheduler: the host OS, the agent itself, and co-located services need
 -- headroom. These columns let an admin reserve a percentage of each resource
--- (CPU, memory, disk) that must stay FREE — the scheduler treats only
+-- (CPU, memory, disk) that must stay FREE. The scheduler treats only
 -- total × (1 − reserve%) as allocable (see nodes/scheduler.ts withFreeCapacity).
 --
 -- `allow_overcommit` is an opt-out: when true the scheduler ignores the

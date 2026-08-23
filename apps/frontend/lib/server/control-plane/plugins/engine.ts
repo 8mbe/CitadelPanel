@@ -1,5 +1,5 @@
 /**
- * Plugin fetch engine — the generic interpreter for a blueprint's provider
+ * Plugin fetch engine: the generic interpreter for a blueprint's provider
  * fetch spec (`PluginFetchSpec`).
  *
  * There are no per-provider modules: a blueprint declares its catalog's
@@ -10,8 +10,8 @@
  *   - GET-only requests to the spec's validated https origin, with the SSRF
  *     blocklist re-checked at fetch time (protects against DB tampering) and
  *     against the host a redirect actually landed on;
- *   - templates are interpolated from a fixed variable vocabulary — never
- *     evaluated — and values the profile can't supply resolve to empty query
+ *   - templates are interpolated from a fixed variable vocabulary, never
+ *     evaluated, and values the profile can't supply resolve to empty query
  *     params, which are omitted;
  *   - responses are size-capped, JSON-only, and read exclusively through the
  *     spec's dot-path field mappings, with every mapped string/array trimmed;
@@ -19,11 +19,11 @@
  *     entry and pass the blocklist before the agent is ever asked to fetch.
  *
  * Nothing a catalog returns reaches a command line, a container or anything
- * executable — the only side effect downstream is an inert `.jar` file write
+ * executable. The only side effect downstream is an inert `.jar` file write
  * through the agent's contained `files/pull`.
  *
- * The pure half — dot-path reads, field coercion and the project-page URL —
- * lives in `mapping.ts`, which has no env or network dependency and is unit
+ * Dot-path reads, field coercion and the project-page URL are the pure half.
+ * They live in `mapping.ts`, which has no env or network dependency and is unit
  * tested directly.
  */
 
@@ -106,8 +106,8 @@ const MAX_SEARCH_LIMIT = 20;
 /**
  * The values every template may reference. `loaders`/`gameVersions` are JSON
  * arrays ("" when the profile has none, so the param is omitted); `facets` is
- * the composed facet grammar. Deliberately no env values — no secret-leakage
- * channel from servers into catalog queries.
+ * the composed facet grammar. Deliberately no env values, so there is no
+ * secret-leakage channel from servers into catalog queries.
  */
 function templateVars(
   spec: PluginFetchSpec,
@@ -141,9 +141,10 @@ function templateVars(
 
 /**
  * Fetch and parse one endpoint's JSON. Returns null on 404 (callers decide
- * whether that means "unknown project" or an error). Everything else — network
- * failure, redirect to a blocked host, oversized or non-JSON body — is a
- * 400-shaped error naming the provider id, never a stack trace.
+ * whether that means "unknown project" or an error). Everything else is a
+ * 400-shaped error naming the provider id, never a stack trace. That covers a
+ * network failure, a redirect to a blocked host, and an oversized or non-JSON
+ * body.
  */
 async function fetchEndpoint(
   spec: PluginFetchSpec,
@@ -185,7 +186,7 @@ async function fetchEndpoint(
     );
   }
 
-  // Followed redirects may only land on public hosts — a catalog 3xx must not
+  // Followed redirects may only land on public hosts. A catalog 3xx must not
   // turn the panel into an internal-network client.
   if (isBlockedHost(new URL(response.url).hostname)) {
     throw badRequest(`Plugin catalog "${spec.id}" redirected to a blocked host.`);
@@ -379,8 +380,8 @@ export async function engineGetVersion(
 // --- Download guards ------------------------------------------------------------
 
 /**
- * Enforce the spec's download-host pin on a file URL. Every install path —
- * manual or auto-update — must pass through this before the agent is asked to
+ * Enforce the spec's download-host pin on a file URL. Every install path,
+ * manual or auto-update, must pass through this before the agent is asked to
  * pull anything.
  */
 export function assertDownloadUrl(spec: PluginFetchSpec, url: string): URL {

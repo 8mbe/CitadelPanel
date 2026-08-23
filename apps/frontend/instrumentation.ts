@@ -26,6 +26,6 @@ export async function register() {
   startWatcher();
   // The backup scheduler both fires the cron schedule and reconciles in-flight
   // runs against their nodes, so it has to run even on a panel with no schedule
-  // configured — otherwise a manual backup would never leave "running".
+  // configured. Otherwise a manual backup would never leave "running".
   startBackupScheduler();
 }

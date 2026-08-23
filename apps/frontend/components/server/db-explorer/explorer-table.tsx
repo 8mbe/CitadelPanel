@@ -38,7 +38,7 @@ import {
   apiErrorMessage,
 } from "./explorer-dialogs";
 
-/** Rows per page — the server clamps to this range anyway. */
+/** Rows per page. The server clamps to this range anyway. */
 const PAGE_SIZE = 50;
 
 /** Strip control characters and clamp length so a cell can't wreck the grid. */
@@ -108,7 +108,7 @@ function TableDataView({
         <p className="text-sm text-muted-foreground">
           {hasPk
             ? "Rows are ordered by the primary key; edit and delete match rows by it."
-            : "This table has no primary key — rows can be browsed but not edited or deleted here."}
+            : "This table has no primary key, so rows can be browsed but not edited or deleted here."}
         </p>
         <RowDialog
           serverId={serverId}
@@ -356,14 +356,14 @@ function TableStructureView({
                         {column.keyType}
                       </Badge>
                     ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
+                      <span className="text-xs text-muted-foreground">None</span>
                     )}
                   </TableCell>
                   <TableCell className="max-w-[12rem] truncate font-mono text-xs">
                     {column.defaultValue ?? <span className="text-muted-foreground">NULL</span>}
                   </TableCell>
                   <TableCell className="max-w-[12rem] truncate text-xs text-muted-foreground">
-                    {column.extra ?? "—"}
+                    {column.extra ?? "None"}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-0.5">
@@ -406,8 +406,8 @@ function TableStructureView({
 }
 
 /**
- * One selected table: loads the schema (shared by both views — the data view
- * needs the primary key for ordering and row identity) and hosts the
+ * One selected table: loads the schema (shared by both views, since the data
+ * view needs the primary key for ordering and row identity) and hosts the
  * Data/Structure tabs.
  */
 export function ExplorerTable({

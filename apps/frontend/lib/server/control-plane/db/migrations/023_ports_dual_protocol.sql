@@ -1,8 +1,8 @@
 -- A published port is a number, claimed on both TCP and UDP.
 --
 -- Protocol was a dimension nobody could answer correctly. It was asked three
--- times — when an admin reserved a pool entry, when an admin declared a
--- blueprint's ports, and when an owner published an extra port — and the right
+-- times, once when an admin reserved a pool entry, once when an admin declared
+-- a blueprint's ports, and once when an owner published an extra port. The right
 -- answer was almost always "both": a Java server that adds a Geyser/voice-chat
 -- plugin needs the same number on UDP, and a Bedrock port pool reserved as UDP
 -- silently could not host a Java server. Worse, the two halves of a number
@@ -13,7 +13,7 @@
 -- protocols, and publishing it publishes both. `server_ports` and
 -- `node_port_pools` lose their protocol column, and blueprint port
 -- declarations lose their protocol key. The agent's container spec is
--- unchanged — the panel expands each stored number into a tcp and a udp
+-- unchanged. The panel expands each stored number into a tcp and a udp
 -- binding at create/recreate time, so no node needs upgrading for this.
 
 -- ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ ALTER TABLE server_ports DROP COLUMN IF EXISTS protocol;
 -- container_port still exists (it equals host_port since 017_port_identity)
 -- and still carries the primary key, so the key survives the column drop.
 ALTER TABLE server_ports ADD PRIMARY KEY (server_id, container_port);
--- A host port belongs to at most one server per node — now across both
+-- A host port belongs to at most one server per node, now across both
 -- protocols at once, which is what makes the claim indivisible.
 ALTER TABLE server_ports
   ADD CONSTRAINT server_ports_node_id_host_port_key UNIQUE (node_id, host_port);
@@ -96,8 +96,8 @@ ALTER TABLE node_port_pools
 
 -- Overlaps between surviving entries are possible here (a tcp "25565-25570"
 -- entry and a udp "25565" entry are now two entries covering 25565). They are
--- harmless — the pool is read as a set — and the add path keeps every *new*
--- entry disjoint.
+-- harmless, because the pool is read as a set, and the add path keeps every
+-- *new* entry disjoint.
 
 -- ---------------------------------------------------------------------------
 -- blueprints.default_ports: drop the protocol key from every declaration.

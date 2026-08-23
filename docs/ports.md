@@ -12,21 +12,22 @@ are deliberate:
 - **Identity mapping.** Docker publishes host port N and the game binds port N
   inside the container (`host N → container N`). Nothing translates between the
   two sides, so the port a player connects to is also the port in every config
-  file and plugin setting — there is no "internal port" to remember.
+  file and plugin setting. There is no "internal port" to remember.
 - **Both protocols.** Every published number is claimed on TCP *and* UDP. The
   panel never asks which one, because the answer was almost always "both" and
   the question produced real breakage: a Java server that later added a
   Geyser/voice-chat plugin needed the UDP half of a number it already owned, and
   a port pool an admin had reserved as UDP silently could not host a Java
   server. Worse, `25565/tcp` and `25565/udp` could be allocated to two
-  *different* servers — two allocations that looked like one port to everybody
+  *different* servers, two allocations that looked like one port to everybody
   reading the panel.
 
 The agent's container spec is still per-protocol (`PortBinding` carries
 `protocol`), so the panel expands each stored number into a tcp and a udp
-binding at create/recreate time — `portBindingsFor` in `nodes/nodeServerApi.ts`.
-That is on purpose: collapsing it at the wire would mean every node had to be
-upgraded in lockstep with the panel for allocation to work at all.
+binding at create/recreate time, in `portBindingsFor`
+(`nodes/nodeServerApi.ts`). That is on purpose: collapsing it at the wire would
+mean every node had to be upgraded in lockstep with the panel for allocation to
+work at all.
 
 Because the game must bind the allocated number itself, the blueprint declares
 which env var carries the primary port to the game process
@@ -35,17 +36,17 @@ which env var carries the primary port to the game process
 - `minecraft-java` → `SERVER_PORT` (the itzg image writes
   `server.properties`' `server-port` from it)
 - `minecraft-bedrock` → `SERVER_PORT` (the itzg image rewrites
-  `server.properties` from it, overriding manual edits — by design of the image)
+  `server.properties` from it, overriding manual edits, by design of the image)
 - `velocity` → `CFG_PROXY_PORT` (Velocity's listen address lives in
   `velocity.toml`, not in any env var, so the proxy blueprint routes the number
-  through the image's start-time config patcher — see `velocity-proxy.md`)
+  through the image's start-time config patcher, see `velocity-proxy.md`)
 
 The panel sets that env var to the allocated primary port at create time and
 **re-syncs it on every container recreate** (`recreateServerContainer` in
 `services/serverManager.ts`), so a changed allocation can never leave the game
 listening where nothing is forwarded. The key is deliberately absent from the
 blueprint's `envSchema`, which means owners cannot edit it and create-time
-requests cannot inject it — only the panel writes it.
+requests cannot inject it. Only the panel writes it.
 
 The node agent enforces the invariant at the far end: `docker/hardening.ts`
 rejects any non-identity binding (`hostPort !== containerPort`) at container
@@ -54,7 +55,7 @@ create, so a confused or hostile panel cannot reintroduce split mappings.
 `server_ports` still stores both `host_port` and `container_port` (the primary
 key needs a port column and legacy rows predate the change; migration
 `017_port_identity.sql` collapsed them onto the identity form), but
-`container_port` is internal — the API surface exposes a single `port`.
+`container_port` is internal, and the API exposes a single `port`.
 Migration `023_ports_dual_protocol.sql` is what dropped `protocol` from
 `server_ports`, `node_port_pools` and blueprint port declarations; read its
 header for what it does to rows that had the same number split across two
@@ -67,7 +68,7 @@ form, no port field on the owner's Ports tab, and no `preferredPort` in the
 create API.
 
 `allocateHostPort` (`nodes/scheduler.ts`) draws a **random** free number from
-the node's pool. Walking the pool in ascending order — what it used to do — had
+the node's pool. Walking the pool in ascending order, what it used to do, had
 two costs: allocation was predictable from outside (the Nth server on a node got
 the Nth port), and a freed port went straight back to the next server created,
 inheriting whatever scanners and stale client entries the previous tenant had
@@ -83,8 +84,8 @@ form: it says "this game's canonical port", not "give me this port".
 Two freeness checks, layered:
 
 - `server_ports` filters out what CitadelPanel has already allocated.
-  `UNIQUE(node_id, host_port)` — now spanning both protocols at once, which is
-  what makes the claim indivisible — is the real concurrency safety net; the
+  `UNIQUE(node_id, host_port)`, now spanning both protocols at once, which is
+  what makes the claim indivisible, is the real concurrency safety net; the
   scan is an optimisation.
 - The node agent confirms the number is bindable on the host *right now, on both
   protocols* (`checkPortNumbersFree` expands each number into a tcp and a udp
@@ -104,7 +105,7 @@ as `error`.
 Every published port is drawn from a **port pool an admin reserved on the node**
 (`node_port_pools`, managed on the node page). A pool entry is a set of numbers
 (`25565-25570`, `25565,25578`) reserved for both protocols; entries are verified
-through the agent to be actually bindable on the host — on TCP and UDP — before
+through the agent to be actually bindable on the host, on TCP and UDP, before
 they are reserved, and overlaps between entries are rejected at add time so the
 pool stays a clean disjoint set. See `nodes/portPool.ts` and
 `nodes/scheduler.ts`.
@@ -115,30 +116,30 @@ admin reserves one.
 ## Adding and removing ports as the owner
 
 The Ports tab (`components/server/ports-tab.tsx`) lists every published port as
-a number badged `TCP + UDP`. Blueprint ports — including the primary player port
-— are read-only (badged "Blueprint"/"Primary"); owner-added ports are badged
+a number badged `TCP + UDP`. Blueprint ports, including the primary player
+port, are read-only (badged "Blueprint"/"Primary"); owner-added ports are badged
 "Additional" and removable.
 
 Publishing a port is one button: the owner supplies an optional label, the panel
 allocates a random free number and the response names it (the tab says
 "Port 25571 published (TCP and UDP)"). Asking the owner for a number only ever
-produced failures that were not theirs to fix — "not in the node's pool",
-"already allocated to another server", "held by a host process" — for a number
+produced failures that were not theirs to fix, like "not in the node's pool",
+"already allocated to another server" or "held by a host process", for a number
 that has no meaning until the panel has allocated it anyway. A plugin config is
 pointed at the number *after* it exists.
 
-Publishing a port requires the `settings` permission (so subusers need it too —
-the reads-gate-with-writes rule from `subusers.md`). Docker port bindings are
+Publishing a port requires the `settings` permission, so subusers need it too
+(the reads-gate-with-writes rule from `subusers.md`). Docker port bindings are
 fixed at container creation, so both add and remove **recreate the container**:
-a running server is stopped, rebuilt with the new binding set, and restarted —
-experienced by the owner as a brief restart, which the UI states inline. The
+a running server is stopped, rebuilt with the new binding set, and restarted.
+The owner experiences that as a brief restart, which the UI states inline. The
 per-server cap (`maxAdditionalPortsPerServer` in admin general settings) is
 enforced before anything is allocated, so a refused add never consumes a pool
 port.
 
 `POST /api/servers/:id/ports` takes `{ label? }` and
 `DELETE /api/servers/:id/ports?port=N` identifies a port by number alone. A
-stale client that still sends `port`/`protocol` is not rejected — the keys are
+stale client that still sends `port`/`protocol` is not rejected. The keys are
 ignored, and the panel-chosen number comes back in the response.
 
 RCON is disabled (`ENABLE_RCON: false` on the Java blueprint): the panel console
@@ -155,8 +156,8 @@ link network too, so the link address is just `container-name:port`.
 
 The Java blueprint marks the itzg image's JVM knobs `editable`:
 `USE_AIKAR_FLAGS`, `USE_SIMD_FLAGS`, `JVM_OPTS`, `JVM_XX_OPTS`, `JVM_DD_OPTS`.
-They render on the server's Settings tab and take effect on the next restart —
-same machinery as every other editable env var (only keys the blueprint marks
-`editable` are accepted by `PATCH /api/servers/:id/env`). Fields without a
+They render on the server's Settings tab and take effect on the next restart,
+on the same machinery as every other editable env var (only keys the blueprint
+marks `editable` are accepted by `PATCH /api/servers/:id/env`). Fields without a
 stored value (e.g. `JVM_OPTS` was never set) are shown with an empty input; the
 env route synthesizes them from the schema so there is always something to edit.

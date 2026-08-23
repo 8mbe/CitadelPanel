@@ -1,6 +1,6 @@
 /**
  * Monaco's JSON language worker (validation, formatting, completions), as a
- * worker entry point of this app — see the note in `editor.worker.ts` for why
+ * worker entry point of this app. See the note in `editor.worker.ts` for why
  * the indirection is needed.
  *
  * JSON is the one language service the panel loads: game configs are full of

@@ -23,7 +23,7 @@ wrong by folding a server's database dumps into its own backup.
 
 Dumping a server's databases means reading a MariaDB instance **shared with every
 other server on that node**, and doing it for all of them at once needs the node's
-`db_admin` credential — root-equivalent on that instance. Handing that to an
+`db_admin` credential, which is root-equivalent on that instance. Handing that to an
 owner-triggered code path means the button a tenant presses reaches into
 infrastructure belonging to everyone else on the node.
 
@@ -40,7 +40,7 @@ the alternative was every tenant's backup button touching a shared root credenti
 
 ## Why restic, and why in a container
 
-The obvious implementation — tar the data directory, stream it to S3 — is wrong for
+The obvious implementation, tar the data directory and stream it to S3, is wrong for
 this workload. A game server's state is a world that changes *in place*, so a
 full-copy backup re-uploads tens of gigabytes every night to capture a few hundred
 megabytes of change. It also has no answer for the failure that actually destroys
@@ -50,8 +50,8 @@ no concept of a point in time.
 restic solves the parts that are hard to get right and easy to get wrong:
 
 - **Content-addressed deduplication and compression.** The second snapshot of a
-  30 GB world costs roughly what changed. The UI shows both numbers — bytes read
-  from disk, and bytes actually uploaded — because the second is the one that maps
+  30 GB world costs roughly what changed. The UI shows both numbers, bytes read
+  from disk and bytes actually uploaded, because the second is the one that maps
   to the storage bill.
 - **Client-side encryption.** Data is encrypted on the node before it leaves, so the
   bucket holds no readable tenant data even if its credentials leak.
@@ -65,11 +65,11 @@ socket, so this adds no per-node prerequisite, and it reuses the pattern the
 blueprint install step already proved (`servers.ts` → `runContainerToCompletion`).
 
 The tool containers do **not** go through `docker/hardening.ts`. That module builds a
-spec for a *game* — one bind mount, published ports, a per-server isolated network —
-and every one of those invariants is wrong here. What replaces it is narrower:
+spec for a *game*: one bind mount, published ports, a per-server isolated network.
+Every one of those invariants is wrong here. What replaces it is narrower:
 `backup/toolContainer.ts` drops every capability except three, sets
 `no-new-privileges`, publishes no ports, caps memory, and puts the container on its
-own bridge (`BACKUP_NETWORK`). That last point matters most — these containers hold
+own bridge (`BACKUP_NETWORK`). That last point matters most. These containers hold
 the operator's S3 credentials and a MariaDB admin password in their environment, so
 no tenant container may ever share a network with them.
 
@@ -78,9 +78,9 @@ no tenant container may ever share a network with them.
 Dropping *all* capabilities takes `CAP_DAC_OVERRIDE` with it, and that is the
 capability that lets root ignore file permissions. Without it, root inside a
 container is *weaker* than an ordinary user: it can only touch paths whose mode
-grants access to `other`. Every host directory these containers are handed — the
-restic cache, the dump staging area, a server's data directory — is owned by the
-user the agent runs as, mode `0755`. So a fully-capability-stripped run could not
+grants access to `other`. Every host directory these containers are handed, whether
+the restic cache, the dump staging area or a server's data directory, is owned by
+the user the agent runs as, mode `0755`. So a fully-capability-stripped run could not
 write any of them, and both scopes failed before taking a single backup: restic on
 `open /cache/CACHEDIR.TAG: permission denied`, `mariadb-dump` on the staging
 directory.
@@ -89,14 +89,14 @@ Reading every file whoever owns it *is* what a backup is, so this is the one pla
 where a DAC bypass is the point rather than a weakening. Three capabilities are
 added back:
 
-- **`DAC_OVERRIDE`** — read a world whose files belong to the game's uid, and write
+- **`DAC_OVERRIDE`**: read a world whose files belong to the game's uid, and write
   the cache, the dumps, and a restore's output.
-- **`CHOWN` / `FOWNER`** — put ownership and modes back as they were on restore,
+- **`CHOWN` / `FOWNER`**: put ownership and modes back as they were on restore,
   rather than leaving a restored world owned by root.
 
 Everything actually dangerous stays dropped (`SYS_ADMIN`, `NET_RAW`, `SETUID`,
 `MKNOD`, …), the container still gets no tenant network, and it still sees only the
-mounts its scope needs — so the blast radius is the paths it was handed. Running the
+mounts its scope needs, so the blast radius is the paths it was handed. Running the
 container as the agent's own uid instead was the alternative, and it is worse: a
 game's data directory contains files owned by whatever uid the game image runs as,
 and a backup that silently skips the unreadable ones is not a backup.
@@ -113,7 +113,7 @@ of that subject. Two things make that guarantee real rather than nominal:
   the agent sweeps any that are still around **at boot** (`removeOrphanedToolContainers`).
   The `finally` cannot run if the agent is killed mid-backup, and before the label
   existed the leftover was an anonymous container an operator had to find by hand.
-  The label is deliberately not `citadel.managed` — that one means "a tenant's game
+  The label is deliberately not `citadel.managed`. That one means "a tenant's game
   server" and is what the stats collector enumerates.
 
 ## Repository layout
@@ -139,7 +139,7 @@ stating plainly, both surfaced in the admin UI:
   unreadable.** The stored repository passwords become undecryptable, and they are
   the only thing that opens the repositories.
 - The panel is a single point of failure for *reading* backups. If it is rebuilt from
-  a Postgres backup, the repository passwords come back with it — which is why the
+  a Postgres backup, the repository passwords come back with it, which is why the
   panel's own database must be backed up by other means (see the end of this doc).
 
 Minting is race-safe (`INSERT … ON CONFLICT DO NOTHING` followed by a re-read): two
@@ -155,14 +155,14 @@ nothing can later decrypt.
   plaintext. With one field there is exactly one answer to "is this connection
   encrypted?", and `wire.ts` rejects a scheme in `endpoint` to keep it that way.
 - Plaintext has to be *possible*. A self-hosted Garage, MinIO or SeaweedFS on a LAN
-  commonly has no certificate at all — that is the normal case for an operator
+  commonly has no certificate at all. That is the normal case for an operator
   self-hosting this panel, and refusing it would just mean no backups.
 
 The admin form is helpful rather than pedantic about it: pasting `http://host:3900`
 strips the scheme and *moves the TLS switch*, so the correction is visible and
 undoable rather than silent.
 
-Note that `region` is not cosmetic — it is part of the SigV4 signature, so a wrong
+Note that `region` is not cosmetic. It is part of the SigV4 signature, so a wrong
 value fails authentication rather than being ignored. Self-hosted servers pick their
 own: **Garage defaults to `garage`**, MinIO accepts anything.
 `explainResticFailure` recognises the TLS-handshake and wrong-region failures
@@ -188,12 +188,12 @@ data.
 Two decisions in `backup/dumps.ts`, both rejecting the more obvious option:
 
 - **A throwaway container, not `execInContainer`.** `docker/exec.ts` buffers a
-  command's whole stdout into a string — fine for a `CREATE DATABASE`, fatal for a
+  command's whole stdout into a string, fine for a `CREATE DATABASE` and fatal for a
   multi-gigabyte dump. Running `mariadb-dump` in its own container on `node_db_net`
   with `/dumps` bind-mounted lets the dump stream to disk and never enter the agent's
   memory.
 - **One file per database, not `--all-databases`.** A single stream would also capture
-  `mysql.user` — every tenant's password hash — and would make a per-database restore
+  `mysql.user`, every tenant's password hash, and would make a per-database restore
   impossible. The panel is already the source of truth for database credentials, so
   the dumps carry *data only*.
 
@@ -206,27 +206,27 @@ without locking the games out.
 One database failing does **not** fail the run: on a node with fifty databases, one
 that was dropped out from under us must not cost the other forty-nine their backup.
 The failures are logged, listed in the result, and the snapshot records which
-databases it actually contains. A run where *nothing* dumped does fail — "backup
-complete" when nothing was captured is worse than an error.
+databases it actually contains. A run where *nothing* dumped does fail. Reporting
+"backup complete" when nothing was captured is worse than an error.
 
 The dump image is resolved by **inspecting the node's own database container** rather
 than pinning a version: whatever engine serves the data ships a `mariadb-dump` that
 can read it, and a mismatched client is a class of corruption that only appears at
 restore time.
 
-Dumps stage in `BACKUP_STAGING_ROOT/node-databases` — a *sibling* of the server data
+Dumps stage in `BACKUP_STAGING_ROOT/node-databases`, a *sibling* of the server data
 root, never inside it. A dump under a server's own data directory would be readable
 through the file manager and over SFTP by anyone with the `files` permission, which
 is not the same set of people as those with `database`; and this is *every* tenant's
 data, so it must not sit under any one server's tree. The directory is emptied before
 each run (a stale dump for a deleted database would otherwise ride along forever) and
-cleared afterwards **including on failure** — leaving plaintext SQL for a whole node
+cleared afterwards **including on failure**. Leaving plaintext SQL for a whole node
 on disk between backups is the largest needless exposure in this path.
 
 ## The quota: how "keep 5" is enforced
 
 Retention is a plain snapshot count per subject, not a calendar policy. It is applied
-as the job's **first real phase** — list the snapshots, delete the oldest ones that
+as the job's **first real phase**: list the snapshots, delete the oldest ones that
 have to go, and only then write the new one:
 
 ```
@@ -239,7 +239,7 @@ Three reasons, in order of how much they matter:
    frees space *before* asking for more rather than after.
 2. It is what "a new backup replaces the oldest" actually means.
 3. It happens inside the async job, so the request that started the backup stays
-   fast — a `forget --prune` rewrites pack files and has no business in an HTTP
+   fast. A `forget --prune` rewrites pack files and has no business in an HTTP
    handler.
 
 The job reports which snapshot ids it deleted (`result.forgotten`), because the panel
@@ -256,7 +256,7 @@ There is deliberately **no `--keep-*` policy anywhere**. `restic forget` with a 
 and no matching snapshots deletes everything, and a mistake in that argument is
 unrecoverable. Only explicit id lists are ever passed, and `forgetSnapshotsArgs`
 refuses an empty one. For the same reason, an absent `keepMax` in a request body means
-*unlimited*, never "keep none" — a malformed request must not be able to wipe a
+*unlimited*, never "keep none". A malformed request must not be able to wipe a
 repository.
 
 Failed runs produce no snapshot, so they are bounded separately: `trimFailedRuns`
@@ -267,28 +267,28 @@ otherwise write one failed row per server per schedule tick forever.
 
 The admin page reports one line: **used · allowed · total**.
 
-- **used** — real. `restic stats --mode raw-data` (the deduplicated, compressed bytes
+- **used**: real. `restic stats --mode raw-data` (the deduplicated, compressed bytes
   actually stored, not the logical restore size), recorded per repository as the last
   phase of every backup. Measured *then* because the index is already in the local
   cache, so it costs a metadata pass rather than a download. Summing the recorded
   column is what makes the page load cheap: measuring live would mean one container
   per repository, which on a fleet of two hundred servers is two hundred container
   starts for a page view.
-- **allowed** — enforced. `assertStorageAvailable()` refuses new backups once the
+- **allowed**: enforced. `assertStorageAvailable()` refuses new backups once the
   total reaches it, before the node is contacted, so an operator hits a clear message
   instead of an invoice. Deliberately a check on the *current* total rather than a
   projection of what this backup will add: restic deduplicates, so a snapshot's real
   cost is unknowable in advance and refusing on a guess would block backups that
   would have fitted. The quota never blocks *deleting*, so an operator over it can
   always get back under.
-- **total** — operator-declared, display only. S3 exposes no capacity API, so the
+- **total**: operator-declared, display only. S3 exposes no capacity API, so the
   size of the storage plan is something only they know. The panel asks rather than
   pretending to have discovered it.
 
 `unmeasured` travels with the report so the number is honest: a repository whose size
 has never been read contributes nothing, and the UI says the figure is a floor rather
-than presenting it as complete. A measurement failure records `null`, never `0` —
-conflating "could not read" with "genuinely empty" would understate the one number
+than presenting it as complete. A measurement failure records `null`, never `0`.
+Conflating "could not read" with "genuinely empty" would understate the one number
 this exists to get right.
 
 ## Asynchronous execution
@@ -297,7 +297,7 @@ A 30 GB backup takes minutes to hours. Running it inside the request that asked 
 it would die on the first proxy idle timeout, could not report progress, and would
 lose everything on a reconnect. So:
 
-1. The panel writes a `backup_runs` row (`pending`) — **before** calling the agent. If
+1. The panel writes a `backup_runs` row (`pending`), **before** calling the agent. If
    the agent call then fails, there is a durable `failed` record saying why. The other
    order loses every failure that happened before a job id existed.
 2. The agent registers an in-memory job and returns `202 { jobId }` immediately.
@@ -306,7 +306,7 @@ lose everything on a reconnect. So:
    `backup_run_logs`, and records the outcome.
 5. The browser polls the panel and renders a progress bar and a live log tail.
 
-The panel polls; the node never calls in — it has no panel credential and may be
+The panel polls; the node never calls in. It has no panel credential and may be
 behind NAT. Same shape as `security/watcher.ts`.
 
 Jobs are keyed by an opaque **subject** string (`server:<uuid>` or `node:databases`)
@@ -333,7 +333,7 @@ restic's `--json` output is newline-delimited, and the agent reads it by **polli
 container's log tail** (`getContainerLogs`) rather than following the log stream.
 Following would mean a second streaming log implementation alongside
 `demuxDockerLogStream`, and `RESTIC_PROGRESS_FPS=0.2` throttles restic to one progress
-line every five seconds — granular enough for a progress bar, bounded enough to keep
+line every five seconds, granular enough for a progress bar and bounded enough to keep
 in a log. The parser in `backup/restic.ts` is deliberately tolerant: a polled tail can
 begin or end mid-line, so anything that is not valid JSON is skipped rather than
 failing the parse.
@@ -348,11 +348,11 @@ large database".
 line rather than an appended `TEXT` column because that is what makes a live tail
 cheap: `WHERE seq > $cursor` returns only what is new, so a two-second poll transfers
 a few lines instead of re-downloading a log that grows for the length of a backup. The
-same cursor makes the drain idempotent — a retried poll re-inserts nothing, thanks to
+same cursor makes the drain idempotent. A retried poll re-inserts nothing, thanks to
 `UNIQUE (run_id, seq)`.
 
 Logs are kept with the run and cascade-delete with it. **Failed runs are kept
-alongside successful ones** — a backup that did not happen is the single most useful
+alongside successful ones**. A backup that did not happen is the single most useful
 thing to be able to tell an operator, and a snapshot list can only ever show
 successes. That is the whole reason the panel keeps its own rows when the repository
 already lists snapshots.
@@ -366,27 +366,27 @@ the panel, so a truncated log says so once rather than silently.
 Two independent cron expressions, both admin-set at **Admin → Backups** and both
 evaluated in the panel's configured timezone:
 
-- **Server backup schedule** — sweeps server files.
-- **Database backup schedule** — sweeps node databases.
+- **Server backup schedule** sweeps server files.
+- **Database backup schedule** sweeps node databases.
 
 Separate because they are different operations on different subjects at different
 privilege levels; an operator who wants nightly file backups does not necessarily want
 the same cadence of full database sweeps. Migration 021 deliberately does **not**
-inherit the old single schedule into the database one — starting to sweep every
+inherit the old single schedule into the database one. Starting to sweep every
 tenant's database because of a setting made for file backups would be a decision the
 operator did not make.
 
 `lib/cron.ts` is hand-rolled rather than a dependency. What is needed is small and
 exactly specified (match a `Date`, describe an expression, compute the next run), while
 a cron library brings `@`-shorthands, seconds fields, `L`/`W`/`#` extensions and its own
-timezone handling — none of which an operator-facing field should accept. It is shared
+timezone handling, none of which an operator-facing field should accept. It is shared
 by the UI preview and the scheduler, so a schedule can never display one thing and do
 another.
 
 Three details it gets right on purpose:
 
 - **POSIX day semantics.** When *both* day-of-month and day-of-week are restricted, the
-  day matches if **either** does — `0 4 1 * mon` means "the 1st, and also every
+  day matches if **either** does. `0 4 1 * mon` means "the 1st, and also every
   Monday", not their intersection. Matching the manpage matters because an operator's
   expression must do what its documentation says.
 - **Real timezones, not fixed offsets.** Evaluation goes through
@@ -400,8 +400,8 @@ Three details it gets right on purpose:
 ### Firing
 
 One timer at 30 s (well under a minute, so a schedule naming a specific minute is never
-missed). Each tick **reconciles before it fires** — a run that has just finished must be
-closed out before its subject is considered for a new one — which is also why
+missed). Each tick **reconciles before it fires**, because a run that has just finished
+must be closed out before its subject is considered for a new one. That is also why
 everything lives on one timer: separate timers could start a second restic against one
 repository.
 
@@ -411,13 +411,13 @@ and a marker would have to be written transactionally with the backup to be
 trustworthy. Asking "has a scheduled run started for this subject since the top of this
 minute?" needs no extra state and survives a panel restart mid-minute.
 
-`concurrency` caps how many *servers* start per tick — every concurrent backup reads a
+`concurrency` caps how many *servers* start per tick. Every concurrent backup reads a
 disk and saturates a node's upstream, so on a fleet of a hundred servers the schedule
 trickles rather than stampedes. Database backups are not throttled by it: there is one
 per node, a node cannot contend with itself, and the dumps within a run are already
 sequential.
 
-A server is skipped when it is suspended (its container is stopped pending review —
+A server is skipped when it is suspended (its container is stopped pending review, and
 continuing to bill the operator's bucket for it is not what anyone configured), still
 installing, in `error`, already running a backup, or has `servers.backups_enabled =
 false`. A node is skipped without DB admin credentials, with no databases, or with
@@ -430,7 +430,7 @@ opt-in would leave most of it silently unprotected.
 The interval handle lives on `globalThis`, not in a module-level binding. The scheduler
 starts once from `instrumentation.ts`, which Next.js never re-runs; when the module is
 hot-replaced, a module-level `timer` would be `null` in the new instance while the
-*old* instance's interval kept firing the previous version of the code — against
+*old* instance's interval kept firing the previous version of the code, against
 whatever schema that version knew about. The symptom is a tick failing on a table a
 migration has since renamed, from a stack frame in a file that no longer exists. A
 global handle makes a reload *replace* the timer instead of racing it.
@@ -439,14 +439,14 @@ global handle makes a reload *replace* the timer instead of racing it.
 
 ### Server files
 
-Owner or admin only — `backups` is enough to *take* a backup, but a restore overwrites
+Owner or admin only. `backups` is enough to *take* a backup, but a restore overwrites
 a world.
 
 1. The panel stops the server and marks it `stopped`. Not a courtesy: restic would
    otherwise be writing files the running game has open and cached, and the game would
    overwrite half of them on its next save.
 2. `restic restore <snapshot> --target /` rebuilds `/data`.
-3. The server is left **stopped**, with a separate "Start the server" button — so the
+3. The server is left **stopped**, with a separate "Start the server" button, so the
    owner can check the restored state before players reconnect, and a restore that only
    half-worked is not immediately handed to a live game.
 
@@ -454,14 +454,14 @@ Databases are untouched: they are not part of a server backup.
 
 ### Node databases
 
-Admin only, and the most destructive operation in the panel — it overwrites the live
+Admin only, and the most destructive operation in the panel. It overwrites the live
 contents of every database in the snapshot, across every tenant on that node. The
 confirmation dialog says exactly that, names the databases, and says to restart the
 affected servers afterwards.
 
 Each dump is imported with `CREATE DATABASE IF NOT EXISTS` first, because the reason to
 run this is usually that the databases are gone. The panel re-provisions the scoped
-users and grants separately from its own encrypted records — which is why the dumps only
+users and grants separately from its own encrypted records, which is why the dumps only
 need to carry data.
 
 Servers are **not** stopped first, unlike a file restore. A database import goes through
@@ -479,12 +479,12 @@ its own initiative.
   that database was provisioned after the backup was taken, and losing the rest of the
   restore over it would be worse. An import is not transactional (`mariadb-dump` output
   contains its own DDL, which MariaDB cannot roll back), so a failure leaves that one
-  database partially restored — which is reported, not hidden.
+  database partially restored, which is reported, not hidden.
 
 ## Deletion
 
 Snapshot first (`forget --prune`), then the panel row. The other order would orphan the
-snapshot on a prune failure — paid for forever with nothing in the UI referencing it. A
+snapshot on a prune failure, paid for forever with nothing in the UI referencing it. A
 snapshot the agent reports as already gone counts as success, so a retried delete
 completes.
 
@@ -514,12 +514,12 @@ access key AES-256-GCM encrypted):
 | `databases` | `schedule`, `maxPerNode` |
 
 `servers.exclude` is admin-controlled and applies to server **file** backups on every
-server — excluding regenerable data (caches, logs) shrinks every snapshot in the fleet,
+server. Excluding regenerable data (caches, logs) shrinks every snapshot in the fleet,
 which is a fleet-wide decision rather than a per-owner one. Database backups have
 nothing to exclude: the staging directory contains exactly the dumps the run just
 wrote.
 
-The **Test connection** button runs on a real node, not on the panel — a node is what
+The **Test connection** button runs on a real node, not on the panel. A node is what
 has to reach S3, and it may sit behind a different egress path. It probes a *repository*
 path rather than merely listing the bucket, because the credential that can list but not
 write is the one operators actually misconfigure. A repository that does not exist yet
@@ -532,15 +532,15 @@ Agent-side (`.env` on each node):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `RESTIC_IMAGE` | `restic/restic:0.19.1` | Pinned, not `latest` — a repository written by one restic version and read by another is a thing to opt into |
+| `RESTIC_IMAGE` | `restic/restic:0.19.1` | Pinned, not `latest`. A repository written by one restic version and read by another is a thing to opt into |
 | `BACKUP_STAGING_ROOT` | `<SERVER_DATA_ROOT>/../backup-staging` | Dump staging and restic's chunk cache |
 | `BACKUP_NETWORK` | `citadel_backup_net` | Dedicated bridge for tool containers |
 | `AGENT_MAX_BACKUP_LOG_LINES` | `2000` | Per-job log buffer cap |
 
 restic's chunk cache is kept per repository under the staging root between runs. Without
 it every incremental backup re-downloads the repository index from S3 before it can
-decide what changed — slow, and a real per-request bill. The cache holds no plaintext
-tenant data, since repository contents are encrypted.
+decide what changed. That is slow, and a real per-request bill. The cache holds no
+plaintext tenant data, since repository contents are encrypted.
 
 ## Schema
 
@@ -556,20 +556,20 @@ tenant data, since repository contents are encrypted.
 One `backup_runs` table for both scopes because a run is a run: the lifecycle, progress
 reporting and log are identical and only the subject differs. Two tables would have meant
 two reconcilers that could drift apart. The repository tables *are* split, so each keeps a
-real foreign key and cascades when its subject is deleted — a polymorphic `(scope, id)`
+real foreign key and cascades when its subject is deleted. A polymorphic `(scope, id)`
 column cannot express that.
 
 Migration 021 reshapes a database that ran the original single-scope 020: it adds the new
 tables and columns, drops `server_backups`/`server_backup_logs`, and rewrites the settings
 JSON into the nested groups. The old rows are dropped rather than migrated because they
 describe snapshots that mixed files and dumps in one tree, which nothing can now restore
-correctly — keeping rows that offer a Restore button which cannot work would be worse than
+correctly. Keeping rows that offer a Restore button which cannot work would be worse than
 an empty history. The snapshots themselves are left in the bucket under the old
 `<prefix>/<serverId>` path, unreferenced, for the operator to remove by hand.
 
 ## What is not backed up
 
-The panel's own PostgreSQL database. Backups cover *game servers* — their files, and the
+The panel's own PostgreSQL database. Backups cover *game servers*: their files, and the
 databases they use. The control plane's metadata (accounts, nodes, audit logs, **and the
 repository passwords that open every snapshot**) is the operator's responsibility to back
 up by ordinary means, and it must be: without it, the snapshots in S3 cannot be decrypted.

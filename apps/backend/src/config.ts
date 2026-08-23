@@ -2,8 +2,8 @@
  * Agent configuration.
  *
  * Resolved and validated once at import time so a misconfigured node fails at
- * boot rather than at the first container operation — the same fail-fast
- * posture the panel backend uses in `config/env.ts`.
+ * boot rather than at the first container operation. This is the same
+ * fail-fast posture the panel backend uses in `config/env.ts`.
  */
 
 import { resolve } from "node:path";
@@ -71,7 +71,7 @@ export const config = {
 
   /**
    * Root directory for per-server data. Every path the agent touches is derived
-   * from this plus a server id — the panel never supplies a host path, which is
+   * from this plus a server id. The panel never supplies a host path, which is
    * what stops a compromised panel from bind-mounting `/` into a container.
    */
   serverDataRoot: resolve(optional("SERVER_DATA_ROOT", "/var/lib/citadel/servers")),
@@ -84,7 +84,7 @@ export const config = {
    * gVisor or `kata-runtime`. Empty means the daemon default (`runc`).
    *
    * A per-node knob rather than a panel setting because it names a binary
-   * installed on *this* host — the panel has no way to know what a node has.
+   * installed on *this* host, and the panel has no way to know what a node has.
    * Validated for shape here and against the daemon's runtime list at boot
    * (see `reportContainerSecurityAtBoot`), so a typo surfaces as one clear
    * line instead of a create-time error on every provision.
@@ -122,9 +122,9 @@ export const config = {
 
   /**
    * Optional TLS material for the HTTP/WS server. When both are set the agent
-   * serves HTTPS/WSS — required when the panel is HTTPS and the browser connects
-   * directly (a `ws://` URL from an `https://` page is blocked as mixed content).
-   * Paths are resolved lazily via `Bun.file` at server start.
+   * serves HTTPS/WSS, which is required when the panel is HTTPS and the browser
+   * connects directly (a `ws://` URL from an `https://` page is blocked as mixed
+   * content). Paths are resolved lazily via `Bun.file` at server start.
    */
   tlsCert: optional("AGENT_TLS_CERT", ""),
   tlsKey: optional("AGENT_TLS_KEY", ""),
@@ -150,7 +150,7 @@ export const config = {
    * The shared per-node database network. Created by `scripts/setup-node-db.ts`,
    * which also starts the MariaDB container. The agent attaches a server's
    * container to this network when its owner provisions a database, so the game
-   * server can reach MariaDB (and nothing else on that network — ICC is off).
+   * server can reach MariaDB (nothing else on that network, since ICC is off).
    */
   nodeDbNetwork: optional("NODE_DB_NETWORK", "node_db_net"),
 
@@ -166,7 +166,7 @@ export const config = {
    *
    * Deliberately a *sibling* of the data root rather than a directory inside
    * it. A dump written under `<serverDataRoot>/<id>` would be visible in the
-   * file manager and over SFTP — so a plaintext copy of the game's database
+   * file manager and over SFTP, so a plaintext copy of the game's database
    * would be readable by every subuser with the `files` permission but not the
    * `database` one. It would also land inside the very tree restic is walking.
    */
@@ -182,7 +182,7 @@ export const config = {
    *
    * restic is the backup engine rather than a hand-rolled tar-to-S3 uploader
    * because snapshots, deduplication, compression and client-side encryption
-   * are the parts of a backup system that are hard to get right — see
+   * are the parts of a backup system that are hard to get right. See
    * `docs/backups.md`. It runs in a throwaway container instead of being
    * installed on the host so a node needs nothing beyond the Docker socket the
    * agent already owns.

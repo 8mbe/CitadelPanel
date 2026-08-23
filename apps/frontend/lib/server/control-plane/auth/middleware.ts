@@ -31,8 +31,8 @@ import { forbidden, notFound, unauthorized } from "../lib/http";
  *
  * The apiKey plugin only inspects `apiKeyHeaders` (`x-api-key`); Better Auth's
  * own `bearer()` plugin translates Bearer *session tokens*, not keys. Rather
- * than fight either library, the alias is normalized here — the single place
- * sessions are resolved — so scripts can use the conventional Bearer scheme
+ * than fight either library, the alias is normalized here, in the single place
+ * sessions are resolved, so scripts can use the conventional Bearer scheme
  * against the same `/api/*` surface. Only the headers handed to Better Auth
  * are rewritten; the original request (and its audit-trail headers) is kept.
  */
@@ -50,7 +50,7 @@ function withApiKeyHeaderAlias(headers: Headers): Headers {
  * Resolve who the caller is, from the session alone.
  *
  * Kept separate from the ban/role check below because resolving *who* should be
- * free while the authoritative check costs a round trip — knowing the caller's
+ * free while the authoritative check costs a round trip. Knowing the caller's
  * id cheaply is what lets the server guards start their own lookup at the same
  * time as that check (see {@link requireServerPermission}). See
  * `sessionCache.ts` for why the result is cached at all.
@@ -86,7 +86,7 @@ async function resolveSessionIdentity(
  * session was established (cookie or API key). The role is read from the same
  * row: with the session served from the cookie cache, `session.user.role` could
  * be up to the cache lifetime stale, so the authoritative value comes from the
- * database here — a promotion or demotion takes effect on the next request, not
+ * database here. A promotion or demotion takes effect on the next request, not
  * minutes later.
  */
 async function authorizeSession(
@@ -140,7 +140,7 @@ export async function requireAuth(request: Request): Promise<AuthenticatedUser> 
 /**
  * Require a global admin.
  *
- * Subuser permissions never satisfy this check — admin capability is gated
+ * Subuser permissions never satisfy this check. Admin capability is gated
  * purely on the global role (plan.md section 5).
  */
 export async function requireAdmin(request: Request): Promise<AuthenticatedUser> {
@@ -179,8 +179,8 @@ export async function requireServerPermission(
  * Resolve the caller and their access to one server, in one round trip.
  *
  * Both lookups hang off the session's user id, and the session is served from
- * the signed cookie cache — so the id is known before either query runs, and
- * running them one after the other made every guarded server endpoint wait
+ * the signed cookie cache, so the id is known before either query runs.
+ * Running them one after the other made every guarded server endpoint wait
  * twice for no reason. They go together now.
  *
  * The ban check is not weakened by this: `authorizeSession` still throws for a

@@ -1,15 +1,16 @@
 # Performance
 
-The two costs that dominate every panel request — a blocking Docker call on the
-node, and a database round trip from the control plane — and the rules the code
-follows to keep them off the hot path. Read this before adding a read endpoint,
-a node call, or a poll; all three traps are easy to walk back into.
+Two costs dominate every panel request: a blocking Docker call on the node, and
+a database round trip from the control plane. This doc covers both, and the
+rules the code follows to keep them off the hot path. Read this before adding a
+read endpoint, a node call, or a poll; all three traps are easy to walk back
+into.
 
 ## Rule 1: the agent never blocks on `docker stats`
 
 `GET /containers/{id}/stats?stream=false` looks like a snapshot and is not. The
 daemon takes a reading, **waits out its own collection interval**, takes a
-second, and only then answers — one to two seconds, every call, on an idle
+second, and only then answers. One to two seconds, every call, on an idle
 machine. It does that because CPU usage is a rate: the payload's `precpu_stats`
 is the earlier reading, and Docker will not answer until it has both.
 
@@ -21,7 +22,7 @@ fleet list, which samples every server on every node.
 daemon-supplied pair is gone. The agent supplies its own instead:
 `docker/stats.ts` keeps the last CPU counters it read per container
 (`cpuBaselines`) and differences the new reading against them. The pairing is
-strictly better for a poller — the percentage covers the interval between polls
+strictly better for a poller. The percentage covers the interval between polls
 rather than an arbitrary one-second window inside a request.
 
 The map is what makes the whole thing work, so its edges matter:
@@ -30,9 +31,9 @@ The map is what makes the whole thing work, so its edges matter:
   the admin sweep landing on top of a page poll): the older baseline is *kept*
   and its percentage reused. Replacing it would leave the next caller measuring
   across a few milliseconds of noise.
-- **No usable baseline** — first sample for this container, a gap longer than
+- **No usable baseline.** First sample for this container, a gap longer than
   `MAX_CPU_BASELINE_AGE_MS`, or a counter that went backwards because the
-  container restarted — the agent takes a second reading after a short wait
+  container restarted. Here the agent takes a second reading after a short wait
   rather than reporting a misleading `0`. Still an order of magnitude cheaper
   than the daemon's own blocking sample, and it happens once per container.
 - Baselines for containers nobody has asked about are evicted, and a container
@@ -59,19 +60,19 @@ mounted. The declaration lives in the component that renders the numbers, so
 moving the cards to another section moves the poll with them.
 
 The layout's seed fetch used to serve the same idea, until the layout stopped
-fetching at all — see Rule 3 for what replaced it.
+fetching at all. See Rule 3 for what replaced it.
 
 ### One request per tick, not per tile
 
 The dashboard's tiles poll every few seconds while a server is running, and the
-per-server `/stats` endpoint costs one authenticated round trip each — an owner
+per-server `/stats` endpoint costs one authenticated round trip each. An owner
 with ten running servers paid ten requests per tick, each resolving access,
 re-reading the row, and reaching its node separately.
 `POST /api/servers/stats-batch` (`routes/servers.ts`) resolves the caller's
 access to every named server in **one** statement (the subuser grant LEFT
 JOINed on, same decision `resolveServerAccess` makes), groups the allowed ones
 by node so each node's agent is asked exactly once, and returns a map. Servers
-the caller cannot reach are simply absent — the same hide-existence rule the
+the caller cannot reach are simply absent, the same hide-existence rule the
 individual endpoint applies with its 404. The abuse watcher's sweep had this
 shape first; the dashboard endpoint is the same idea pointed at owners.
 
@@ -79,7 +80,7 @@ The sweep goes one step further: nodes are sampled concurrently, up to four at
 a time (`security/watcher.ts`). Nodes are independent machines, so waiting for
 one slow or dead agent before even asking the next stretched each sweep by the
 *sum* of node latencies; the cap bounds the burst any one sweep puts on the
-fleet's agents. Error containment is unchanged — an unreachable node logs and
+fleet's agents. Error containment is unchanged. An unreachable node logs and
 returns, and one server's scoring failure costs only itself.
 
 ## Rule 2: panel endpoints are shaped around database round trips
@@ -101,7 +102,7 @@ want.
 `getServerReconciled` is the worked example. It loads the row (joining
 `nodes.hostname` and `blueprints.key` in the same statement), then runs the
 ports lookup, the plugin-support probe, and the node's status reconcile
-concurrently — they are independent of each other, so the endpoint is two
+concurrently. They are independent of each other, so the endpoint is two
 database round trips and one node round trip deep instead of a chain of seven.
 `getServerPluginSupportSummary` takes the row it already has (`PluginServerFields`)
 rather than re-reading it.
@@ -112,13 +113,13 @@ The list endpoints resolve every row's ports in one `WHERE server_id = ANY(...)`
 (`loadPortsForMany`) and every owner in one `WHERE id = ANY(...)`. The admin
 fleet list groups servers by node so each node's agent is asked exactly once
 (`sampleNodeServers`), rather than once per server. A per-row query inside a
-loop is the failure mode this codebase keeps rediscovering — see the history of
+loop is the failure mode this codebase keeps rediscovering. See the history of
 `summariesFromRows`.
 
 Batching also means one statement per *write* of a set. `writeEnvValues` upserts
 a whole env block through one `UNNEST`, because provisioning writes a
 blueprint's entire environment at once. It is also the single place that decides
-whether a value is encrypted — the owner's env form used to write secret-flagged
+whether a value is encrypted. The owner's env form used to write secret-flagged
 values in the clear, which `loadEnvForContainer` then failed to decrypt on the
 next container build.
 
@@ -130,21 +131,21 @@ not the mechanism.
 
 | Cache | Where | Invalidated by |
 | --- | --- | --- |
-| The whole `blueprints` table | `blueprints/registry.ts` | `invalidateBlueprintCache()` — called by the boot sync and by every write in `services/blueprintManager.ts` |
+| The whole `blueprints` table | `blueprints/registry.ts` | `invalidateBlueprintCache()`, called by the boot sync and by every write in `services/blueprintManager.ts` |
 | A node's decrypted credentials | `nodes/nodeRegistry.ts` | `invalidateNode()`, reached through `invalidateNodeConnection()` in `nodes/nodeApi.ts`, which the node update and delete routes call |
 | Resolved sessions | `auth/sessionCache.ts` | `invalidateSessionCache()`, from Better Auth's after-hook on every action that revokes a session |
 
-The node cache matters more than it looks: `getNodeWithSecrets` sat in front of
-*every* agent call — console attach, status reconcile, stats poll, file listing
-— so a page that touched its node four times paid for four reads and four AES
+The node cache matters more than it looks. `getNodeWithSecrets` sat in front of
+*every* agent call: console attach, status reconcile, stats poll, file listing.
+So a page that touched its node four times paid for four reads and four AES
 decrypts of a row an admin last edited months ago.
 
 The session cache exists because of a gap that is easy to miss. Better Auth's
-cookie cache is meant to make `getSession` free, and it is — for five minutes.
+cookie cache is meant to make `getSession` free, and for five minutes it is.
 But the panel calls `auth.api.getSession({ headers })` and **discards the
 response**, so the `Set-Cookie` that would re-establish the cache never reaches
 the browser; only the sign-in response ever writes it. Every session older than
-its cookie cache — which is every session in real use — therefore paid two extra
+its cookie cache, which is every session in real use, therefore paid two extra
 database round trips on *every* request, permanently. That was ~127 ms per
 request here.
 
@@ -152,7 +153,7 @@ What makes caching sessions acceptable rather than reckless is that the parts
 that must not go stale are not cached: `authorizeSession` re-reads `banned` and
 `role` from the database on every single request, which is the same compensation
 the cookie cache already depends on. Revocation is immediate rather than
-TTL-bounded — signing out changes the cookie, so the key changes, and any
+TTL-bounded. Signing out changes the cookie, so the key changes, and any
 server-side revocation clears the cache through the after-hook.
 
 **If you add a write to `blueprints` or `nodes`, invalidate.** A stale blueprint
@@ -167,15 +168,15 @@ grant in one statement, so a subuser's request costs the same as an owner's.
 
 The logs and stats endpoints go further: `requireConsoleAccessAndLocation` runs
 the permission guard and the two-column location read *concurrently*. The guard
-is still what gates the response — if it throws, the whole expression rejects
-and the row is never surfaced — but the endpoint waits once instead of twice.
-That is worth doing where an endpoint is polled for as long as a page is open;
-it is not worth doing anywhere else.
+is still what gates the response. If it throws, the whole expression rejects
+and the row is never surfaced. The win is that the endpoint waits once instead
+of twice. That is worth doing where an endpoint is polled for as long as a page
+is open; it is not worth doing anywhere else.
 
 ## Rule 3: a page is as slow as its deepest chain of fetches
 
 Endpoint latency is only half of it. A page that fetches A, waits, then fetches
-B pays both — and the browser is where that shows up, not the server log.
+B pays both, and the browser is where that shows up, not the server log.
 
 The pattern to watch for is a component that renders a skeleton until its own
 fetch resolves, with the things that need *other* data as its children: those
@@ -202,18 +203,18 @@ The server page was the worst offender: its layout was a client component that
 gated every section on its own `GET /api/servers/:id`, so nothing else on the
 page could even begin until that round trip came back. The layout is now a
 server component (`resolveServerView` in `lib/server/server-view.ts`) that
-authorizes and reads the record during rendering — the same move the panel
-layout already made for the session — and seeds `ServerDataProvider` with it.
+authorizes and reads the record during rendering, the same move the panel
+layout already made for the session, and seeds `ServerDataProvider` with it.
 Sections fetch their own data from their first mount; the shell's fetch no
 longer exists to wait behind.
 
 One trade-off was accepted: the old client layout also pre-fetched a stats
 sample alongside the record (for sections that show one), because it knew the
 pathname and the server component does not. The first sample now comes from the
-provider's existing demand-driven poll instead — one poll later than the old
-seed, against every section loading ~a round trip sooner. If that ever matters,
-the seed can come back as a prop passed down from each section route, which
-knows what it renders.
+provider's existing demand-driven poll instead. That is one poll later than the
+old seed, against every section loading ~a round trip sooner. If that ever
+matters, the seed can come back as a prop passed down from each section route,
+which knows what it renders.
 
 ## What this does not fix
 
@@ -235,9 +236,9 @@ Known and not yet addressed:
 
 ## Related
 
-- `server-lifecycle.md` — what the stored status means and why the node is the
+- `server-lifecycle.md`: what the stored status means and why the node is the
   truth, which is the reconcile `getServerReconciled` runs.
-- `plugins.md` — the plugin context these reads resolve.
-- `ports.md` — the port rows the list endpoints batch.
-- `../lib/server/control-plane/security/watcher.ts` — the sweep this doc's
+- `plugins.md`: the plugin context these reads resolve.
+- `ports.md`: the port rows the list endpoints batch.
+- `../lib/server/control-plane/security/watcher.ts`: the sweep this doc's
   per-node batching and concurrency caps were built for.

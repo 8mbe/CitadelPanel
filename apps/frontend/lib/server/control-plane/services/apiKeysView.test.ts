@@ -97,8 +97,8 @@ describe("toApiKeyAdminView", () => {
     const view = toApiKeyAdminView(row({ expires_at: "not-a-date", last_request: "nope" }), NOW);
     expect(view.expiresAt).toBeNull();
     expect(view.lastUsedAt).toBeNull();
-    // An unparseable expiry must not read as expired — that would invite an
-    // admin to "clean up" keys that are actually fine.
+    // An unparseable expiry must not read as expired, because that would invite
+    // an admin to "clean up" keys that are actually fine.
     expect(view.status).toBe("active");
   });
 

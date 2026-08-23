@@ -21,13 +21,13 @@ import { resolveServerView } from "@/lib/server/server-view";
  * {@link ServerDataProvider} before the first byte: every section route can
  * start fetching its own data on mount instead of waiting for a client-side
  * `GET /api/servers/:id` to come back first. That fetch used to gate the whole
- * page — roughly one round trip of avoidable serial wait on every load.
+ * page, roughly one round trip of avoidable serial wait on every load.
  *
  * The live parts stay client-side: {@link ServerShell} reads the provider's
  * status poll (suspension and installing lockouts move while the page is open)
  * and the URL (the section guard), both of which only the client knows. A
  * missing or inaccessible server renders the not-found state rather than
- * throwing — the backend returns the same answer for "does not exist" and "no
+ * throwing. The backend returns the same answer for "does not exist" and "no
  * access", by design.
  */
 export default async function ServerLayout({

@@ -8,10 +8,10 @@
  * MariaDB and defends itself: anything that doesn't match the strict identifier
  * shape is rejected with a 400 before any SQL runs.
  *
- * The parser tests pin the mariadb client's `--xml` wire format — including the
+ * The parser tests pin the mariadb client's `--xml` wire format, including the
  * `xsi:nil` distinction that keeps a literal "NULL" string and a real NULL from
- * being conflated — because a silent mis-parse there would feed the explorer
- * (and row edits keyed on mis-read values) wrong data.
+ * being conflated. A silent mis-parse there would feed the explorer (and row
+ * edits keyed on mis-read values) wrong data.
  */
 
 import { describe, expect, test } from "bun:test";

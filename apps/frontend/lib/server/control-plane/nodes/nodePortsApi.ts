@@ -2,7 +2,7 @@
  * Typed wrappers over the node agent's port-availability endpoint.
  *
  * The agent owns the host's sockets, so "is this port actually free on the
- * node?" is a question only it can answer — the panel's `server_ports` table
+ * node?" is a question only it can answer. The panel's `server_ports` table
  * knows what CitadelPanel has bound, but not what some other process or
  * container holds. Call sites talk to this module rather than building the
  * request path by hand, mirroring {@link ./nodeServerApi.ts}.
@@ -30,13 +30,14 @@ export interface PortFreeResult {
 /**
  * Ask a node's agent which of the given host ports are bindable right now.
  *
- * Never throws for a taken port — that is a result with `free: false`. Throws
+ * Never throws for a taken port. That is a result with `free: false`. Throws
  * `HttpError` only for transport/permission failures: an unreachable node
  * becomes a 502, which callers must treat as "cannot verify" (and refuse to
  * reserve or allocate the port rather than proceed unverified).
  *
- * @param timeoutMs Short by default — a probe is instant when free; the panel's
- *   pool reservation and allocation flows should not hang on a slow node.
+ * @param timeoutMs Short by default, since a probe is instant when free; the
+ *   panel's pool reservation and allocation flows should not hang on a slow
+ *   node.
  */
 export async function checkPortsFree(
   nodeId: string,
@@ -67,7 +68,7 @@ export interface PortNumberFreeResult {
 }
 
 /**
- * Ask a node whether the given port *numbers* are free — on TCP and UDP both.
+ * Ask a node whether the given port *numbers* are free, on TCP and UDP both.
  *
  * A published port is claimed on both protocols, so a number is only usable
  * when both halves are bindable. This is where the panel's one-number-per-port

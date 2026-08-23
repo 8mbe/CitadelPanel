@@ -2,8 +2,8 @@
  * The restic command layer: repository addressing, argv, environment, and
  * output parsing.
  *
- * Everything here is pure — it computes strings from inputs and touches no I/O
- * — which is what makes the wire format of an external binary unit-testable.
+ * Everything here is pure. It computes strings from inputs and touches no I/O,
+ * which is what makes the wire format of an external binary unit-testable.
  * The side-effecting half lives in `run.ts`, which feeds these argv/env pairs
  * to a throwaway container.
  *
@@ -22,9 +22,9 @@
  * A server's **files** and a node's **databases** are backed up separately,
  * because they are owned by different people and have different lifetimes:
  *
- *   - `server` — a server's data directory, mounted at `/data`. Taken by the
+ *   - `server`: a server's data directory, mounted at `/data`. Taken by the
  *     server's owner, capped at a fixed number of snapshots.
- *   - `node`   — SQL dumps of every database provisioned on one node, staged
+ *   - `node`:   SQL dumps of every database provisioned on one node, staged
  *     and mounted at `/dumps`. Taken by an administrator, who is the only person
  *     with a reason (or the credential) to read every tenant's data at once.
  *
@@ -58,8 +58,9 @@ export const PROGRESS_FPS = "0.2";
 /** S3 connection details, as the panel supplies them per request. */
 export interface S3Target {
   /**
-   * Host (optionally with a port) of the S3 endpoint, without a scheme — e.g.
-   * `s3.eu-central-1.amazonaws.com`, `minio.example.com:9000`, `192.168.1.120:3900`.
+   * Host (optionally with a port) of the S3 endpoint, without a scheme. For
+   * example `s3.eu-central-1.amazonaws.com`, `minio.example.com:9000`,
+   * `192.168.1.120:3900`.
    */
   endpoint: string;
   bucket: string;
@@ -72,7 +73,7 @@ export interface S3Target {
    * Whether to reach the endpoint over TLS.
    *
    * Defaults to on everywhere, and the scheme is a *separate field* rather than
-   * something the caller can smuggle into `endpoint` — so plaintext is always a
+   * something the caller can smuggle into `endpoint`, so plaintext is always a
    * deliberate, visible choice and never a silent downgrade.
    *
    * It has to be possible, though: a self-hosted Garage, MinIO or SeaweedFS on a
@@ -108,7 +109,7 @@ function scopeSegment(scope: BackupScope): string {
  * tenants and buy a blast radius of exactly one subject.
  *
  * The `servers/` and `nodes/` segments keep the two scopes apart even though both
- * ids are UUIDs — so a bucket can be read by a human without guessing which kind
+ * ids are UUIDs, so a bucket can be read by a human without guessing which kind
  * of thing a bare UUID is.
  *
  * The scheme comes from `useTls`, not from the endpoint string: a scheme the
@@ -150,13 +151,13 @@ export function repositoryEnv(target: RepoTarget): Record<string, string> {
   };
 }
 
-/** `restic init` — create the repository. Fails if one already exists. */
+/** `restic init` creates the repository. Fails if one already exists. */
 export function initArgs(): string[] {
   return ["init", "--json"];
 }
 
 /**
- * `restic cat config` — the cheapest proof that a repository exists and the
+ * `restic cat config` is the cheapest proof that a repository exists and the
  * password opens it. Used both as the "do I need to init?" probe and as the
  * admin-facing connection test.
  */
@@ -203,13 +204,14 @@ export function backupArgs(options: {
   return args;
 }
 
-/** `restic snapshots --json` — the repository's snapshot list. */
+/** `restic snapshots --json` returns the repository's snapshot list. */
 export function snapshotsArgs(): string[] {
   return ["snapshots", "--json"];
 }
 
 /**
- * `restic stats --mode raw-data --json` — how much this repository occupies.
+ * `restic stats --mode raw-data --json` reports how much this repository
+ * occupies.
  *
  * `raw-data` rather than the default `restore-size`: the default reports how big
  * a restore would be (i.e. the logical size of the newest snapshot), while
@@ -229,7 +231,7 @@ export function statsArgs(): string[] {
  *
  * Null rather than zero on failure: zero is a legitimate size for a fresh
  * repository, and reporting "this repository uses nothing" because a stats call
- * timed out would understate the fleet's storage — the one number this exists to
+ * timed out would understate the fleet's storage, the one number this exists to
  * get right.
  */
 export function parseRepositorySize(output: string): number | null {
@@ -265,7 +267,7 @@ export function restoreArgs(snapshotId: string): string[] {
  *
  * The only form of deletion this system uses. There is no `--keep-*` policy
  * anywhere: retention is a plain count enforced by the caller, which decides
- * *which* snapshots go and passes their ids. That is a deliberate trade — a
+ * *which* snapshots go and passes their ids. That is a deliberate trade. A
  * `--keep-last N` would be one fewer round trip, but `forget` with a policy and
  * no matching snapshots silently deletes everything, and a mistake in that
  * argument is unrecoverable. An explicit id list cannot delete something the
@@ -286,7 +288,7 @@ export function forgetSnapshotsArgs(snapshotIds: string[]): string[] {
  * is written.
  *
  * The quota is "at most `keepMax` snapshots exist", and it is enforced *before*
- * the new backup rather than after — so the limit is never briefly exceeded, and
+ * the new backup rather than after, so the limit is never briefly exceeded, and
  * a node close to its storage ceiling frees space before asking for more. Which
  * is also what an operator means by "a new backup replaces the oldest".
  *
@@ -329,7 +331,7 @@ export interface BackupSummary {
   filesChanged: number;
   /** Bytes read from disk this run. */
   bytesProcessed: number;
-  /** Bytes actually uploaded after dedup and compression — the S3 cost. */
+  /** Bytes actually uploaded after dedup and compression, the S3 cost. */
   bytesAdded: number;
   durationSeconds: number;
 }
@@ -457,9 +459,9 @@ export function parseSnapshots(output: string): SnapshotInfo[] {
 /**
  * Turn a restic failure into something an operator can act on.
  *
- * restic's own messages are good, but the two failures an operator actually
- * hits — wrong credentials and a repository that was never initialised — read
- * as low-level S3 errors, so they get named explicitly.
+ * restic's own messages are good, but two failures an operator actually hits
+ * read as low-level S3 errors, so they get named explicitly: wrong credentials,
+ * and a repository that was never initialised.
  */
 export function explainResticFailure(exitCode: number, output: string): string {
   const tail = output.trim().slice(-1500);
@@ -467,7 +469,7 @@ export function explainResticFailure(exitCode: number, output: string): string {
   if (/wrong password|invalid data returned/i.test(tail)) {
     return (
       "restic could not decrypt the repository. The panel's stored repository " +
-      "password does not match the one the repository was created with — this " +
+      "password does not match the one the repository was created with. This " +
       "happens when PANEL_ENCRYPTION_KEY was rotated after the first backup. " +
       `Details: ${tail}`
     );
@@ -481,7 +483,7 @@ export function explainResticFailure(exitCode: number, output: string): string {
   if (/NoSuchBucket|bucket does not exist/i.test(tail)) {
     return (
       "The configured S3 bucket does not exist, or these credentials cannot see it. " +
-      "Create the bucket on the storage server first — nothing here creates one. " +
+      "Create the bucket on the storage server first. Nothing here creates one. " +
       `Details: ${tail}`
     );
   }
@@ -500,12 +502,12 @@ export function explainResticFailure(exitCode: number, output: string): string {
   if (/no such host|dial tcp|connection refused|i\/o timeout|timeout/i.test(tail)) {
     return (
       "This node could not reach the S3 endpoint. Check the host and port, and that " +
-      "the node can route to it — a LAN address reachable from the panel is not " +
+      "the node can route to it. A LAN address reachable from the panel is not " +
       `necessarily reachable from every node. Details: ${tail}`
     );
   }
-  // Not an S3 problem at all: restic could not write this node's own filesystem
-  // — its cache directory, or the staging area. It surfaces as a bare
+  // Not an S3 problem at all: restic could not write this node's own
+  // filesystem, its cache directory or the staging area. It surfaces as a bare
   // "permission denied" wrapped in a Go stack trace, which says nothing about
   // which directory or whose fault it is, and the answer is always ownership of
   // a path the agent handed to the container. Checked after the network cases so
@@ -513,7 +515,7 @@ export function explainResticFailure(exitCode: number, output: string): string {
   // problem, which is what it is.
   if (/permission denied|operation not permitted/i.test(tail)) {
     return (
-      "restic could not write to a directory on this node — its cache or the " +
+      "restic could not write to a directory on this node, its cache or the " +
       "staging area, not S3. The agent's tool containers need the paths under " +
       "BACKUP_STAGING_ROOT and SERVER_DATA_ROOT to be readable and writable by " +
       "them, so check those directories exist, are owned by the user the agent " +
@@ -523,7 +525,7 @@ export function explainResticFailure(exitCode: number, output: string): string {
   }
   // The region is part of the SigV4 signature, not a label, so a self-hosted
   // server that validates it rejects the whole request as malformed. Garage
-  // answers a wrong region with a bare `400 Bad Request` that names nothing —
+  // answers a wrong region with a bare `400 Bad Request` that names nothing,
   // and since restic retries it, the operator sees a hang rather than an error.
   // This is the single most common way a working Garage or MinIO still fails,
   // so it is worth naming even though a 400 has other possible causes.

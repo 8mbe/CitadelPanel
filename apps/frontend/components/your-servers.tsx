@@ -32,8 +32,8 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Progress } from "@/components/ui/progress";
 import { ApiError, getServersStatsBatch, listServers } from "@/lib/api";
 import { formatMbPair, formatUptime } from "@/lib/format";
 import type { ServerView } from "@/lib/types";
@@ -97,7 +97,7 @@ function ServerTile({ server }: { server: ServerView }) {
       ? `${server.nodeHostname}:${server.primaryPort}`
       : server.primaryPort > 0
         ? `port ${server.primaryPort}`
-        : "—";
+        : "None";
 
   return (
     <Card className="relative gap-3 transition-colors hover:ring-primary/40">
@@ -126,7 +126,7 @@ function ServerTile({ server }: { server: ServerView }) {
             {running ? formatUptime(server.uptimeSeconds) : "Offline"}
           </span>
           <span className="text-muted-foreground tabular-nums">
-            {running ? "Online" : "—"}
+            {running ? "Online" : "n/a"}
           </span>
         </div>
 
@@ -134,7 +134,7 @@ function ServerTile({ server }: { server: ServerView }) {
           <Meter
             icon={Cpu}
             label="CPU"
-            value={running ? `${server.cpuPercent}%` : "—"}
+            value={running ? `${server.cpuPercent}%` : "n/a"}
             percent={running ? server.cpuPercent : 0}
             muted={!running}
           />
@@ -264,7 +264,7 @@ export function YourServers() {
   // each node's agent exactly once. Stops re-arming once no servers are running.
   //
   // The effect depends on a stable signature of WHICH servers are running, not
-  // the live `servers` array — otherwise each poll's state update would
+  // the live `servers` array. Otherwise each poll's state update would
   // re-trigger it and re-arm a fresh interval every tick.
   const runningIds = servers
     .filter((s) => s.status === "running")
@@ -295,7 +295,7 @@ export function YourServers() {
           }),
         );
       } catch {
-        // A dropped refresh is not worth surfacing — the next tick either
+        // A dropped refresh is not worth surfacing. The next tick either
         // succeeds or keeps failing quietly, as before.
       }
     };

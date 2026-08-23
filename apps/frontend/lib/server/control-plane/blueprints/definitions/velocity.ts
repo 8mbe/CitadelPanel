@@ -3,7 +3,7 @@
  *
  * A proxy is not a game server: nothing plays on it. Players connect to it and
  * it hands them to one of the owner's *other* servers, which is what makes it
- * the front door of a network (`docs/server-links.md` is the other half —
+ * the front door of a network (`docs/server-links.md` is the other half, since
  * a link is how the proxy reaches a backend).
  *
  * Uses `itzg/mc-proxy` with `TYPE=VELOCITY`, which downloads and runs the
@@ -38,7 +38,7 @@ const BIND_PATCH_FILE = "/server/.citadel/velocity-bind.json";
  * `${...}` placeholders for variables with that prefix (its
  * `--patch-env-prefix` default), so the bind patch can only read the port
  * through a `CFG_`-named variable. Like every `primaryPortEnv` it is
- * deliberately absent from `envSchema` — only the panel writes it.
+ * deliberately absent from `envSchema`. Only the panel writes it.
  */
 const PORT_ENV = "CFG_PROXY_PORT";
 
@@ -46,7 +46,7 @@ const PORT_ENV = "CFG_PROXY_PORT";
  * First-launch provisioning.
  *
  * Runs in a throwaway alpine container with the server's data dir mounted at
- * `/server`, as the uid that owns that directory rather than as root — the
+ * `/server`, as the uid that owns that directory rather than as root. The
  * agent pins it there, because a hardened container's uid 0 has no
  * `CAP_DAC_OVERRIDE` to write into someone else's directory and no `CAP_CHOWN`
  * to give the result away afterwards. So the files this writes are already
@@ -57,7 +57,7 @@ const installScript = `set -eu
 cd /server
 
 # Velocity's modern forwarding needs a shared secret, and a well-known default
-# would let anyone spoof a backend connection — so each server gets its own.
+# would let anyone spoof a backend connection, so each server gets its own.
 # Written without a trailing newline: the file's bytes ARE the secret, and the
 # same string has to be pasted into each backend's paper-global.yml.
 if [ ! -f forwarding.secret ]; then
@@ -65,12 +65,12 @@ if [ ! -f forwarding.secret ]; then
 fi
 
 # Seeded rather than left to Velocity's own first-boot generation, because the
-# port has to be right the first time the proxy binds — and because the patcher
+# port has to be right the first time the proxy binds, and because the patcher
 # below can only rewrite a bind that already exists.
 #
 # Deliberately comment-free: the patcher re-serializes this file on every start,
 # so any comment written here would vanish at the first restart. Absent keys
-# keep Velocity's documented defaults — with two exceptions that must be stated
+# keep Velocity's documented defaults, with two exceptions that must be stated
 # explicitly, or Velocity refuses to boot: it otherwise falls back to the
 # example forced-hosts from its packaged default config (which point at servers
 # that don't exist) and to a "try" list naming a "lobby" backend.
@@ -132,8 +132,8 @@ export const velocity: Blueprint = {
     // Pinned to the current stable 3.x rather than `latest`: the image resolves
     // `latest` to the newest build PaperMC publishes, which today is a 4.x
     // development snapshot. Practically every Velocity plugin on the catalogs
-    // still targets 3.x, so that is the sane default for a shared panel —
-    // editable, for an owner who wants to move a proxy to 4.x.
+    // still targets 3.x, so that is the sane default for a shared panel. It
+    // stays editable, for an owner who wants to move a proxy to 4.x.
     VELOCITY_VERSION: {
       required: false,
       default: "3.5.1",
@@ -201,7 +201,7 @@ export const velocity: Blueprint = {
         "RCON is disabled; the panel console uses the container console.",
     },
     // The image runs as root and `runuser`s to `bungeecord` after `chown`ing
-    // /server — both need capabilities the panel drops. The container is
+    // /server, and both need capabilities the panel drops. The container is
     // pinned to uid 1000 (the data dir's owner) instead, so those steps are
     // skipped rather than failed.
     SKIP_PRIVILEGE_DROP: {
@@ -219,8 +219,8 @@ export const velocity: Blueprint = {
   },
 
   install: {
-    // No downloads to do — the runtime image fetches Velocity itself — so the
-    // installer is a plain busybox shell.
+    // No downloads to do, because the runtime image fetches Velocity itself,
+    // so the installer is a plain busybox shell.
     image: "alpine:3",
     script: installScript,
   },
@@ -240,14 +240,14 @@ export const velocity: Blueprint = {
   },
 
   // Console-only in Velocity, and it disconnects players with a reason and
-  // lets plugins finish before exiting — cleaner than SIGTERM.
+  // lets plugins finish before exiting, which is cleaner than SIGTERM.
   stopCommand: "shutdown",
 
-  // Run as the data directory's owner — see SKIP_PRIVILEGE_DROP above.
+  // Run as the data directory's owner. See SKIP_PRIVILEGE_DROP above.
   user: "1000:1000",
 
   // A proxy forwards packets: low, flat CPU with no chunk-generation spikes to
-  // excuse a pegged core. The tighter baseline is the point — it makes abuse
+  // excuse a pegged core. The tighter baseline is the point. It makes abuse
   // stand out more than it does on a game server.
   expectedResourceProfile: "steady-low",
 

@@ -195,7 +195,7 @@ export default function AdminApiKeysPage() {
                           )}
                         </span>
                         <span className="font-mono text-xs text-muted-foreground">
-                          {key.prefix ? `${key.prefix}…` : "—"}
+                          {key.prefix ? `${key.prefix}…` : "Unknown"}
                         </span>
                       </div>
                     </TableCell>
@@ -227,7 +227,7 @@ export default function AdminApiKeysPage() {
                       {key.lastUsedAt ? formatRelative(key.lastUsedAt) : "never"}
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground tabular-nums">
-                      {key.createdAt ? formatRelative(key.createdAt) : "—"}
+                      {key.createdAt ? formatRelative(key.createdAt) : "Unknown"}
                     </TableCell>
                     <TableCell>
                       <KeyActions apiKey={key} onChanged={reload} />
@@ -408,7 +408,7 @@ function CreateKeyDialog({
             <div className="flex items-start gap-2 text-sm">
               <KeyRound className="mt-0.5 size-4 shrink-0 text-amber-500" />
               <span className="text-muted-foreground">
-                Copy this key now — it cannot be shown again. Send it as{" "}
+                Copy this key now. It cannot be shown again. Send it as{" "}
                 <code className="text-foreground">x-api-key</code> or{" "}
                 <code className="text-foreground">Authorization: Bearer</code>.
               </span>

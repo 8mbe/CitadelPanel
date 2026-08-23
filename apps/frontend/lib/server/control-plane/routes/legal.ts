@@ -1,5 +1,5 @@
 /**
- * Legal document routes — the operator-authored terms of service and privacy
+ * Legal document routes for the operator-authored terms of service and privacy
  * policy.
  *
  * Two audiences, two shapes. Admins read and write the Markdown source through
@@ -8,7 +8,7 @@
  * directly rather than looping back through HTTP.
  *
  * Writes are audited like any other settings change, but the document *body* is
- * never written to the audit log — only its length. An audit entry is a
+ * never written to the audit log, only its length. An audit entry is a
  * different retention class from a published page, and copying a full policy
  * revision into it would be a surprising place for that text to live.
  */
@@ -24,7 +24,7 @@ import {
 } from "../services/settings";
 
 /**
- * GET /api/admin/legal — both documents' Markdown source. Admin only.
+ * GET /api/admin/legal. Returns both documents' Markdown source. Admin only.
  *
  * The source, not the rendered output: this feeds an editor.
  */
@@ -34,7 +34,7 @@ export async function handleGetLegal(request: Request): Promise<Response> {
 }
 
 /**
- * PUT /api/admin/legal/:document — replace one document. Admin only.
+ * PUT /api/admin/legal/:document. Replaces one document. Admin only.
  *
  * A whole-document replace rather than a patch, because that is what the editor
  * holds: the buffer is the document. Saving an empty body unpublishes the page
@@ -71,7 +71,7 @@ export async function handleUpdateLegal(
     action: "settings.legal.update",
     targetType: "settings",
     targetId: document,
-    // Length and publication state only — never the document text itself.
+    // Length and publication state only, never the document text itself.
     metadata: {
       document,
       characters: settings[document].content.length,

@@ -1,7 +1,7 @@
 /**
  * The userns translation layer is pure arithmetic over three inputs (daemon
  * base, agent's own namespace base, canonical data owner), and every consumer
- * — data-dir ownership, Docker `User`, chown targets — trusts it blindly. So
+ * trusts it blindly: data-dir ownership, Docker `User`, chown targets. So
  * the arithmetic is what gets pinned here, plus the detection parsers for the
  * two /proc- and API-shaped inputs they read.
  */
@@ -80,7 +80,7 @@ describe("computeEffectiveOffsets", () => {
     ).toEqual({ uid: 231072, gid: 231072 });
   });
 
-  test("agent inside a remapped container sees no shift — ids already align", () => {
+  test("agent inside a remapped container sees no shift because ids already align", () => {
     expect(
       computeEffectiveOffsets({ uid: 231072, gid: 231072 }, { uid: 231072, gid: 231072 }),
     ).toEqual({ uid: 0, gid: 0 });

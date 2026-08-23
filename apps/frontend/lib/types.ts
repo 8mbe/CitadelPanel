@@ -55,8 +55,8 @@ export interface NodeAllocation {
  * A server on a node, as the node detail page renders it.
  *
  * Extends the server view with admin context (owner email) and a live usage
- * sample. Live fields are `null` — not 0 — when the node is unreachable, so the
- * UI can show "—" rather than a misleading 0%.
+ * sample. Live fields are `null` rather than 0 when the node is unreachable, so
+ * the UI can show a placeholder rather than a misleading 0%.
  */
 export type NodeServerView = Omit<
   ServerView,
@@ -183,7 +183,7 @@ export interface ServerView {
   /**
    * The caller's access to this server. Only set by the detail endpoint
    * (`getServer`); list views omit it. Undefined must be read as "no access
-   * information" — see `lib/permissions.ts` for how the UI treats that.
+   * information". See `lib/permissions.ts` for how the UI treats that.
    */
   viewer?: ServerViewerAccess;
   /**
@@ -200,7 +200,7 @@ export interface ServerView {
 
 /**
  * A server's provisioning output, as the console shows it while a server is
- * being built. Admin-only — see the install-log route.
+ * being built. Admin-only. See the install-log route.
  */
 export interface ServerInstallLogView {
   /** Panel phase lines plus the install script's own output, oldest first. */
@@ -288,7 +288,7 @@ export interface PluginVersionView {
 //
 // Mirrors the server's `BlueprintPluginSupport` (control-plane module
 // `blueprints/plugins.ts`, which validates it strictly). Duplicated here
-// because client code never imports server modules — keep the two in sync.
+// because client code never imports server modules. Keep the two in sync.
 
 export interface BlueprintPluginProfileSpec {
   label?: string;

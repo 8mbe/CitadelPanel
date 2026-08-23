@@ -27,7 +27,7 @@ export function toUserOption(user: ApiUser): UserOption {
 /**
  * Owner picker that searches the user directory server-side as you type.
  *
- * It starts empty — nothing is pre-selected, so an admin has to name the owner
+ * It starts empty. Nothing is pre-selected, so an admin has to name the owner
  * rather than accept whichever account happened to sort first.
  *
  * A plain <Select> of every account does not survive scale; this queries
@@ -52,7 +52,7 @@ export function UserCombobox({
 
   React.useEffect(() => {
     // After a selection Base UI sets the input to the chosen label, which fires
-    // an input change — don't turn that into a redundant search.
+    // an input change, so don't turn that into a redundant search.
     if (value && query === value.label) return;
 
     let cancelled = false;

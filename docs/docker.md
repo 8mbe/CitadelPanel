@@ -23,9 +23,9 @@ design of these images.
 
 | Job | Needs | Runs |
 |-----|-------|------|
-| `env:init` — generate secrets, write `.env` | a writable repo checkout | **host, before `compose up`** |
+| `env:init`: generate secrets, write `.env` | a writable repo checkout | **host, before `compose up`** |
 | `auth:migrate` + `db:migrate` | a reachable PostgreSQL | **in the control-plane container, at boot** |
-| `/setup` wizard — admin account, timezone, captcha, first node | a browser | **first visit to the panel** |
+| `/setup` wizard: admin account, timezone, captcha, first node | a browser | **first visit to the panel** |
 
 So the deployment is:
 
@@ -38,7 +38,7 @@ docker compose up -d --build
 ### Why secrets are generated on the host
 
 Compose interpolates `${POSTGRES_PASSWORD}`, `${PANEL_ENCRYPTION_KEY}` and
-`${AGENT_TOKEN}` while it is *reading* the compose file — before any container
+`${AGENT_TOKEN}` while it is *reading* the compose file, before any container
 exists. A container cannot generate a value that compose already needed. The
 `.env` file is the operator handing secrets to compose, not something the
 application can bootstrap for itself.
@@ -48,7 +48,7 @@ This is also why the image's `CMD` runs `bun run migrate` and **not**
 
 - write to a path outside `/app` that the unprivileged `nextjs` user cannot
   create, failing the boot; and
-- if it could write, mint a **fresh `PANEL_ENCRYPTION_KEY`** on every start —
+- if it could write, mint a **fresh `PANEL_ENCRYPTION_KEY`** on every start,
   which nothing reads (`process.env` from compose always wins) but which is one
   configuration slip away from making every secret already encrypted at rest
   unreadable. Node tokens, database passwords and secret env values are all
@@ -60,9 +60,9 @@ secrets are `openssl rand -base64 48`.
 ### Why migrations run on every boot
 
 The control-plane container runs `auth:migrate && db:migrate` before
-`next start`. Both are idempotent — the panel's own migrator records applied
+`next start`. Both are idempotent. The panel's own migrator records applied
 files in `schema_migrations`, Better Auth's CLI diffs the schema, and the
-blueprint seed is an upsert — so the same command is the fresh install and the
+blueprint seed is an upsert, so the same command is the fresh install and the
 upgrade. There is no separate "migrate" step for an operator to forget, and no
 window where a new image serves requests against an old schema.
 
@@ -73,7 +73,7 @@ The container waits for `postgres` to be healthy (`depends_on` +
 
 No account exists in a fresh image. `/setup` claims the first admin, sets the
 timezone, optionally configures captcha, and optionally registers the first
-node — all in the browser, gated on a database latch. See
+node, all in the browser, gated on a database latch. See
 [first-time-setup.md](first-time-setup.md). Deploy behind a firewall until that
 first admin is claimed: whoever reaches the panel first becomes admin.
 
@@ -103,13 +103,13 @@ so pruning them buys layer size at the cost of a boot-time failure mode.
 `config/env.ts` validates at import time and Next evaluates route modules while
 collecting build metadata, so the build sets throwaway `DATABASE_URL`,
 `PANEL_ENCRYPTION_KEY` and `BETTER_AUTH_SECRET`. Nothing connects during the
-build — the database clients are lazy — and runtime environment replaces all
-three. They are values that *parse*, not values that work.
+build, because the database clients are lazy, and runtime environment replaces
+all three. They are values that *parse*, not values that work.
 
 ## The node agent
 
 The agent is the only container with the Docker socket, and its token is
-root-equivalent for that host — it can start a container with any mount the
+root-equivalent for that host. It can start a container with any mount the
 agent allows. It runs as root because the socket's group id differs per host;
 its containment boundary is `paths.ts` and the bearer token, not a uid.
 
@@ -124,26 +124,26 @@ encrypted.
 An agent that cannot open the socket is not a broken agent: it boots, serves
 HTTP, answers `/v1/health`, and fails every container operation. Left
 undiagnosed it surfaced as one dockerode stack trace per container per stats
-sweep —
+sweep:
 
 ```
 [agent] failed to sample server <id>: connect EACCES /var/run/docker.sock
 ```
 
-— which names the library, not the fix. So the socket is treated the way the
+That names the library, not the fix. So the socket is treated the way the
 data root is (see `dataRoot.ts` and [performance.md](performance.md) for the
 same posture applied elsewhere): probed at boot, probed again on every
 `/v1/health`, never cached, and reported as a *status* rather than thrown.
 
 - `docker/socket.ts` pings the daemon, and on failure reads the socket's inode
   and the process's own credentials to decide which of three things it is:
-  permissions (`EACCES`/`EPERM`), no socket at all (`ENOENT` — Docker is not
-  installed, or `DOCKER_SOCKET` points elsewhere), or a stopped daemon
+  permissions (`EACCES`/`EPERM`), no socket at all (`ENOENT`, which means Docker
+  is not installed, or `DOCKER_SOCKET` points elsewhere), or a stopped daemon
   (`ECONNREFUSED`).
 - `/v1/health` answers `status: "degraded"` with a `dockerSocket` object instead
   of 500-ing out of `docker.info()`. The panel shows that on the node's admin
   page and in the connection test, and `assertNodeReadyToProvision` refuses to
-  place a server on such a node — the same pre-flight the data root gets.
+  place a server on such a node, the same pre-flight the data root gets.
 - The agent stays up either way. A process that exits on a bad socket reads to
   the panel as "node unreachable", which sends the operator after a network
   fault when the problem is a group membership on the host.
@@ -151,7 +151,7 @@ same posture applied elsewhere): probed at boot, probed again on every
 The permission case has a trap worth stating, because it makes a correct fix
 look like it did not work: **supplementary groups are fixed when a process
 starts.** `sudo usermod -aG docker $USER` changes `/etc/group`, not the groups
-of anything already running — so an agent (or a shell, or a dev-server process
+of anything already running, so an agent (or a shell, or a dev-server process
 tree) started before that command keeps the old group set no matter how many
 times the command is repeated. A *new login session* is what applies it:
 
@@ -177,17 +177,17 @@ not try to guess the host's docker gid.
 Not just `servers/`. The agent puts three things in that tree, and all of them
 have to be real host paths:
 
-- `servers/` — game data. The path the agent reports is the path the daemon
+- `servers/` holds game data. The path the agent reports is the path the daemon
   bind-mounts into game containers, so the mount is identical on both sides
   (`/var/lib/citadel:/var/lib/citadel`). A named volume, or a different path
   inside the container, would make the agent report paths the daemon cannot
   resolve.
-- `sftp_host_key` — generated on first boot. Inside the container only, it is
+- `sftp_host_key` is generated on first boot. Inside the container only, it is
   regenerated on every restart and every SFTP client sees a changed
   fingerprint.
-- `backup-staging/` — database dumps and restic's chunk cache. restic runs in a
-  *sibling* container that bind-mounts this directory **from the host**, so a
-  path that exists only inside the agent's filesystem gives restic an empty
+- `backup-staging/` holds database dumps and restic's chunk cache. restic runs
+  in a *sibling* container that bind-mounts this directory **from the host**, so
+  a path that exists only inside the agent's filesystem gives restic an empty
   directory. See [backups.md](backups.md).
 
 ### Ports
@@ -195,15 +195,15 @@ have to be real host paths:
 | Port | Service | Exposure |
 |------|---------|----------|
 | 3000 | control plane | public (put TLS in front) |
-| 8081 | agent HTTP/WS | browsers reach it for the direct console — TLS proxy, or `AGENT_TLS_*` |
+| 8081 | agent HTTP/WS | browsers reach it for the direct console, behind a TLS proxy or `AGENT_TLS_*` |
 | 8022 | agent SFTP | operators' SFTP clients; keep it on a trusted network |
 
 The agent's listen ports are fixed inside the container (`AGENT_PORT=8081`,
 `SFTP_PORT=8022`); remap the published side if the host has a conflict.
 
-If the panel is served over HTTPS, the agent **must** be reachable as `wss://`
-— a browser blocks a `ws://` connection from an `https://` page as mixed
-content. Either terminate TLS in a proxy in front of 8081 or give the agent
+If the panel is served over HTTPS, the agent **must** be reachable as `wss://`.
+A browser blocks a `ws://` connection from an `https://` page as mixed content.
+Either terminate TLS in a proxy in front of 8081 or give the agent
 `AGENT_TLS_CERT`/`AGENT_TLS_KEY` and mount the material. See
 [direct-console.md](direct-console.md) and [sftp.md](sftp.md).
 
@@ -215,7 +215,7 @@ docker compose up -d --build
 ```
 
 The new control-plane container migrates on boot. Node agents are independent:
-they hold no state of their own, so an agent can be rebuilt at any time — the
+they hold no state of their own, so an agent can be rebuilt at any time. The
 containers it manages keep running, and the panel re-reads their status from
 the node. See [server-lifecycle.md](server-lifecycle.md) for why the node, not
 the panel, is the truth about a container.

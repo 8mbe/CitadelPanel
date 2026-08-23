@@ -1,4 +1,4 @@
-# CitadelPanel — Next.js control plane
+# CitadelPanel: Next.js control plane
 
 This application owns the complete browser-facing panel and control plane:
 

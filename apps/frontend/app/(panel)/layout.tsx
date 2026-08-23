@@ -11,13 +11,13 @@ import { redirect } from "next/navigation";
  * `panel_settings`, and reading it here avoids a client fetch that would shift
  * the footer in after paint.
  *
- * The session is resolved the same way — server-side, from the request cookie —
+ * The session is resolved the same way, server-side, from the request cookie,
  * and handed to {@link SessionProvider} as `initialUser`. That makes the provider
  * start with a user in hand on first paint, so no panel page waits on a client
  * `GET /api/me` round trip before it can fetch its own data. An unauthenticated
  * visitor is redirected here, before the shell ever renders.
  *
- * Everything interactive is in `PanelShell` (a client component) — this file
+ * Everything interactive is in `PanelShell` (a client component). This file
  * exists only to resolve that state and hand it down.
  */
 export default async function PanelLayout({
@@ -33,7 +33,7 @@ export default async function PanelLayout({
   if (!user) {
     // An unauthenticated visitor belongs on the setup wizard (fresh install)
     // or the sign-in page. Resolved here, on the server, so there is no flash
-    // of the panel shell for a logged-out visitor — and no client-side redirect
+    // of the panel shell for a logged-out visitor, and no client-side redirect
     // that could be raced by keeping a tab open.
     redirect((await isSetupComplete()) ? "/login" : "/setup");
   }

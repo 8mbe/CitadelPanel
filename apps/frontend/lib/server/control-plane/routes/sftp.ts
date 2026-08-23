@@ -14,12 +14,12 @@
  *      console callback pattern (`routes/console.ts`).
  *
  *   2. **The browser** calls the `/api/servers/:id/sftp/*` routes to mint,
- *      regenerate, view, and delete credentials — gated on the `files`
+ *      regenerate, view, and delete credentials, gated on the `files`
  *      permission, the same flag the file manager uses.
  *
  * Passwords are generated server-side (never chosen), stored as a scrypt
  * `salt:hash` (the same scheme Better Auth uses for login passwords), and shown
- * to the user exactly once — on creation or regeneration. There is no
+ * to the user exactly once, on creation or regeneration. There is no
  * "retrieve password" endpoint; a lost password is regenerated, which
  * invalidates the old one.
  */
@@ -53,7 +53,7 @@ import { recordAudit, recordAuditFromRequest } from "@/lib/server/control-plane/
  * Generate a strong random password.
  *
  * 24 bytes of entropy, base64url-encoded (no `+/=` so it pastes cleanly into any
- * SFTP client). ~192 bits — far beyond what a brute-force over SSH would ever
+ * SFTP client). ~192 bits, far beyond what a brute-force over SSH would ever
  * reach, and the panel hashes it before storage so the plaintext is never in the
  * DB.
  */
@@ -72,7 +72,7 @@ interface SftpCredentialResponse {
   updatedAt: Date;
 }
 
-/** Shape for a credential list entry — no password, ever. */
+/** Shape for a credential list entry. No password, ever. */
 interface SftpCredentialSummary {
   id: string;
   serverId: string;
@@ -166,7 +166,7 @@ async function requireCallingAgent(request: Request) {
 }
 
 /**
- * `POST /api/internal/sftp/authenticate` — agent callback at SFTP connect.
+ * `POST /api/internal/sftp/authenticate`. Agent callback at SFTP connect.
  *
  * The agent sends `{username, password}`. The panel:
  *   1. looks up the credential by username,
@@ -177,7 +177,7 @@ async function requireCallingAgent(request: Request) {
  *      a credential minted for a server on node X),
  *   5. returns `{serverId, userId}` the agent chroots the session to.
  *
- * A failure at any step is a generic 401 — the agent does not distinguish bad
+ * A failure at any step is a generic 401. The agent does not distinguish bad
  * password from no-access, so an attacker cannot enumerate valid usernames from
  * the error.
  */
@@ -209,7 +209,7 @@ export async function handleSftpAuthenticate(request: Request): Promise<Response
 
   const cred = rows[0];
 
-  // Verify the password before reporting anything about the username — but only
+  // Verify the password before reporting anything about the username, but only
   // if the row exists. A missing username still runs a dummy verify so the
   // response time does not reveal whether the username is valid (timing attack).
   const hashToCheck = cred?.password_hash ?? "$invalid:$";
@@ -221,7 +221,7 @@ export async function handleSftpAuthenticate(request: Request): Promise<Response
     throw unauthorized("Invalid credentials.");
   }
 
-  // The server must live on the calling node — a credential minted for a server
+  // The server must live on the calling node. A credential minted for a server
   // on node X must not be usable against node Y's agent.
   if (cred.node_id !== node.id) throw unauthorized("Invalid credentials.");
 
@@ -248,7 +248,7 @@ export async function handleSftpAuthenticate(request: Request): Promise<Response
   }
 
   // Audit the successful auth. The IP is the agent's (it is the caller), not
-  // the SFTP client's — the agent does not forward the client IP, and that is
+  // the SFTP client's. The agent does not forward the client IP, and that is
   // fine: the userId attributes the action to a person.
   await recordAudit({
     userId: cred.user_id,
@@ -265,7 +265,7 @@ export async function handleSftpAuthenticate(request: Request): Promise<Response
 // --- User-facing routes -----------------------------------------------------
 
 /**
- * `POST /api/servers/:id/sftp/credentials` — mint (or regenerate) the caller's
+ * `POST /api/servers/:id/sftp/credentials`. Mints (or regenerates) the caller's
  * SFTP credential for this server.
  *
  * Gated on the `files` permission. The password is generated server-side and
@@ -294,7 +294,7 @@ export async function handleCreateSftpCredential(
 }
 
 /**
- * `POST /api/servers/:id/sftp/credentials/regenerate` — explicit regenerate.
+ * `POST /api/servers/:id/sftp/credentials/regenerate`. An explicit regenerate.
  *
  * Functionally identical to POST (the upsert rotates the password), but a
  * distinct route so the audit action and intent are clear, and so a "regenerate"
@@ -334,7 +334,7 @@ export async function handleRegenerateSftpCredential(
 }
 
 /**
- * `GET /api/servers/:id/sftp/credentials` — list credentials the caller can see
+ * `GET /api/servers/:id/sftp/credentials`. Lists credentials the caller can see
  * for this server.
  *
  * Owners and admins see all credentials for the server (every user who minted
@@ -364,7 +364,7 @@ export async function handleListSftpCredentials(
 }
 
 /**
- * `DELETE /api/servers/:id/sftp/credentials/:credentialId` — delete a credential.
+ * `DELETE /api/servers/:id/sftp/credentials/:credentialId`. Deletes a credential.
  *
  * Owners/admins can delete any credential on their server; a subuser can delete
  * only their own. Deleting is the revocation path: the agent's next auth
@@ -401,10 +401,10 @@ export async function handleDeleteSftpCredential(
 }
 
 /**
- * `GET /api/servers/:id/sftp/connection` — the connection details a user needs
- * to configure their SFTP client: host, port, and the username (if they have a
- * credential). The password is never returned; the user must regenerate to see
- * it once.
+ * `GET /api/servers/:id/sftp/connection`. Returns the connection details a user
+ * needs to configure their SFTP client: host, port, and the username (if they
+ * have a credential). The password is never returned; the user must regenerate
+ * to see it once.
  *
  * The host is the node's `hostname`; the port is the agent's SFTP port (8022 by
  * default, surfaced from the node record so a future per-node override is easy).

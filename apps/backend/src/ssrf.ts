@@ -3,7 +3,7 @@
  *
  * The panel forwards an owner-supplied URL for the agent to download directly to
  * disk. The panel applies its own guard, but the agent is where the request
- * actually leaves the node's network, and — crucially — where redirects are
+ * actually leaves the node's network, and, crucially, where redirects are
  * followed, so it defends itself rather than trusting the URL it was handed.
  *
  * Two things the panel's original guard could not cover on its own:
@@ -46,7 +46,7 @@ export function isPrivateIpv6(ip: string): boolean {
 
   if (host === "::1" || host === "::") return true;
 
-  // IPv4-mapped (::ffff:a.b.c.d) and IPv4-compatible — defer to the v4 rules.
+  // IPv4-mapped (::ffff:a.b.c.d) and IPv4-compatible, so defer to the v4 rules.
   const mapped = /^::(?:ffff:)?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host);
   if (mapped) return isPrivateIpv4(mapped[1]!);
 
@@ -97,7 +97,7 @@ export async function assertPublicHost(hostname: string): Promise<void> {
  * Fetch a URL with SSRF checks on the initial host and every redirect hop.
  *
  * Redirects are followed manually (`redirect: "manual"`) so each `Location` is
- * re-validated before the next request — `redirect: "follow"` would chase a
+ * re-validated before the next request. `redirect: "follow"` would chase a
  * bounce to an internal address without a second look. Only http(s) is allowed,
  * and the redirect chain is capped.
  */

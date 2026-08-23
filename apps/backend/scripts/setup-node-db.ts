@@ -4,7 +4,7 @@
  * Each node that wants to offer auto-provisioned databases to its servers runs
  * this script. It creates:
  *
- *   1. The `node_db_net` Docker network — a dedicated bridge with inter-container
+ *   1. The `node_db_net` Docker network, a dedicated bridge with inter-container
  *      communication enabled, so server containers attached to it can reach the
  *      MariaDB container. Tenant isolation does not come from network ICC: it
  *      comes from MariaDB itself, where each server's database has a dedicated
@@ -19,7 +19,7 @@
  * The script prints the connection details the operator must paste into the
  * panel's "register node" form (dbAdminHost, dbAdminPort, dbAdminUser,
  * dbAdminPassword). The host is the MariaDB container's IP on `node_db_net`,
- * which is what server containers will use to connect — the panel talks to the
+ * which is what server containers will use to connect. The panel talks to the
  * database through the agent, which itself reaches MariaDB over `node_db_net`.
  *
  * Idempotent: re-running detects an existing network/container and reports the
@@ -86,7 +86,7 @@ async function findContainer(name: string): Promise<Docker.ContainerInfo | null>
  * per-server network posture).
  *
  * We deliberately do NOT set `enable_icc=false`. That flag blocks all
- * inter-container traffic on the bridge — including the game-server → MariaDB
+ * inter-container traffic on the bridge, including the game-server → MariaDB
  * path this whole feature depends on. Tenant isolation is enforced by MariaDB's
  * per-database user grants, not by the network.
  */
@@ -106,7 +106,7 @@ function networkConfig(name: string) {
 async function ensureNetwork(): Promise<Docker.Network> {
   const existing = await findNetwork(NETWORK_NAME);
   if (existing) {
-    console.log(`✓ Network "${NETWORK_NAME}" already exists — reusing.`);
+    console.log(`✓ Network "${NETWORK_NAME}" already exists, reusing.`);
     return existing;
   }
 
@@ -122,7 +122,7 @@ async function ensureImage(image: string): Promise<void> {
     await docker.getImage(image).inspect();
     return;
   } catch {
-    // not present — pull below
+    // not present, pull below
   }
   console.log(`Pulling image "${image}"…`);
   const stream = await docker.pull(image);
@@ -134,7 +134,7 @@ async function ensureImage(image: string): Promise<void> {
 /**
  * Create and start the MariaDB container with a random root password.
  *
- * No host ports are published — the database is reachable only from containers
+ * No host ports are published. The database is reachable only from containers
  * on `node_db_net`. `MARIADB_ROOT_PASSWORD` is the one env var MariaDB requires
  * to initialize; the root user is created with `GRANT ALL ON *.*` by default,
  * which is exactly what the panel needs to create per-server databases and
@@ -143,7 +143,7 @@ async function ensureImage(image: string): Promise<void> {
 async function ensureContainer(rootPassword: string): Promise<Docker.ContainerInfo> {
   const existing = await findContainer(CONTAINER_NAME);
   if (existing) {
-    console.log(`✓ Container "${CONTAINER_NAME}" already exists — reusing.`);
+    console.log(`✓ Container "${CONTAINER_NAME}" already exists, reusing.`);
     if (existing.State !== "running") {
       console.log(`Starting existing container…`);
       await docker.getContainer(existing.Id).start();
@@ -159,7 +159,7 @@ async function ensureContainer(rootPassword: string): Promise<Docker.ContainerIn
     Image: IMAGE,
     Env: [`MARIADB_ROOT_PASSWORD=${rootPassword}`],
     HostConfig: {
-      // Attach to the node DB network only — no host port bindings, no default
+      // Attach to the node DB network only. No host port bindings, no default
       // bridge. Restart unless-stopped so a node reboot brings the DB back.
       NetworkMode: NETWORK_NAME,
       RestartPolicy: { Name: "unless-stopped" },
@@ -201,12 +201,12 @@ function containerIp(info: Docker.ContainerInfo, networkName: string): string | 
  * poll `mariadb-admin ping` until it succeeds.
  *
  * NB: the mariadb:11 image ships `mariadb-admin` but not the `mysqladmin`
- * symlink — using the wrong name makes every probe exec fail with "executable
+ * symlink. Using the wrong name makes every probe exec fail with "executable
  * file not found".
  *
  * The password is passed via `MYSQL_PWD` (not a `-p` CLI arg), so it never
  * appears in the process list and avoids the "using a password on the command
- * line can be insecure" warning — matching the convention in
+ * line can be insecure" warning. It matches the convention in
  * `src/docker/database.ts` `execSql`.
  *
  * Exec output is captured via `execInContainer` rather than dockerode's
@@ -228,7 +228,7 @@ async function waitForReady(containerId: string, rootPassword: string): Promise<
         return;
       }
     } catch {
-      // exec failed — container may not be ready yet
+      // exec failed, container may not be ready yet
     }
     await sleep(2_000);
   }
@@ -263,12 +263,12 @@ async function main(): Promise<void> {
 
   console.log("\n=== Node database ready ===\n");
   console.log("Enter these values when registering the node in the panel:\n");
-  console.log(`  dbAdminHost:     ${ip ?? "(could not resolve IP — check 'docker network inspect " + NETWORK_NAME + "')"}`);
+  console.log(`  dbAdminHost:     ${ip ?? "(could not resolve IP, check 'docker network inspect " + NETWORK_NAME + "')"}`);
   console.log(`  dbAdminPort:     ${port}`);
   console.log(`  dbAdminUser:     ${ROOT_USER}`);
   if (rootPassword) {
     console.log(`  dbAdminPassword: ${rootPassword}`);
-    console.log("\n  ⚠  Copy the password now — it is NOT stored by this script and");
+    console.log("\n  ⚠  Copy the password now. It is NOT stored by this script and");
     console.log("     cannot be recovered. The panel encrypts it on registration.");
   } else {
     console.log(`  dbAdminPassword: (use the password from the first run of this script)`);

@@ -4,7 +4,7 @@
  * Periodically sweeps every active node, samples each managed container, and
  * maintains a rolling observation window per server. When the accumulated score
  * crosses the flag threshold a `suspicious_activity` row is written for admin
- * review — never a silent deletion.
+ * review, never a silent deletion.
  *
  * Node-aware from the first pass, as required by the plan: an unreachable node is
  * logged and skipped rather than aborting the whole sweep.
@@ -161,8 +161,8 @@ async function loadWatchableServers(): Promise<RunningServerRow[]> {
  *
  * Each server's scoring needs its blueprint's expected resource profile, and
  * awaiting that inside the sample loop re-read the same handful of blueprints
- * once per server on every sweep — a map lookup each time, but one awaited
- * promise per server regardless. One entry per distinct blueprint turns the
+ * once per server on every sweep. That is a map lookup each time, but one
+ * awaited promise per server regardless. One entry per distinct blueprint turns the
  * per-server cost back into what it looks like: a synchronous read.
  */
 async function resolveResourceProfiles(
@@ -189,7 +189,7 @@ export interface SweepResult {
  * Extracted from the sweep's serial loop so nodes can run concurrently: each
  * node's agent is an independent machine, and waiting for one slow (or dead,
  * up to its timeout) node before even asking the next stretched a sweep by the
- * *sum* of node latencies. Errors are still contained here — an unreachable
+ * *sum* of node latencies. Errors are still contained here. An unreachable
  * node logs and returns, and a server whose scoring throws costs only itself.
  */
 async function sampleAndScoreNode(
@@ -259,7 +259,7 @@ async function sampleAndScoreNode(
         await suspendServer(
           server.id,
           null,
-          `Automatic suspension: score ${scored.totalScore} — ${scored.summary}`,
+          `Automatic suspension: score ${scored.totalScore}. ${scored.summary}`,
         );
         result.serversAutoSuspended += 1;
       }
@@ -340,7 +340,7 @@ let sweepInFlight = false;
  * Start the periodic watcher.
  *
  * A sweep can take longer than the interval on a large cluster, so overlapping
- * runs are skipped rather than queued — otherwise a slow node would cause sweeps
+ * runs are skipped rather than queued. Otherwise a slow node would cause sweeps
  * to pile up and hammer every agent.
  */
 export function startWatcher(): void {

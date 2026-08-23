@@ -1,4 +1,4 @@
-# CitadelPanel — Bun node backend
+# CitadelPanel Bun node backend
 
 This service runs on each game-server node. It has no users, sessions, panel
 database, or browser-facing API. The Next.js control plane is its only caller.
@@ -20,7 +20,7 @@ credential because this process controls the Docker socket.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `AGENT_TOKEN` (or legacy `NODE_TOKEN`) | — required | Bearer the panel presents on every lifecycle call. ≥32 chars; root-equivalent. |
+| `AGENT_TOKEN` (or legacy `NODE_TOKEN`) | required | Bearer the panel presents on every lifecycle call. ≥32 chars; root-equivalent. |
 | `AGENT_PORT` | `8081` | Port the HTTP/WS server listens on. |
 | `SERVER_DATA_ROOT` | `/var/lib/citadel/servers` | Root for per-server data; paths are derived from it. |
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | The local Docker daemon socket. |
@@ -36,7 +36,7 @@ credential because this process controls the Docker socket.
 | `NODE_DB_CONTAINER` | `citadel-node-db` | Name of the MariaDB container on `NODE_DB_NETWORK`. Used by the agent to exec SQL and resolve the database's IP. |
 
 The direct console (`/v1/sessions/:token/console`) is the one path that does
-**not** use the bearer token — it authenticates with a short-lived, single-use
+**not** use the bearer token. It authenticates with a short-lived, single-use
 capability token the panel mints. See `docs/direct-console.md`.
 
 
@@ -50,11 +50,11 @@ bun run typecheck
 
 The service listens on port `8081` by default. Configuration:
 
-- `NODE_TOKEN` or legacy `AGENT_TOKEN` — required bearer token
-- `AGENT_PORT` — defaults to `8081`
-- `SERVER_DATA_ROOT` — defaults to `/var/lib/citadel/servers`
-- `DOCKER_SOCKET` — defaults to `/var/run/docker.sock`
-- `AGENT_MAX_FILE_BYTES` and `AGENT_MAX_DIR_ENTRIES` — file API limits
+- `NODE_TOKEN` or legacy `AGENT_TOKEN`: required bearer token
+- `AGENT_PORT`: defaults to `8081`
+- `SERVER_DATA_ROOT`: defaults to `/var/lib/citadel/servers`
+- `DOCKER_SOCKET`: defaults to `/var/run/docker.sock`
+- `AGENT_MAX_FILE_BYTES` and `AGENT_MAX_DIR_ENTRIES`: file API limits
 
 ## Server data root
 
@@ -77,11 +77,11 @@ SERVER_DATA_ROOT=$HOME/.local/share/citadel/servers
 ```
 
 The root's state is not left to be discovered by a failed provision. It is
-probed at boot — the log line says `(writable)` or prints the exact command that
-fixes it — and on every `/v1/health` call, which the panel checks before placing
-a server on the node. A node whose root is unwritable refuses creation with 503
-and that same remediation text, shown to the admin who requested the server;
-`Test connection` in the panel's node UI reports it too.
+probed at boot and on every `/v1/health` call, which the panel checks before
+placing a server on the node. The boot log line says `(writable)` or prints the
+exact command that fixes it. A node whose root is unwritable refuses creation
+with 503 and that same remediation text, shown to the admin who requested the
+server; `Test connection` in the panel's node UI reports it too.
 
 ## Docker socket access
 
@@ -102,7 +102,7 @@ The permission case has a trap that makes a correct fix look broken:
 
 `sudo usermod -aG docker "$(id -un)"` edits `/etc/group`; it does not change any
 running process, including the shell you typed it in. Start a **new login
-session** (or `newgrp docker`) and launch the agent from there — `id -G` in that
+session** (or `newgrp docker`) and launch the agent from there. `id -G` in that
 session must list the docker gid. To grant a *running* agent access without
 restarting it, ACL the socket instead (resets when the daemon restarts):
 
@@ -128,7 +128,7 @@ bun run setup-db
 This creates a `node_db_net` Docker network (with inter-container communication
 disabled, so tenants on it can reach the database but not each other) and a
 MariaDB container with a randomly-generated root password. No host ports are
-published — the database is only reachable from containers attached to
+published. The database is only reachable from containers attached to
 `node_db_net`.
 
 The script prints the connection details (`dbAdminHost`, `dbAdminPort`,
@@ -136,7 +136,7 @@ The script prints the connection details (`dbAdminHost`, `dbAdminPort`,
 in the panel; they are stored encrypted and used to create/drop per-server
 databases and users on demand.
 
-The host it prints is the MariaDB container's IP on `node_db_net` — that is the
+The host it prints is the MariaDB container's IP on `node_db_net`. That is the
 address the agent (and therefore server containers) use to connect.
 
 For remote nodes, deploy `docker-compose.agent.yml`, keep port 8081 on a private

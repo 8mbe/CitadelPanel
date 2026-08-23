@@ -2,7 +2,7 @@
  * Blueprint-declared plugin/mod support.
  *
  * A blueprint that can install plugins/mods declares the whole thing as data:
- * how the tab is called, where files land, which search facets apply — and the
+ * how the tab is called, where files land, which search facets apply, and the
  * provider definition itself (the fetch spec): the catalog's API base URL, its
  * endpoint paths and query templates, how responses map onto the fields the
  * panel needs, and which hosts files may download from. Because it is data,
@@ -15,7 +15,7 @@
  * through declared dot-path field mappings. There are no scripts, no
  * expression evaluation and no free-form URL fields beyond the validated
  * endpoints. Validation (`parsePluginSupport`) enforces: https-only hosts that
- * pass the SSRF guardrail (no loopback/private networks — a shared blueprint
+ * pass the SSRF guardrail (no loopback/private networks, so a shared blueprint
  * cannot aim the panel or its auto-updater at internal infrastructure), exact
  * hostname pins for downloads (`downloadHosts`, re-checked against every file
  * URL at install time), a fixed set of endpoints (search/project/versions/
@@ -24,7 +24,7 @@
  *
  * The one URL the browser ever sees is the optional project-page link
  * (`siteUrl` + `projectPath`): still declared data, still validated as a
- * public https origin here, and still composed by the panel — a blueprint
+ * public https origin here, and still composed by the panel. A blueprint
  * cannot hand the UI an arbitrary href.
  */
 
@@ -55,7 +55,7 @@ export type FacetSource = "projectType" | "loaders" | "gameVersion";
 
 export interface FacetSpec {
   source: FacetSource;
-  /** e.g. "project_type:", "categories:", "versions:" — Modrinth's grammar. */
+  /** e.g. "project_type:", "categories:", "versions:" in Modrinth's grammar. */
   prefix: string;
 }
 
@@ -136,7 +136,7 @@ export interface PluginFetchSpec {
   downloadHosts: string[];
   /**
    * The catalog's human-facing site origin (e.g. "https://modrinth.com"),
-   * https only — distinct from `baseUrl`, which is its API. Set together with
+   * https only, distinct from `baseUrl`, which is its API. Set together with
    * `projectPath` to give the plugins tab an "open the project page" link;
    * omit both and the tab simply shows no link.
    */
@@ -170,16 +170,16 @@ export interface BlueprintPluginProfile {
   projectType: PluginProjectType;
   /**
    * Loader facets, OR-ed together (e.g. ["paper"], ["purpur", "paper",
-   * "spigot"] — Purpur runs Paper/Spigot plugins, and many projects only tag
-   * one of the compatible loaders).
+   * "spigot"], because Purpur runs Paper/Spigot plugins and many projects only
+   * tag one of the compatible loaders).
    */
   loaders?: string[];
   /**
    * Env key holding the game version (e.g. "VERSION"). This is the user-set
    * source of truth: a concrete value ("1.21.1") filters search results,
    * version lists and auto-update selection by compatibility, while sentinel
-   * values like "LATEST" don't filter — the plugins tab asks the user to set
-   * a concrete version in Settings instead of guessing one.
+   * values like "LATEST" don't filter. The plugins tab asks the user to set a
+   * concrete version in Settings instead of guessing one.
    */
   gameVersionEnv?: string;
 }
@@ -189,8 +189,9 @@ export interface BlueprintPluginSupport {
   label?: string;
   /**
    * When set, the active profile is selected by the resolved value of this env
-   * field (e.g. "TYPE"). Values without a variant entry — and no `default` —
-   * mean the server has no plugin support (e.g. vanilla Minecraft).
+   * field (e.g. "TYPE"). A value with no variant entry, where there is also no
+   * `default`, means the server has no plugin support (e.g. vanilla
+   * Minecraft).
    */
   envField?: string;
   /** Env value → profile. */
@@ -202,8 +203,8 @@ export interface BlueprintPluginSupport {
 }
 
 /**
- * A blueprint's plugin support after resolving it against a server's env —
- * what the UI, the plugin routes and the fetch engine work with.
+ * A blueprint's plugin support after resolving it against a server's env. This
+ * is what the UI, the plugin routes and the fetch engine work with.
  */
 export interface ResolvedPluginSupport {
   /** What the tab is called for this server. */
@@ -739,7 +740,7 @@ export function parsePluginSupport(
     !Object.keys(support.variants ?? {}).length
   ) {
     errors.push(
-      "plugins: nothing to resolve — set a default profile or an envField with variants",
+      "plugins: nothing to resolve. Set a default profile or an envField with variants",
     );
   }
 
@@ -756,7 +757,7 @@ export function parsePluginSupport(
 
 /**
  * Resolve a server's active plugin support from its blueprint and resolved
- * env. Null means "no plugins tab" — either the blueprint has no section, or
+ * env. Null means "no plugins tab". Either the blueprint has no section, or
  * (for env-driven blueprints) the current env value has no profile (vanilla
  * Minecraft).
  */

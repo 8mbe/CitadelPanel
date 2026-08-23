@@ -23,7 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
  * Opens from a button on the console panel. The user describes what they want
  * fixed in plain text; the panel assembles the full prompt server-side (recent
  * console logs, game/blueprint, version, non-secret env) and returns the
- * assistant's reply. The browser only ever sends the free-text question — the
+ * assistant's reply. The browser only ever sends the free-text question. The
  * logs and context are gathered server-side, so the prompt is never
  * client-controlled and the API key never reaches the browser.
  *
@@ -45,7 +45,7 @@ export function ConsoleHelperDialog({
   const [error, setError] = React.useState<string | null>(null);
 
   // Reset the form when the dialog closes, so reopening starts fresh. Done in
-  // the open-change handler (not an effect) to avoid cascading renders — the
+  // the open-change handler (not an effect) to avoid cascading renders, the
   // same pattern the db-explorer dialogs use.
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
@@ -103,7 +103,7 @@ export function ConsoleHelperDialog({
           <DialogDescription>
             Describe what you want fixed. The assistant reads your recent
             console output, the game, its version, and the non-secret
-            environment — your message is the only thing you type.
+            environment. Your message is the only thing you type.
           </DialogDescription>
         </DialogHeader>
 
@@ -111,7 +111,7 @@ export function ConsoleHelperDialog({
           <Textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}
-            placeholder="e.g. The server crashes on startup — what does the error mean and how do I fix it?"
+            placeholder="e.g. The server crashes on startup. What does the error mean and how do I fix it?"
             maxLength={2000}
             disabled={loading}
             aria-label="What do you want fixed?"

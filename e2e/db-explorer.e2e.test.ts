@@ -2,13 +2,13 @@
  * E2E tests for the database explorer surface
  * (see routes/dbExplorer.ts + docs/database-explorer.md).
  *
- * Every route — reads included — requires the `database` permission, matching
+ * Every route, reads included, requires the `database` permission, matching
  * the rest of the databases resource. The handlers stay thin: parse,
  * authorize, delegate to `services/dbExplorer.ts`, which composes the SQL
  * (never the browser) and audits every mutation.
  *
- * The suite exercises the auth gate (404 for the user key — info-leak
- * prevention), the UUID-param gate (400 for non-UUID serverId/databaseId),
+ * The suite exercises the auth gate (404 for the user key, to prevent info
+ * leaks), the UUID-param gate (400 for non-UUID serverId/databaseId),
  * and the body-validation gate (400 for missing/malformed fields). Happy-
  * path reads are not exercised: they need a real provisioned database with
  * the DBMS running, which the dev panel's seeded server may not have. The
@@ -16,7 +16,7 @@
  * tests and the panel is a thin proxy here.
  *
  * Table and column names arrive as path/body values and are vetted inside
- * the SQL builders before interpolation — a hostile name yields a 400, not
+ * the SQL builders before interpolation. A hostile name yields a 400, not
  * a statement. Mutations are refused on suspended servers (409).
  */
 

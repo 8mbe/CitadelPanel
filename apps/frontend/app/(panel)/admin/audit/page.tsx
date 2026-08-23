@@ -204,7 +204,7 @@ function ActorCell({ entry }: { entry: AdminAuditEntry }) {
   const ip = entry.ip;
 
   if (!entry.userId) {
-    // System action — no account to link to.
+    // System action. No account to link to.
     return (
       <div className="flex flex-col gap-0.5">
         <span className="text-sm text-muted-foreground">{label}</span>
@@ -242,7 +242,7 @@ function TargetCell({ entry }: { entry: AdminAuditEntry }) {
   const { targetType, targetId, targetName } = entry;
 
   if (!targetType || !targetId) {
-    return <span className="text-sm text-muted-foreground">—</span>;
+    return <span className="text-sm text-muted-foreground">None</span>;
   }
 
   // Prefer the resolved name; fall back to a readable type label + truncated id

@@ -51,16 +51,16 @@ import type { ServerView } from "@/lib/types";
 /**
  * The "Connected servers" card in the Settings tab.
  *
- * A link is an explicit connection between two of the owner's servers — what a
- * proxy needs to reach its backends, or a plugin to reach another server. The
- * address shown is stable by construction: same-node links use the peer's
- * container name on a private pairwise Docker network (`citadel-<id>`, resolved
- * by Docker's DNS — never an IP, which changes on every recreate); cross-node
- * links use the peer node's public hostname and port.
+ * A link is an explicit connection between two of the owner's servers. It is
+ * what a proxy needs to reach its backends, or a plugin to reach another
+ * server. The address shown is stable by construction: same-node links use the
+ * peer's container name on a private pairwise Docker network (`citadel-<id>`,
+ * resolved by Docker's DNS, never an IP, which changes on every recreate);
+ * cross-node links use the peer node's public hostname and port.
  *
  * Reads need the `settings` permission (same as ports); creating and removing
  * links is owner/admin-only because a link attaches the *target's* container to
- * a shared network — the API enforces that, the card only hides the controls.
+ * a shared network. The API enforces that, the card only hides the controls.
  */
 export function ConnectedServersCard() {
   const { server } = useServerData();
@@ -82,7 +82,7 @@ export function ConnectedServersCard() {
     try {
       setLinks(await getServerLinks(server.id));
     } catch (err) {
-      // 403 means the caller lacks `settings` — hide the card rather than
+      // 403 means the caller lacks `settings`, so hide the card rather than
       // show an error, matching the environment card.
       if (err instanceof ApiError && err.status === 403) {
         setDenied(true);
@@ -126,7 +126,7 @@ export function ConnectedServersCard() {
         </CardTitle>
         <CardDescription>
           Connect this server to your other servers and use the address shown
-          in place of a public IP — same-node connections run over a private
+          in place of a public IP. Same-node connections run over a private
           network and survive restarts.
         </CardDescription>
         {canManage && (
@@ -228,7 +228,7 @@ function LinkRow({
 /**
  * The "Connect servers" dialog.
  *
- * Lists the caller's other servers (owned or administered — a link needs
+ * Lists the caller's other servers (owned or administered, since a link needs
  * owner access to both sides), lets them pick which published port to use, and
  * previews the address before connecting. Same-node peers show the internal
  * container hostname; cross-node peers show the peer node's public address.
@@ -251,7 +251,7 @@ function ConnectServersDialog({
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  // Load the candidate list once, when the dialog is first opened — listing
+  // Load the candidate list once, when the dialog is first opened. Listing
   // servers on every render of the settings tab would be wasted work.
   React.useEffect(() => {
     if (!open || candidates !== null) return;
@@ -394,8 +394,8 @@ function ConnectServersDialog({
                 </Select>
                 <FieldDescription>
                   {sameNode
-                    ? "Internal network address — use it in place of a public IP in configs; it never changes."
-                    : "Public address — the peer runs on another node, so traffic crosses the network."}
+                    ? "Internal network address. Use it in place of a public IP in configs; it never changes."
+                    : "Public address. The peer runs on another node, so traffic crosses the network."}
                 </FieldDescription>
               </Field>
             )}

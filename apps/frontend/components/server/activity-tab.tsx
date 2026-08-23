@@ -40,9 +40,10 @@ import { useServerData } from "./server-data-context";
  * Per-server activity feed.
  *
  * Every state-changing action on this server is recorded in the audit log. This
- * tab surfaces those rows scoped to the current server — starts, stops, file
- * edits, console commands, subuser changes, SFTP sessions — with enough context
- * (who, what, when) to answer "what happened here?" without leaving the page.
+ * tab surfaces those rows scoped to the current server: starts, stops, file
+ * edits, console commands, subuser changes, SFTP sessions. Every row carries
+ * enough context (who, what, when) to answer "what happened here?" without
+ * leaving the page.
  *
  * The data comes from GET /api/servers/:id/activity, which filters the shared
  * audit_logs table by (target_type='server', target_id=this). Actor identity is
@@ -141,7 +142,7 @@ export function ActivityTab() {
               <EmptyMedia variant="icon">
                 <History />
               </EmptyMedia>
-              <EmptyTitle>Couldn’t load activity</EmptyTitle>
+              <EmptyTitle>Couldn&apos;t load activity</EmptyTitle>
               <EmptyDescription>{error}</EmptyDescription>
             </EmptyHeader>
           </Empty>

@@ -11,8 +11,8 @@ import type { ServerStatus, ServerView } from "@/lib/types";
  *
  * The server layout loads one {@link ServerView} and shares it with every
  * section (console, players, settings, …) through this context, so each section
- * route does not re-fetch. Live status is mutable here — power controls flip it
- * and the header/console read it — while the rest of the record is refreshed
+ * route does not re-fetch. Live status is mutable here, because power controls
+ * flip it and the header/console read it. The rest of the record is refreshed
  * from the backend on demand.
  */
 interface ServerDataValue {
@@ -54,13 +54,13 @@ export function ServerDataProvider({
   //
   // Provisioning (`creating`/`installing`) is the long case: there is no
   // container to sample, and this poll is what lets the shell's installing gate
-  // fall away on its own — an owner who opened the page mid-install gets their
+  // fall away on its own. An owner who opened the page mid-install gets their
   // server without reloading, and an admin watching the install log sees the
   // console take over. Minutes long, so 5s is plenty.
   //
   // `starting`/`stopping` are the short case, and they need the *other* cadence.
   // A stop is seconds, and it is the window in which the power controls offer
-  // Kill — a page that opened during someone else's stop has to see the stop
+  // Kill, and a page that opened during someone else's stop has to see the stop
   // land, or it sits on a Kill button for a server that is already down.
   const recordPollMs = isProvisioning(status)
     ? 5000
@@ -85,9 +85,9 @@ export function ServerDataProvider({
   // How many mounted components are actually showing the resource sample.
   //
   // This provider wraps the whole server page, but the stats cards live in one
-  // section (the console). Polling unconditionally meant every other tab — files,
-  // settings, backups, activity — sat there sampling CPU on a timer for numbers
-  // nobody was looking at. Consumers declare their interest through
+  // section (the console). Polling unconditionally meant every other tab, files,
+  // settings, backups and activity, sat there sampling CPU on a timer for
+  // numbers nobody was looking at. Consumers declare their interest through
   // {@link useLiveResourceStats}, and the poll below runs only while at least one
   // of them is mounted.
   const [statsWatchers, setStatsWatchers] = React.useState(0);
@@ -105,7 +105,7 @@ export function ServerDataProvider({
   // without a manual refresh.
   //
   // Cadence depends on status: while running, sample every 5s for CPU/mem/disk.
-  // While stopped or errored, keep sampling every 30s — disk usage is a
+  // While stopped or errored, keep sampling every 30s. Disk usage is a
   // property of the data directory and still changes offline (world saves,
   // manual file edits), and the agent reports it even with the container
   // stopped. CPU/mem come back zeroed in that case, which is correct. Other
@@ -178,8 +178,8 @@ export function useServerData(): ServerDataValue {
  *
  * The provider polls `/stats` only while at least one component has said this,
  * so the poll follows what is on screen rather than running for the whole time
- * a server page is open. Call it from the component that renders the numbers —
- * keeping the declaration next to the display is what stops the two drifting
+ * a server page is open. Call it from the component that renders the numbers.
+ * Keeping the declaration next to the display is what stops the two drifting
  * apart when a section moves.
  */
 export function useLiveResourceStats(): void {

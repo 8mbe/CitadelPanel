@@ -3,7 +3,7 @@
  *
  * Why this is hand-rolled instead of using `dockerode`'s `attach({hijack:true})`:
  * hijack relies on Node's `http` upgrade mechanics, which Bun does not
- * implement — the call simply never resolves. Every other dockerode operation
+ * implement, so the call never resolves. Every other dockerode operation
  * works fine, so this is the one place that needs to speak the wire protocol
  * directly.
  *
@@ -28,9 +28,9 @@ export interface AttachHandlers {
  * the socket, which Docker otherwise holds open server-side.
  *
  * `ready` resolves once Docker has acknowledged the attach upgrade (`101
- * UPGRADED`). Stdin written before that point is dropped or mangled — the first
- * byte of a command sent during the handshake is routinely lost — so callers
- * MUST `await attachment.ready` before writing.
+ * UPGRADED`). Stdin written before that point is dropped or mangled, and the
+ * first byte of a command sent during the handshake is routinely lost, so
+ * callers MUST `await attachment.ready` before writing.
  */
 export interface Attachment {
   /** Resolves when the attach upgrade is acknowledged and stdin is writable. */
@@ -43,7 +43,7 @@ export interface Attachment {
  * Per-connection framing state.
  *
  * Docker's multiplexed stream is [stream(1), 0,0,0, size(4 BE)] + payload, and
- * frames are NOT aligned to TCP reads — a header can be split across two
+ * frames are NOT aligned to TCP reads. A header can be split across two
  * packets and one read can hold several frames. So bytes are buffered and
  * consumed only when a whole frame is present.
  */
@@ -91,7 +91,7 @@ function drainFrames(state: StreamState, onData: (chunk: Buffer) => void): void 
  *
  * A `Tty: true` container has no 8-byte multiplexing: stdout and stderr are
  * merged into one byte stream that carries the server's own ANSI escape codes
- * (which is the whole point of TTY mode — JLine3 emits color only to a
+ * (which is the whole point of TTY mode, since JLine3 emits color only to a
  * terminal). Every buffered byte is emitted as a single chunk and the buffer
  * is cleared, so partial reads flush immediately rather than waiting for a
  * frame boundary that will never come.
@@ -111,7 +111,7 @@ function drainRaw(state: StreamState, onData: (chunk: Buffer) => void): void {
  * When `tty` is true the container was created with `Tty: true`, so Docker
  * merges stdout/stderr into a single raw byte stream (no 8-byte multiplexing
  * headers). The data handler then forwards bytes verbatim instead of peeling
- * frames — this is the path that carries a Minecraft server's ANSI color codes
+ * frames. This is the path that carries a Minecraft server's ANSI color codes
  * (JLine3 only emits them when stdout is a terminal).
  */
 export async function attachToContainer(
@@ -156,7 +156,7 @@ export async function attachToContainer(
         },
         close: () => {
           // If the socket closes before the handshake completed, the attach
-          // never became usable — reject so a waiting writer doesn't hang.
+          // never became usable, so reject and a waiting writer doesn't hang.
           if (!state.handshakeDone) {
             rejectReady(new Error("attach socket closed before upgrade"));
           }

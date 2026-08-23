@@ -56,7 +56,7 @@ import { serverDataPath } from "./paths";
  * What the panel may specify about a container.
  *
  * Deliberately missing: `hostDataPath` and `name`. Both are derived from the
- * server id here — see the module comment.
+ * server id here. See the module comment.
  */
 export interface CreateContainerRequest {
   image: string;
@@ -177,9 +177,9 @@ export async function createServerContainer(
 /**
  * What the panel may specify for a one-time install run.
  *
- * As with {@link CreateContainerRequest}, `hostDataPath` and `name` are absent
- * — the agent derives both from the server id, so the install script can only
- * ever touch this server's own data directory.
+ * As with {@link CreateContainerRequest}, `hostDataPath` and `name` are
+ * absent. The agent derives both from the server id, so the install script can
+ * only ever touch this server's own data directory.
  */
 export interface InstallRequest {
   image: string;
@@ -203,7 +203,7 @@ export interface InstallRequest {
  *
  * It runs as the data directory's *owner*, not as root. Under `CapDrop: ALL`
  * uid 0 has no `CAP_DAC_OVERRIDE`, so a root install container is denied its
- * first write into a directory the agent created as itself — and it has no
+ * first write into a directory the agent created as itself, and it has no
  * `CAP_CHOWN` to hand what it does write to the uid the runtime container is
  * pinned to. Running as the owner from the start solves both: the writes are
  * permitted, and the files come out owned by the account that has to keep
@@ -250,13 +250,13 @@ export async function installServer(
  * Read the install container's output while the script is still running.
  *
  * {@link installServer} only returns once the script has exited, and it removes
- * the container afterwards — so its return value is the *post-mortem*. This is
+ * the container afterwards, so its return value is the *post-mortem*. This is
  * the live view: the panel polls it while a provision is in flight so an admin
  * can watch a slow download instead of staring at a spinner.
  *
  * `running: false` with empty logs is the normal answer both before the
  * container exists (the install image is still being pulled) and after it has
- * been cleaned up. Neither is an error — the panel holds the durable copy of
+ * been cleaned up. Neither is an error. The panel holds the durable copy of
  * the output, and this endpoint only ever adds the tail that has not been
  * captured yet.
  */
@@ -357,8 +357,8 @@ export async function getServerState(serverId: string): Promise<ContainerState> 
  *
  * This is the one sanctioned exception to "a server can reach no other
  * tenant's container": the panel only calls it after an owner explicitly
- * connected the two servers. The network is created with ICC enabled — that
- * is the point of a link — and holds exactly the two linked containers, so a
+ * connected the two servers. The network is created with ICC enabled, which is
+ * the point of a link, and holds exactly the two linked containers, so a
  * compromised server can only ever reach servers it was explicitly linked to.
  *
  * Both containers must already exist (409 otherwise): there is nothing to
@@ -388,7 +388,7 @@ export async function linkServerContainers(
 /**
  * Tear a link down: detach both containers and remove the pair's network.
  *
- * Idempotent throughout — a missing container or network means the link is
+ * Idempotent throughout. A missing container or network means the link is
  * already gone, which is success. Removal is "if empty": if some endpoint is
  * still attached (a container recreated mid-unlink), the empty-or-not network
  * is left for the next unlink rather than failing the call.
@@ -420,7 +420,7 @@ export async function getServerLogs(serverId: string, tail: number): Promise<str
  * A live, follow-mode stream of a server's log output.
  *
  * Unlike {@link getServerLogs} (a one-shot tail), this stays open and emits new
- * output as the container writes it — the live console's SSE feed. The
+ * output as the container writes it. This is the live console's SSE feed. The
  * `signal` is forwarded to dockerode so cancelling it (when the browser
  * disconnects) releases the daemon's log stream.
  *
@@ -458,7 +458,7 @@ export async function streamServerLogs(
  * since a stats sweep over a partially-deprovisioned server is normal.
  *
  * Recursive but bounded by `concurrency` so a wide directory tree does not hold
- * the event loop open one entry at a time — game data is often thousands of
+ * the event loop open one entry at a time. Game data is often thousands of
  * small region/chunk files.
  */
 async function computeDiskUsageMb(serverId: string): Promise<number> {
@@ -471,7 +471,7 @@ async function computeDiskUsageMb(serverId: string): Promise<number> {
     try {
       entries = await readdir(path, { withFileTypes: true });
     } catch {
-      return 0; // not present or unreadable — nothing to count
+      return 0; // not present or unreadable, nothing to count
     }
 
     // Walk subdirectories in parallel batches to keep a deep tree moving.
@@ -502,8 +502,8 @@ async function computeDiskUsageMb(serverId: string): Promise<number> {
  * Cached disk-usage figures, keyed by server id.
  *
  * Walking a server's whole data directory is the expensive half of a stats
- * sample — a populated game world is thousands of small files — and the panel
- * polls stats every few seconds per open page. Disk usage changes slowly
+ * sample, since a populated game world is thousands of small files, and the
+ * panel polls stats every few seconds per open page. Disk usage changes slowly
  * relative to that, so a short TTL keeps the figure fresh enough for a usage
  * meter while collapsing a burst of samples (and every viewer of the same
  * server) onto one walk. CPU/memory are not cached: they come straight from the
@@ -534,7 +534,7 @@ export async function getServerStats(
   if (!containerId) return null;
 
   // Sample docker stats and disk usage in parallel: the two are independent
-  // (one hits the daemon, the other walks the data dir — the latter behind a
+  // (one hits the daemon, the other walks the data dir, the latter behind a
   // short-lived cache, see cachedDiskUsageMb).
   const [stats, diskUsageMb] = await Promise.all([
     sampleContainerStats(docker, containerId),
@@ -608,7 +608,7 @@ export async function sampleServers(
  * Attach to a container's stdin/stdout for the interactive console.
  *
  * Delegates to the raw-socket implementation rather than dockerode, whose
- * `hijack` mode does not work under Bun — see `docker/attach.ts`.
+ * `hijack` mode does not work under Bun. See `docker/attach.ts`.
  */
 export async function attachToServer(
   serverId: string,
@@ -616,7 +616,7 @@ export async function attachToServer(
 ): Promise<Attachment> {
   const containerId = await requireContainerId(serverId);
   // A TTY container's attach stream is raw bytes (no 8-byte framing), so the
-  // attach layer reads it differently — see docker/attach.ts. This is what lets
+  // attach layer reads it differently. See docker/attach.ts. This is what lets
   // a Minecraft server's JLine3 color codes reach the console.
   const tty = await containerIsTty(docker, containerId);
   return attachToContainer(containerId, handlers, tty);

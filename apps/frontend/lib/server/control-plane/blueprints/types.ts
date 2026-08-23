@@ -10,10 +10,10 @@
  * Built-in blueprints are defined in code (reviewable, type-checked) and synced
  * into the `blueprints` table on boot. The table is the complete store, so the
  * node agent can be handed everything it needs from the database at create
- * time — see `registry.ts`.
+ * time. See `registry.ts`.
  *
  * Adding a new built-in game is one new file in `definitions/` plus one entry
- * in the registry — no changes to core orchestration code.
+ * in the registry, with no changes to core orchestration code.
  */
 
 import type { BlueprintPluginSupport } from "./plugins";
@@ -21,7 +21,7 @@ import type { BlueprintPluginSupport } from "./plugins";
 export interface BlueprintPort {
   /**
    * The port this blueprint prefers for its game traffic (e.g. 25565 for
-   * Minecraft Java). Allocation from the node's pool is best-effort — it is
+   * Minecraft Java). Allocation from the node's pool is best-effort. It is
    * honored when the port is in the pool and free, otherwise a random free
    * pool port is drawn. Whatever port lands, it is published as an identity
    * mapping: host port and container port are the same number.
@@ -46,8 +46,8 @@ export interface BlueprintEnvField {
   /**
    * When true, the server owner (and subusers with `settings`) may override this
    * value after creation. When unset/false the value is locked to whatever the
-   * blueprint resolved at create time — admins can still change it by editing the
-   * blueprint or the `server_env` row directly.
+   * blueprint resolved at create time. Admins can still change it by editing
+   * the blueprint or the `server_env` row directly.
    */
   editable?: boolean;
 }
@@ -90,7 +90,7 @@ export interface Blueprint {
   /**
    * Env var that receives the primary port's number (e.g. SERVER_PORT for the
    * itzg Minecraft images), so the game binds inside the container exactly
-   * where Docker published it — published ports are identity mappings, so the
+   * where Docker published it. Published ports are identity mappings, so the
    * game must listen on the host port it was allocated. The panel sets this
    * value at create time and re-syncs it on every container recreate; it is
    * deliberately absent from `envSchema` so owners cannot desync it.
@@ -140,7 +140,7 @@ export interface Blueprint {
    * Some server software gates colored console output on detecting a real
    * terminal: the itzg/minecraft-server image uses JLine3's
    * TerminalConsoleAppender, which emits ANSI color (log levels AND Minecraft's
-   * own § chat-formatting codes) only when stdout is a TTY — without one it
+   * own § chat-formatting codes) only when stdout is a TTY. Without one it
    * strips all color. The panel's ANSI renderer then has nothing to render.
    *
    * TTY mode changes the attach stream from Docker's 8-byte multiplexed framing

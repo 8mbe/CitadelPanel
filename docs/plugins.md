@@ -3,23 +3,23 @@
 Blueprint-declared, panel-mediated plugin and mod management. A server gets a
 "Plugins" (or "Mods", or whatever the blueprint names it) tab when its
 blueprint declares plugin support **that resolves for the server's current
-configuration** — no declaration, no tab.
+configuration**. No declaration, no tab.
 
 ## The shape of a declaration
 
 Everything lives in the blueprint's `plugins` section, as pure JSON data:
 
-- **Profiles** — the tab label, the install directory inside the data dir
+- **Profiles.** The tab label, the install directory inside the data dir
   (`plugins`, `mods`, `world/datapacks`, …), the content type facet
   (`mod` / `plugin` / `datapack`), loader facets, and which env key holds the
   game version. Profiles can be **static** (one `default`) or **env-driven**
   (`envField` + `variants`): minecraft-java keys off `TYPE`, so a Paper server
   gets "Plugins" into `plugins/`, a Fabric server gets "Mods" into `mods/`,
   and a vanilla server gets no tab at all (VANILLA has no variant). The
-  `velocity` blueprint is the static case — a proxy only ever loads Velocity
+  `velocity` blueprint is the static case. A proxy only ever loads Velocity
   plugins from `plugins/`, so there is nothing to switch on
   (`velocity-proxy.md`).
-- **Provider fetch spec** — how to talk to the catalog: the https API origin,
+- **Provider fetch spec.** How to talk to the catalog: the https API origin,
   endpoint path/query **templates** (`{query}`, `{projectId}`, `{loaders}`,
   `{facets}`, …), response field mappings as dot-paths, facet composition
   rules, the pinned `downloadHosts`, and optionally the catalog's site origin +
@@ -29,7 +29,7 @@ Everything lives in the blueprint's `plugins` section, as pure JSON data:
   minecraft-java blueprint and the blueprint form's "Modrinth preset" button.
 
 The whole section travels with blueprint export/import (shareable like the
-rest of the blueprint) and is validated on every admin write — see the safety
+rest of the blueprint) and is validated on every admin write. See the safety
 model below. Servers store their installed set in the `server_plugins` table
 (project/version linkage, filename, enabled flag, who installed what).
 
@@ -39,16 +39,16 @@ model below. Servers store their installed set in the `server_plugins` table
 browser ──> panel routes (routes/plugins.ts, `files` permission)
                 │  resolve blueprint + server_env → ResolvedPluginSupport
                 ▼
-          plugins/engine.ts — interprets the fetch spec (search / versions /
+          plugins/engine.ts interprets the fetch spec (search / versions /
           version), size-capped, timeout, host-checked
                 │  file URL from the catalog response
                 ▼
-          agent POST /v1/servers/:id/files/pull — staged, size-capped,
+          agent POST /v1/servers/:id/files/pull, staged, size-capped,
           path-contained binary write into <directory>/<filename>
 ```
 
 The browser never talks to the catalog; the panel never executes catalog
-content. The agent is unchanged — installs are ordinary `files/pull`
+content. The agent is unchanged. Installs are ordinary `files/pull`
 operations, contained by `paths.ts` like every other file write. Enable/disable
 is a rename to `<file>.jar.disabled` (which Bukkit-family loaders and Fabric
 ignore).
@@ -58,7 +58,7 @@ the confirm dialog, default on) it also deletes the plugin's config/data
 folder. Bukkit-family plugins name that folder after the *plugin*, not the jar
 (`plugins/EssentialsX/` for `EssentialsX-2.20.1.jar`), so the panel matches
 install-directory subfolders against the project's title and slug
-(case-insensitive) and deletes the matches — matching rather than name-deriving
+(case-insensitive) and deletes the matches. Matching rather than name-deriving
 means it can only touch folders the catalog's own names point at. Wiped
 folders are recorded in the audit row; a failed directory listing leaves the
 configs in place rather than failing the removal.
@@ -70,14 +70,14 @@ an install script); the plugins section is designed to add **zero new
 code-execution primitives**:
 
 - **Interpreted, never executed.** Templates are substituted from a fixed
-  variable vocabulary — there is no expression parser, no scripts, no
+  variable vocabulary. There is no expression parser, no scripts, no
   headers, no request bodies, no non-GET methods. Responses are read only
   through declared dot-path mappings and trimmed.
 - **Hosts are pinned and public.** Validation (`parsePluginSupport`) enforces
   https-only origins that pass the SSRF blocklist (no loopback/RFC1918/
-  link-local), exact hostname pins for downloads, and the engine re-checks the
-  origin — and the host a redirect actually landed on — at fetch time. A
-  shared blueprint cannot aim the panel or its auto-updater at internal
+  link-local), exact hostname pins for downloads, and the engine re-checks
+  the origin at fetch time, including the host a redirect actually landed on.
+  A shared blueprint cannot aim the panel or its auto-updater at internal
   networks.
 - **Downloads are fenced twice.** Every file URL must be https, exactly match
   a declared `downloadHosts` entry and pass the blocklist before the agent is
@@ -86,17 +86,17 @@ code-execution primitives**:
 - **The source is never hidden.** The blueprint form (and the import review
   step, which is that form) shows a "Network access" callout naming the catalog
   and download hosts before saving; the server's plugins tab footers the same
-  list. Importing a blueprint is the trust decision — it is made explicit,
-  not silent.
+  list. Importing a blueprint is the trust decision, made explicit rather
+  than silent.
 - **No secrets in templates.** Template variables carry no env values, so
   server secrets can't leak into catalog queries.
 
 Residual risks, stated plainly: an admin who imports a blueprint without
 reading the callout has delegated plugin downloads to that blueprint's
-(public) hosts; the SSRF guard is hostname-based (see `lib/ssrf.ts` — the same
+(public) hosts; the SSRF guard is hostname-based (see `lib/ssrf.ts`, the same
 guard that protects blueprint import-URL and files-pull), so DNS rebinding to
 a private IP is a panel-wide, pre-existing limitation; nothing scans jars for
-malware — mods are third-party code by nature.
+malware, since mods are third-party code by nature.
 
 ## Game-version filtering
 
@@ -105,8 +105,8 @@ Compatibility filtering uses the version the user sets: the profile's
 drives the search facet, version-list filtering and auto-update selection, and
 is shown in the tab header ("… for Minecraft 1.21.1"); search results and
 version rows that don't support it are badged "Not for <version>". The panel
-deliberately does not guess a version — when the env is a sentinel like
-`LATEST`, filtering is simply unversioned and the plugins tab asks the user to
+deliberately does not guess a version. When the env is a sentinel like
+`LATEST`, filtering is unversioned and the plugins tab asks the user to
 set a concrete version in Settings → Environment (the editable-env flow
 already lives there). Version strings are compared numerically per segment,
 never lexicographically ("1.8.8" is *older* than "1.21.1"; see
@@ -117,17 +117,17 @@ not indexed.
 That ordering is also why the supported-version list is the **one** mapped
 array the engine never caps (`asGameVersionList` in `plugins/mapping.ts`).
 Every other mapped list gets a display cap; capping this one truncates the
-*end* of an oldest-first list — the current versions — and compatibility is
-decided by `includes(gameVersion)`. A 200-entry cap did exactly that: Simple
-Voice Chat lists 259 supported game versions with the current one at index
-249, so the tab badged it "Not for 26.2" while its version picker showed every
-release supporting 26.2. Response size (`MAX_RESPONSE_BYTES`) is the bound
-that matters here, not element count.
+*end* of an oldest-first list, which holds the current versions, and
+compatibility is decided by `includes(gameVersion)`. A 200-entry cap did
+exactly that: Simple Voice Chat lists 259 supported game versions with the
+current one at index 249, so the tab badged it "Not for 26.2" while its
+version picker showed every release supporting 26.2. Response size
+(`MAX_RESPONSE_BYTES`) is the bound that matters here, not element count.
 
 Note also what the badge can and cannot tell you: when the provider spec has a
 `gameVersion` facet (Modrinth does), search results are already filtered by
 the server's version server-side, so a badge on a search row means the
-catalog's *project-level* list disagrees with its own filter — usually a
+catalog's *project-level* list disagrees with its own filter, usually a
 mapping bug, as above. The badge stays for providers with no such facet, where
 it is the only compatibility signal.
 
@@ -136,23 +136,23 @@ it is the only compatibility signal.
 Note the seeding lag this shares with every other spec field: blueprints are
 read from the `blueprints` table at run time, and built-ins are written there
 by `syncBlueprintsToDatabase` at process boot. Editing `modrinth-preset.ts`
-therefore changes nothing for a *running* panel — the new spec (and the link)
+therefore changes nothing for a *running* panel. The new spec (and the link)
 appears after a restart, which an upgrade does anyway.
 
 A fetch spec may declare `siteUrl` (the catalog's human-facing origin, e.g.
-`https://modrinth.com` — distinct from `baseUrl`, its API) plus a
+`https://modrinth.com`, distinct from `baseUrl`, its API) plus a
 `projectPath` template (`/{projectType}/{slug}`). When both are present, the
 plugins tab shows an external-link button on search hits, on installed rows
 and in the version picker's header; when either is missing, no link appears
 and nothing else changes.
 
 The panel composes that URL (`providerProjectUrl`) rather than letting the
-browser assemble one from spec fields — it is the only provider URL a user's
+browser assemble one from spec fields. It is the only provider URL a user's
 browser ever sees, so it goes through the same discipline as everything else
 here: the origin is validated https and blocklist-checked at write time *and*
 again at compose time (the spec lives in a database row), the template
-vocabulary is its own small set (`projectId`, `slug`, `projectType` — no API
-variables), and interpolated values are percent-encoded so a hostile slug
+vocabulary is its own small set (`projectId`, `slug`, `projectType`, with no
+API variables), and interpolated values are percent-encoded so a hostile slug
 cannot add path segments or query material. The slug is preferred but the
 project id works as a fallback (Modrinth redirects `/mod/<id>` to the
 canonical page), so plugins installed before a slug was recorded still link
@@ -166,7 +166,7 @@ When `servers.plugin_auto_update` is on (default), `startServer` and
 `restartServer` run `autoUpdateServerPlugins` before touching the container:
 every **enabled** plugin's project is checked for a newer **release-channel**
 version (betas/alphas are never auto-taken) and updated in place, filtered by
-the user-set game version above. The whole pass is best-effort — a catalog
+the user-set game version above. The whole pass is best-effort. A catalog
 outage or a single failed download logs a warning and the start proceeds. One
 summary audit row (`server.plugin.auto-update`) is written when anything
 changed.
@@ -174,8 +174,8 @@ changed.
 This is also why reinstalling a server deletes its `server_plugins` rows rather
 than leaving them: the jars are wiped with everything else, and rows pointing at
 files that no longer exist would have this pass re-download every one of them on
-the next start — a fresh install that quietly restores the plugins it was asked
-to remove. See [server-lifecycle.md](server-lifecycle.md).
+the next start, giving a fresh install that quietly restores the plugins it
+was asked to remove. See [server-lifecycle.md](server-lifecycle.md).
 
 ## Permissions & auditing
 
@@ -187,8 +187,8 @@ create/update).
 
 ## Adding another game
 
-Write the catalog's fetch spec as data — either by hand or by extending
-`modrinth-preset.ts`-style presets — and reference it from a blueprint's
+Write the catalog's fetch spec as data, either by hand or by extending
+`modrinth-preset.ts`-style presets, and reference it from a blueprint's
 plugins section. If the catalog's grammar doesn't fit the engine's model
 (paginated cursors, auth headers, POST searches), extend the engine
 deliberately: every capability added there is a capability a shared blueprint

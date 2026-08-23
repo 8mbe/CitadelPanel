@@ -2,7 +2,7 @@
  * Outbound SFTP authentication callback to the panel.
  *
  * The SFTP server (see `sftp.ts`) authenticates clients by username/password,
- * but the agent has no user model — the panel owns all three (users, the
+ * but the agent has no user model. The panel owns all three (users, the
  * `sftp_credentials` table, and the audit log). So when an SFTP client connects,
  * the agent calls back here so the panel can:
  *
@@ -14,7 +14,7 @@
  *
  * This mirrors the direct-console callback pattern (`consoleAudit.ts`): the agent
  * stays stateless, the panel is the source of truth, and `PANEL_URL` is required.
- * Unlike the console flow there is no short-lived token — SFTP connections are
+ * Unlike the console flow there is no short-lived token. SFTP connections are
  * long-lived, so the credential is validated fresh on every connection.
  */
 
@@ -67,7 +67,7 @@ function panelPost(
  * Validate an SFTP username/password with the panel.
  *
  * Called (and awaited) at SSH authentication time. Throws on any non-2xx or
- * network failure — the caller rejects the SSH auth, closing the connection.
+ * network failure. The caller rejects the SSH auth, closing the connection.
  * A 401 from the panel (bad password, unknown user, no access) is the expected
  * rejection path and is thrown as a `PanelRejectedError` with that status.
  */

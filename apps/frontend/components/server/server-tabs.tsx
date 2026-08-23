@@ -51,7 +51,7 @@ export function sectionFromPathname(pathname: string): ServerSectionKey {
  *
  * Two things hide a section: the viewer lacking its permission (a console-only
  * subuser sees Console and Activity and nothing else), and the blueprint not
- * supporting it — the plugins tab only exists when the server's blueprint
+ * supporting it. The plugins tab only exists when the server's blueprint
  * declares plugin support that resolves for its current configuration (a
  * vanilla Minecraft server has no tab even though the blueprint is the same).
  * Its label comes from the blueprint too ("Plugins" for Paper, "Mods" for

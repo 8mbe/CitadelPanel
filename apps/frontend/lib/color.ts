@@ -5,7 +5,7 @@
  *
  *   - **The design tokens are `oklch`.** Every value in `app/globals.css` is an
  *     OKLCh triple, so an operator-supplied colour has to end up in the same
- *     space or the palette stops being perceptually uniform — a hex `--primary`
+ *     space or the palette stops being perceptually uniform. A hex `--primary`
  *     next to an OKLCh `--primary-foreground` makes contrast tuning guesswork.
  *   - **The parse is a security boundary.** The site theme is interpolated into
  *     a `<style>` element (see `lib/site-theme.ts`). Nothing an operator types
@@ -103,7 +103,7 @@ function round(value: number, digits: number): number {
   return Math.round(value * factor) / factor;
 }
 
-/** `#rrggbb` for the native colour picker. Alpha is dropped — it cannot show it. */
+/** `#rrggbb` for the native colour picker. Alpha is dropped since it cannot show it. */
 export function oklchToHex(color: Oklch): string {
   const [r, g, b] = oklchToSrgb(color);
   return `#${channel(r)}${channel(g)}${channel(b)}`;

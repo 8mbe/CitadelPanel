@@ -34,9 +34,9 @@ import {
 /**
  * One published port row.
  *
- * Bindings are identity mappings — the same number is published on the host and
- * bound inside the container — and every port is claimed on TCP and UDP both,
- * so a port is a single number with no protocol to qualify it.
+ * Bindings are identity mappings. The same number is published on the host and
+ * bound inside the container, and every port is claimed on TCP and UDP both, so
+ * a port is a single number with no protocol to qualify it.
  *
  * Blueprint ports (the game's built-in ports, including the primary player port)
  * are shown read-only with a badge, so the owner understands why they cannot be
@@ -259,7 +259,7 @@ export function PortsTab({ serverId }: { serverId: string }) {
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <FieldDescription>
-            The port number is assigned for you — a free one is drawn at random
+            The port number is assigned for you. A free one is drawn at random
             from this node&apos;s pool and published on TCP and UDP as the same
             number inside and outside the container. Configure the game or plugin
             to listen on the number you get back. Publishing a port recreates the

@@ -165,7 +165,7 @@ export async function startNodeDatabaseRestore(
  * Poll a job of either scope, draining only log lines newer than `afterSeq`.
  *
  * The cursor is in the query string rather than the body because it is not secret
- * and it makes the call idempotent in the obvious way — the same cursor always
+ * and it makes the call idempotent in the obvious way. The same cursor always
  * returns the same window.
  */
 export async function readNodeBackupJob(

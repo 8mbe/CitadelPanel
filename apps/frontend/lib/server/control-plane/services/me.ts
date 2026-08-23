@@ -10,7 +10,8 @@
  * `twoFactorEnabled`) plus correlated count subqueries for owned and subuser
  * servers. The subqueries use the indexed FKs on `servers.owner_id` and
  * `server_subusers.user_id`. The admin-only review-queue count is a separate
- * call — it scans the suspicious-activity table and is meaningless for non-admins.
+ * call, because it scans the suspicious-activity table and is meaningless for
+ * non-admins.
  */
 
 import { sql } from "../db/client";

@@ -27,7 +27,7 @@ import type { ServerStatus } from "./serverManager";
 /**
  * The pairwise link network's name for two servers.
  *
- * Mirrors `linkNetworkName` in `apps/backend/src/docker/hardening.ts` — the
+ * Mirrors `linkNetworkName` in `apps/backend/src/docker/hardening.ts`. The
  * agent owns the definition (it creates and removes the networks), but the
  * panel needs the name to re-attach link networks when a container is
  * recreated via `extraNetworks`. Keep the two in sync: a mismatch would attach
@@ -135,7 +135,7 @@ export async function listServerLinks(
  * The link networks a server's container must be attached to at create time.
  *
  * Recreating a container drops its network attachments, so `serverManager`
- * passes these names via `extraNetworks` and the agent re-attaches — that is
+ * passes these names via `extraNetworks` and the agent re-attaches. That is
  * how a link survives env edits, port changes and resource updates. Both
  * directions: this server may be the link's source or its target.
  */
@@ -170,10 +170,10 @@ export interface CreateServerLinkInput {
  * would be a second handle to the same connectivity), both containers must
  * exist, and neither server may be suspended.
  *
- * Ordering follows the panel-wide principle — DB row first, then the node —
- * except the row is rolled back if the node refuses: a row whose network was
- * never attached would be a link that does not work but cannot be diagnosed
- * from the node.
+ * Ordering follows the panel-wide principle, DB row first and then the node,
+ * except that the row is rolled back if the node refuses. A row whose network
+ * was never attached would be a link that does not work but cannot be
+ * diagnosed from the node.
  */
 export async function createServerLink(
   input: CreateServerLinkInput,
@@ -214,7 +214,7 @@ export async function createServerLink(
     for (const server of [source, target]) {
       if (!server.container_id) {
         throw conflict(
-          `Server "${server.name}" has no container yet — wait for it to finish installing, then connect again.`,
+          `Server "${server.name}" has no container yet. Wait for it to finish installing, then connect again.`,
         );
       }
     }
@@ -270,7 +270,7 @@ export async function createServerLink(
  *
  * Fail-closed ordering for same-node links: the agent detaches first and the
  * row is deleted only afterwards. An unreachable node therefore fails the
- * request with a 502 and the link stays active — never a deleted row with a
+ * request with a 502 and the link stays active, never a deleted row with a
  * still-attached network. Cross-node links have no network to tear down, so
  * they are a plain row delete.
  */
@@ -320,7 +320,7 @@ export async function removeServerLink(
  *
  * Called from `deleteServer`: the link rows cascade away with the server
  * record, but the pair networks on the node would be left holding the peer.
- * Best-effort for the same reason the rest of node cleanup is — an unreachable
+ * Best-effort for the same reason the rest of node cleanup is: an unreachable
  * node must not block the delete. The peer keeps a lone, empty-halved network
  * until its own next recreate/unlink; harmless, and tidied then.
  */

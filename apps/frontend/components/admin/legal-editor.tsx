@@ -61,16 +61,16 @@ const DOCUMENTS = [
 /**
  * The legal document editor.
  *
- * A real editor — Monaco with a side-by-side preview — rather than a textarea
- * in the settings form, because these are documents, not settings: they are
- * thousands of words long, they are written over multiple sittings, and they are
- * the one thing on the panel a lawyer might read. A four-row textarea buried
+ * Monaco with a side-by-side preview, rather than a textarea in the settings
+ * form, because these are documents and not settings. They are thousands of
+ * words long, they are written over multiple sittings, and they are the one
+ * thing on the panel a lawyer might read. A four-row textarea buried
  * under the SMTP fields would guarantee nobody writes them properly.
  *
  * The panel supplies drafts, not defaults (see `lib/legal-templates.ts`). Nothing
  * is published until an admin saves, so a fresh install has no policy rather than
  * a wrong one, and the "Insert draft" button is only offered on an empty
- * document — it must never be able to overwrite text an admin has written.
+ * document, since it must never be able to overwrite text an admin has written.
  */
 export function AdminLegalEditor() {
   const [documents, setDocuments] = React.useState<LegalSettings | null>(null);
@@ -109,7 +109,7 @@ export function AdminLegalEditor() {
         <p className="text-sm text-muted-foreground">
           Your terms of service and privacy policy, written in Markdown and
           published at <code>/terms</code> and <code>/privacy</code>. Both are
-          empty until you write them — the panel ships no default text, because a
+          empty until you write them. The panel ships no default text, because a
           policy that describes someone else&apos;s service is worse than none.
         </p>
       </div>
@@ -258,7 +258,7 @@ function DocumentEditor({
       {documentKey === "privacy" && (
         <p className="rounded-lg border bg-muted/40 p-3 text-xs/relaxed text-muted-foreground">
           The privacy draft is generated from what this panel&apos;s code actually
-          stores — accounts, sessions, API keys, the audit log and the IP
+          stores: accounts, sessions, API keys, the audit log and the IP
           addresses in it, server files, and the third parties your configuration
           reaches (email, captcha, AI, analytics). It cannot know about your
           hosting provider, your backups, your server logs, or your jurisdiction.

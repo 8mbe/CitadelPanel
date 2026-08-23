@@ -3,22 +3,22 @@
  *
  * The live console is a browser → agent WebSocket (no panel-held connection).
  * Because a browser cannot set headers on a WS handshake, the panel can't hand
- * the browser the long-lived agent bearer — so it mints a short-lived, single-
- * use capability token instead. Three endpoints cooperate:
+ * the browser the long-lived agent bearer, so it mints a short-lived,
+ * single-use capability token instead. Three endpoints cooperate:
  *
- *   1. `POST /api/servers/:id/console/session` — the browser asks for a console.
+ *   1. `POST /api/servers/:id/console/session`. The browser asks for a console.
  *      The panel checks the `console` permission, mints a UUID token, stores a
  *      `console_sessions` row, and returns `{token, url}`. The browser opens the
  *      WS at that URL; the agent validates the token against endpoint #2.
- *   2. `POST /api/internal/console/sessions/validate` — the agent calls back at
+ *   2. `POST /api/internal/console/sessions/validate`. The agent calls back at
  *      WS open. The panel authenticates the agent by its long-lived token
  *      (`findNodeByAgentToken`), atomically marks the session upgraded (so a
  *      replayed token can't open a second console), and returns the serverId/
  *      userId the socket needs.
- *   3. `POST /api/internal/console/audit` — the agent calls back on each command
+ *   3. `POST /api/internal/console/audit`. The agent calls back on each command
  *      typed, so the panel can write the `server.console.command` audit row
  *      attributed to the token's user. The agent never learns the userId; it
- *      sends only the token, which the panel resolves — so a compromised agent
+ *      sends only the token, which the panel resolves, so a compromised agent
  *      cannot spoof attribution.
  *
  * The agent stays stateless (it pulls validation per-connection); this table is
@@ -82,7 +82,7 @@ function deriveWsUrl(
 }
 
 /**
- * `POST /api/servers/:id/console/session` — mint a console capability token.
+ * `POST /api/servers/:id/console/session` mints a console capability token.
  *
  * Authorized like the SSE stream and command routes before it: the caller needs
  * the `console` permission. The returned URL points the browser straight at the
@@ -119,8 +119,8 @@ export async function handleConsoleSession(
   // Mixed-content guard: an https page cannot open ws:// (the browser blocks it
   // silently). Rather than hand the browser a URL that will fail opaquely,
   // refuse the mint with an actionable message. Page protocol comes from the
-  // standard proxy header, falling back to the request URL — same approach as
-  // clientIp().
+  // standard proxy header, falling back to the request URL, the same approach
+  // as clientIp().
   const pageProto =
     request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() ??
     new URL(request.url).protocol.replace(":", "");
@@ -133,7 +133,7 @@ export async function handleConsoleSession(
   }
 
   const token = randomUUID();
-  // Cast the interval parameter so Postgres can type the bound `$n` — without
+  // Cast the interval parameter so Postgres can type the bound `$n`. Without
   // it, `interval '...' seconds` leaves the parameter's type ambiguous (42P18).
   // The `::int` pins the multiplier, and `make_interval` builds the value.
   await sql`
@@ -149,7 +149,8 @@ export async function handleConsoleSession(
 }
 
 /**
- * `POST /api/internal/console/sessions/validate` — agent callback at WS open.
+ * `POST /api/internal/console/sessions/validate` is the agent callback at WS
+ * open.
  *
  * Atomically marks the token consumed so a replayed token (two browser tabs, a
  * leaked URL) cannot open a second console. Binds the session to the calling
@@ -187,12 +188,12 @@ export async function handleConsoleSessionValidate(
 }
 
 /**
- * `POST /api/servers/:id/console/revoke` — give up a console session.
+ * `POST /api/servers/:id/console/revoke` gives up a console session.
  *
  * Called by the browser when the user genuinely leaves the page (unmount on
  * client-side navigation, or `pagehide` on tab close / reload / back-button),
  * as opposed to a transient WebSocket drop which just reconnects. Revoking
- * means a subsequent reconnect attempt mints a fresh token — but the dropped
+ * means a subsequent reconnect attempt mints a fresh token, but the dropped
  * token can no longer upgrade (open a WS) or feed audit callbacks, so a token
  * leaked from the URL bar can't be replayed once the user has navigated away.
  *
@@ -215,7 +216,7 @@ export async function handleConsoleRevoke(
 
   // Scope by user_id so one user can't revoke another's session, and only touch
   // rows that are still active. No row affected (already revoked, never
-  // existed, belonged to someone else) is a no-op — the caller's intent ("this
+  // existed, belonged to someone else) is a no-op. The caller's intent ("this
   // token is done") is already satisfied.
   await sql`
     UPDATE console_sessions
@@ -229,7 +230,8 @@ export async function handleConsoleRevoke(
 }
 
 /**
- * `POST /api/internal/console/audit` — agent callback on each typed command.
+ * `POST /api/internal/console/audit` is the agent callback on each typed
+ * command.
  *
  * The agent sends the token + the command; the panel resolves the user from the
  * session row (never trusting an agent-supplied userId) and writes the audit
@@ -277,8 +279,8 @@ export async function handleConsoleAudit(request: Request): Promise<Response> {
     action: "server.console.command",
     targetType: "server",
     targetId: serverId,
-    // The agent's IP, not the user's — still useful for forensics (which node
-    // relayed the command). The user is identified by userId above.
+    // The agent's IP, not the user's, but still useful for forensics (which
+    // node relayed the command). The user is identified by userId above.
     ip: clientIp(request),
     metadata: { command: command.slice(0, 500) },
   });

@@ -35,14 +35,14 @@ const CAPTCHA_HEADER = "x-captcha-response";
  *
  * Reaching this component means the server already established that nobody is
  * signed in (see `page.tsx`), so it never has to reason about an existing
- * session — it only has to obtain one.
+ * session. It only has to obtain one.
  *
  * `next` is the already-validated internal path the visitor was heading for
  * before being sent here; when absent, a successful credential exchange lands on
  * the panel root (or the wizard, when setup is unfinished).
  *
  * `registration` and `legal` are resolved server-side by `page.tsx`, so the
- * sign-up tab is either there on first paint or never — it does not appear a
+ * sign-up tab is either there on first paint or never. It does not appear a
  * moment after the page settles.
  */
 export default function LoginForm({
@@ -175,7 +175,7 @@ function AuthForm({
         captchaRef.current?.reset();
       } else {
         // A 200 with `twoFactorRedirect` means the credentials were correct but
-        // the account has 2FA enabled — Better Auth has NOT issued a session
+        // the account has 2FA enabled. Better Auth has NOT issued a session
         // cookie yet. Send the user to the verification page; the next-URL is
         // forwarded so they land where they were heading after verifying.
         const body = (await res.json().catch(() => null)) as

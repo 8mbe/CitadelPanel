@@ -3,7 +3,7 @@
 --
 -- The itzg image rewrites server.properties from its property environment
 -- variables on every boot. While DIFFICULTY, MAX_PLAYERS and ONLINE_MODE were
--- declared in the blueprint, every Java server was created with them set — so
+-- declared in the blueprint, every Java server was created with them set, so
 -- an owner who edited difficulty, max-players or online-mode in the Files tab
 -- had the edit reverted the next time the server started, with nothing in the
 -- panel to explain why. ONLINE_MODE was the worst of the three: velocity-proxy.md
@@ -20,7 +20,7 @@
 -- keys with the same names.
 --
 -- Existing containers keep the env they were created with until they are
--- recreated (a port change, a link change, a reinstall or a heal) — Docker fixes
+-- recreated (a port change, a link change, a reinstall or a heal). Docker fixes
 -- a container's environment at creation time.
 
 DELETE FROM server_env

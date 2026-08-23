@@ -7,7 +7,7 @@ import type { editor } from "monaco-editor/editor";
  *
  * Every other component in the panel switches theme purely in CSS: the `.dark`
  * class flips the variables and that is the end of it. Monaco cannot work that
- * way — `defineTheme` takes literal colors, which it bakes into a generated
+ * way. `defineTheme` takes literal colors, which it bakes into a generated
  * stylesheet and into the classes it puts on tokens, so `var(--card)` never
  * reaches a browser that would resolve it. The editor is therefore the one
  * place that has to be re-themed from JS when the active theme changes.
@@ -29,16 +29,16 @@ export const THEME_NAME = "citadel";
 // The variables are authored as `oklch()`, but that is not what a browser hands
 // back: Next's CSS transformer rewrites them to `lab()` (behind an `@supports`,
 // with a hex line underneath as the fallback), and `getComputedStyle` returns
-// whichever line won — a modern-colour function, not `rgb()`. Monaco wants plain
-// hex. So something has to convert, and it cannot be a hand-written
+// whichever line won, a modern-colour function rather than `rgb()`. Monaco
+// wants plain hex. So something has to convert, and it cannot be a hand-written
 // oklch/lab→sRGB implementation: the value could be any syntax an operator's
 // site theme uses, and the browser already knows all of them.
 //
 // The trick is to make the browser normalise into sRGB and then serialise:
 // `color-mix(in srgb, X, X)` is X, computed in sRGB, which every engine
 // serialises as `color(srgb …)` or `rgb()`. Canvas `fillStyle` does the same job
-// in one step, but its colour parser is not the CSS one everywhere — Firefox
-// accepts `lab()`, some Chrome versions do not — so it is the second attempt
+// in one step, but its colour parser is not the CSS one everywhere. Firefox
+// accepts `lab()`, some Chrome versions do not, so it is the second attempt
 // rather than the first.
 // ---------------------------------------------------------------------------
 
@@ -61,7 +61,7 @@ function parseResolved(value: string): string | null {
   const input = value.trim();
   if (/^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(input)) return input.toLowerCase();
 
-  // `rgb(1 2 3)`, `rgb(1, 2, 3)`, `rgba(1, 2, 3, 0.5)` — channels are 0-255.
+  // `rgb(1 2 3)`, `rgb(1, 2, 3)`, `rgba(1, 2, 3, 0.5)`. Channels are 0-255.
   const legacy = /^rgba?\(([^)]+)\)$/i.exec(input);
   if (legacy) {
     const parts = legacy[1]!.split(/[,\s/]+/).filter(Boolean).map(Number);
@@ -69,7 +69,7 @@ function parseResolved(value: string): string | null {
     return toHex(parts[0]!, parts[1]!, parts[2]!, parts[3] ?? 1);
   }
 
-  // `color(srgb 0.1 0.09 0.09 / 0.5)` — channels are 0-1 and may be out of
+  // `color(srgb 0.1 0.09 0.09 / 0.5)`. Channels are 0-1 and may be out of
   // gamut, which `hexByte` clamps.
   const modern = /^color\(\s*srgb\s+([^)]+)\)$/i.exec(input);
   if (modern) {
@@ -231,9 +231,9 @@ export function buildTheme(): editor.IStandaloneThemeData {
   const dark = panelIsDark(c?.card ?? null);
 
   // Nothing readable: hand Monaco its own theme of the right polarity rather
-  // than a palette we made up. Say so — silently rendering a stock theme is
-  // exactly the kind of failure that gets reported as "the editor ignores my
-  // theme" with nothing to go on.
+  // than a palette we made up. Say so, because silently rendering a stock
+  // theme is exactly the kind of failure that gets reported as "the editor
+  // ignores my theme" with nothing to go on.
   if (!c) {
     console.warn(
       "[code-editor] could not resolve the panel's CSS colour tokens; " +
@@ -269,7 +269,7 @@ export function buildTheme(): editor.IStandaloneThemeData {
       { token: "attribute.name", foreground: c.syntaxAttribute },
       { token: "attribute.value", foreground: c.syntaxString },
       // JSON/YAML keys. Monaco tags JSON keys `string.key`, YAML keys `type`,
-      // and INI/properties keys `attribute.name` — all three land somewhere.
+      // and INI/properties keys `attribute.name`, so all three land somewhere.
       { token: "string.key", foreground: c.syntaxTag },
       { token: "string.value", foreground: c.syntaxString },
       { token: "invalid", foreground: c.destructive },
@@ -304,8 +304,8 @@ export function buildTheme(): editor.IStandaloneThemeData {
       "editorStickyScroll.background": c.card,
       "editorStickyScrollHover.background": c.accent,
       "editorLink.activeForeground": c.syntaxFunction,
-      // Widgets: find, suggest, hover, the parameter hints — the panel's own
-      // popover/input tokens so they match every other floating surface.
+      // Widgets: find, suggest, hover, the parameter hints. These use the
+      // panel's own popover/input tokens so they match every other surface.
       "editorWidget.background": c.popover,
       "editorWidget.foreground": c.popoverForeground,
       "editorWidget.border": c.border,

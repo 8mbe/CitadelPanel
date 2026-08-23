@@ -6,9 +6,9 @@
  * subuser manage files lets them manage plugins (the same reasoning that puts
  * the ports tab under `settings`).
  *
- * Catalog calls (search, version lists) are proxied through the panel — the
+ * Catalog calls (search, version lists) are proxied through the panel, so the
  * browser never learns the catalog's address from us and never talks to it
- * directly — and are executed by the fetch engine against the blueprint's
+ * directly. The fetch engine executes them against the blueprint's
  * validated provider spec. Every mutation is audited by the service layer.
  */
 
@@ -27,7 +27,7 @@ import {
 /** Catalog project ids/slugs: base62-ish, no path or query material. */
 const PROJECT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** GET /api/servers/:id/plugins — installed plugins, reconciled with disk. */
+/** GET /api/servers/:id/plugins. Installed plugins, reconciled with disk. */
 export async function handleListServerPlugins(
   request: Request,
   serverId: string,
@@ -37,7 +37,7 @@ export async function handleListServerPlugins(
   return json(await listServerPlugins(id));
 }
 
-/** GET /api/servers/:id/plugins/search?q=&offset= — catalog search proxy. */
+/** GET /api/servers/:id/plugins/search?q=&offset=. Catalog search proxy. */
 export async function handleSearchServerPlugins(
   request: Request,
   serverId: string,
@@ -55,7 +55,7 @@ export async function handleSearchServerPlugins(
   );
 }
 
-/** GET /api/servers/:id/plugins/versions/:projectId — installable versions. */
+/** GET /api/servers/:id/plugins/versions/:projectId. Installable versions. */
 export async function handleListPluginVersions(
   request: Request,
   serverId: string,
@@ -74,7 +74,7 @@ export async function handleListPluginVersions(
 }
 
 /**
- * POST /api/servers/:id/plugins/install — install or update to a version.
+ * POST /api/servers/:id/plugins/install. Installs or updates to a version.
  *
  * Only the ids come from the client; the version (and its file URL) are
  * re-resolved from the catalog and host-checked before the agent pulls it.
@@ -98,7 +98,7 @@ export async function handleInstallPlugin(
   return json({ installed: true }, 201);
 }
 
-/** POST /api/servers/:id/plugins/:pluginId/toggle — enable/disable. */
+/** POST /api/servers/:id/plugins/:pluginId/toggle. Enables or disables. */
 export async function handleTogglePlugin(
   request: Request,
   serverId: string,
@@ -113,7 +113,7 @@ export async function handleTogglePlugin(
 }
 
 /**
- * DELETE /api/servers/:id/plugins/:pluginId?deleteData= — remove the jar, the
+ * DELETE /api/servers/:id/plugins/:pluginId?deleteData=. Removes the jar, the
  * row, and (opt-in) the plugin's config/data folder. `deleteData` defaults to
  * false at the API level so an unaware caller can't wipe configs; the plugins
  * tab always sends it explicitly from its confirm checkbox.
@@ -133,7 +133,7 @@ export async function handleRemovePlugin(
   return noContent();
 }
 
-/** PATCH /api/servers/:id/plugins — per-server plugin settings. */
+/** PATCH /api/servers/:id/plugins. Per-server plugin settings. */
 export async function handlePluginSettings(
   request: Request,
   serverId: string,

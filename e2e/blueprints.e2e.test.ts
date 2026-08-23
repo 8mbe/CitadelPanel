@@ -3,16 +3,16 @@
  *
  * Two audiences hit blueprints:
  *
- *   - GET /api/blueprints — any authenticated user, the list they choose from
+ *   - GET /api/blueprints: any authenticated user, the list they choose from
  *     when (hypothetically) creating a server. Internal hints (install
  *     scripts, resource profile) are stripped server-side.
- *   - /api/admin/blueprints/* — admin-only CRUD on the full blueprint row.
+ *   - /api/admin/blueprints/*: admin-only CRUD on the full blueprint row.
  *
  * The admin CRUD happy-path writes (create/update/delete) are not exercised
  * here: they would mutate the seeded blueprints (minecraft-java/bedrock) and
  * their effects cascade onto servers. Instead the suite asserts the
  * permission gates and the strict input validation that guards the install
- * script + ports + env schema — a malformed blueprint never reaches
+ * script + ports + env schema. A malformed blueprint never reaches
  * {@link blueprintManager} because the parser rejects it here.
  */
 
@@ -38,7 +38,7 @@ describe("GET /api/blueprints (user surface)", () => {
   });
 
   e2e("does not leak install scripts or the resource profile", async () => {
-    // The route deliberately strips internal hints — verify they are absent.
+    // The route deliberately strips internal hints, so verify they are absent.
     const res = await api("/api/blueprints", { key: config.adminKey });
     const bps = (res.body as Array<{ install?: unknown; expectedResourceProfile?: unknown }>).blueprints ?? [];
     for (const bp of bps) {

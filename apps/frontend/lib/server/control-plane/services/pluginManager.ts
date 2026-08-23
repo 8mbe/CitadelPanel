@@ -3,10 +3,10 @@
  *
  * Coordinates the `server_plugins` table, the blueprint's provider fetch spec
  * (executed by `plugins/engine.ts`) and the node agent's file operations. The
- * table is the panel's project↔version linkage — what powers update checks and
- * the pre-start auto-updater — not a filesystem inventory: rows are reconciled
- * against the real directory listing when displayed, so manually added or
- * deleted jars surface as untracked/missing instead of being silently
+ * table is the panel's project↔version linkage, which powers update checks and
+ * the pre-start auto-updater. It is not a filesystem inventory: rows are
+ * reconciled against the real directory listing when displayed, so manually
+ * added or deleted jars surface as untracked/missing instead of being silently
  * overwritten.
  *
  * Install mechanics reuse the agent's generic `files/pull`: the panel resolves
@@ -40,7 +40,7 @@ import {
 import { recordAudit } from "./auditLog";
 
 /**
- * Only plain `.jar` files, no path separators, no leading dot — a hostile
+ * Only plain `.jar` files, no path separators, no leading dot. A hostile
  * catalog response must not be able to name its way out of the install
  * directory (the agent's path containment is the backstop, this is the fence).
  */
@@ -112,8 +112,8 @@ export interface PluginContext {
 /**
  * The server columns the plugin context needs.
  *
- * Exposed so a caller that has already read the row — the server detail view
- * does, on every page load — can hand it over instead of paying for a second
+ * Exposed so a caller that has already read the row, as the server detail view
+ * does on every page load, can hand it over instead of paying for a second
  * read of the same three columns.
  */
 export interface PluginServerFields {
@@ -314,8 +314,8 @@ async function applyVersion(
 
 /**
  * Install (or update to) a specific catalog version. The version is
- * re-resolved from the catalog — never trusted from the request beyond its
- * ids — so a stale or mismatched versionId can't smuggle a different file.
+ * re-resolved from the catalog and never trusted from the request beyond its
+ * ids, so a stale or mismatched versionId can't smuggle a different file.
  */
 export async function installPlugin(
   serverId: string,
@@ -416,8 +416,8 @@ export async function togglePlugin(
  * Bukkit-family plugins keep their settings in a folder named after the
  * PLUGIN, not the jar (`plugins/EssentialsX/` for `EssentialsX-2.20.1.jar`),
  * so `deleteData` matches install-directory subfolders against the project's
- * title and slug, case-insensitively, and deletes the matches. Matching —
- * rather than deriving a name — is deliberate: it can only ever touch a
+ * title and slug, case-insensitively, and deletes the matches. Matching
+ * rather than deriving a name is deliberate: it can only ever touch a
  * folder the catalog's own names point at, never a neighbour's. A failed
  * directory listing (node down) leaves the configs in place rather than
  * failing the whole removal; the audit row records what was wiped.
@@ -572,8 +572,8 @@ export async function listServerPlugins(
  * The pre-start auto-updater: for every enabled plugin, check the catalog for
  * a newer release-channel version and install it before the container boots.
  *
- * Deliberately best-effort in every dimension — a catalog outage, a failed
- * download for one plugin, anything at all — must never block a server start.
+ * Deliberately best-effort in every dimension. A catalog outage, a failed
+ * download for one plugin, anything at all, must never block a server start.
  * Only release-channel versions are taken, so an update never silently moves
  * a server from a stable build to a beta. One summary audit row per start
  * that changed anything.

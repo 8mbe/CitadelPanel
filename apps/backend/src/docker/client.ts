@@ -39,8 +39,8 @@ export async function readDaemonInfo(): Promise<DaemonInfo> {
 /**
  * Verify at boot that a configured `CONTAINER_RUNTIME` actually exists on this
  * daemon, so a typo ("runsc" vs "gvisor") reads as one clear line here instead
- * of a create-time error on every provision. Never throws — the same "log the
- * fix, keep serving" posture as the data-root and socket reports.
+ * of a create-time error on every provision. Never throws, keeping the same
+ * "log the fix, keep serving" stance as the data-root and socket reports.
  */
 export async function reportContainerRuntimeAtBoot(): Promise<void> {
   if (!config.containerRuntime) return;

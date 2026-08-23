@@ -7,7 +7,7 @@
  * where the filesystem actually is.
  *
  * All of these require the `files` permission, which is a distinct subuser
- * grant from `console` — read/write access to a server's disk is a meaningfully
+ * grant from `console`. Read/write access to a server's disk is a meaningfully
  * different capability from being able to see its output.
  */
 
@@ -55,7 +55,7 @@ function pathParam(request: Request): string {
   return path;
 }
 
-/** GET /api/servers/:id/files?path= — list a directory. */
+/** GET /api/servers/:id/files?path=. Lists a directory. */
 export async function handleListFiles(
   request: Request,
   serverId: string,
@@ -67,7 +67,7 @@ export async function handleListFiles(
   return json(await listServerFiles(await nodeIdFor(id), id, path));
 }
 
-/** GET /api/servers/:id/files/content?path= — read a file. */
+/** GET /api/servers/:id/files/content?path=. Reads a file. */
 export async function handleReadFile(
   request: Request,
   serverId: string,
@@ -80,7 +80,7 @@ export async function handleReadFile(
 }
 
 /**
- * PUT /api/servers/:id/files/content — write a file.
+ * PUT /api/servers/:id/files/content. Writes a file.
  *
  * Audited by path only: file contents can be large and can contain secrets
  * (an `ops.json`, a plugin's database config), neither of which belongs in an
@@ -116,7 +116,7 @@ export async function handleWriteFile(
 }
 
 /**
- * POST /api/servers/:id/files/delete — delete files/directory trees.
+ * POST /api/servers/:id/files/delete. Deletes files/directory trees.
  *
  * One request for a whole selection; the file manager used to fire one DELETE
  * per file. The agent validates every path through containment before removing
@@ -153,7 +153,7 @@ export async function handleDeleteFiles(
   return noContent();
 }
 
-/** POST /api/servers/:id/files/directory — create a directory. */
+/** POST /api/servers/:id/files/directory. Creates a directory. */
 export async function handleCreateDirectory(
   request: Request,
   serverId: string,
@@ -169,7 +169,7 @@ export async function handleCreateDirectory(
 }
 
 /**
- * POST /api/servers/:id/files/rename — rename or move a file/directory.
+ * POST /api/servers/:id/files/rename. Renames or moves a file/directory.
  *
  * Audited with both the source and destination paths, so a move into a
  * different folder leaves a trace of where the file came from and went.
@@ -199,10 +199,10 @@ export async function handleRenameFile(
 }
 
 /**
- * POST /api/servers/:id/files/copy — copy a file/directory tree.
+ * POST /api/servers/:id/files/copy. Copies a file/directory tree.
  *
  * Audited with both paths. The destination is a full path, not a directory to
- * copy into — the agent rejects a name collision with a 409.
+ * copy into, and the agent rejects a name collision with a 409.
  */
 export async function handleCopyFile(
   request: Request,
@@ -229,7 +229,7 @@ export async function handleCopyFile(
 }
 
 /**
- * GET /api/servers/:id/files/download?path=&paths=&download= — stream a
+ * GET /api/servers/:id/files/download?path=&paths=&download=. Streams a
  * download.
  *
  * A single file streams raw bytes; multiple `paths` (newline-delimited) or a
@@ -278,13 +278,13 @@ export async function handleDownloadFile(
 }
 
 /**
- * POST /api/servers/:id/files/upload?path= — stream a file upload to the node.
+ * POST /api/servers/:id/files/upload?path=. Streams a file upload to the node.
  *
  * The browser sends the raw file body as `application/octet-stream` (one file
  * per request); the panel streams it straight through to the agent, so a large
  * upload is never buffered in the panel's memory. The panel enforces its own
- * size cap up front via `content-length` — a cheap rejection before any bytes
- * are forwarded — and the agent enforces it again during the stream for a
+ * size cap up front via `content-length`, a cheap rejection before any bytes
+ * are forwarded, and the agent enforces it again during the stream for a
  * client that lies about the length.
  *
  * Audited by path only; file contents can be large and can contain secrets.
@@ -328,7 +328,7 @@ export async function handleUploadFile(
 }
 
 /**
- * POST /api/servers/:id/files/pull — fetch a URL into the server's data dir.
+ * POST /api/servers/:id/files/pull. Fetches a URL into the server's data dir.
  *
  * The panel validates the URL and applies its SSRF guardrail before forwarding
  * to the agent, which performs the actual fetch (so the bytes travel once,
@@ -359,7 +359,7 @@ export async function handlePullFromUrl(
     throw badRequest('"url" must be an http(s) URL');
   }
   // Resolve the host and reject it if it (or anything it resolves to) is
-  // internal — the caller here is a server owner/subuser, not an admin, so the
+  // internal. The caller here is a server owner/subuser, not an admin, so the
   // literal-only check is not enough. The agent re-checks the host and every
   // redirect hop when it performs the fetch.
   if (await isBlockedUrlResolved(url.hostname)) {

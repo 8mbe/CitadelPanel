@@ -61,7 +61,7 @@ test("a subuser with every grant opens every section except subusers", () => {
   ]);
 });
 
-test("plugins ride the files grant — installing a plugin is a file write", () => {
+test("plugins ride the files grant because installing a plugin is a file write", () => {
   expect(sectionAllowed("plugins", consoleOnly)).toBe(false);
   expect(
     sectionAllowed("plugins", {
@@ -96,7 +96,7 @@ test("a subuser needs the exact flag, explicitly true", () => {
   ).toBe(false);
 });
 
-test("a missing viewer fails open — the API's 403 remains the limit", () => {
+test("a missing viewer fails open because the API's 403 remains the limit", () => {
   expect(sectionAllowed("files", undefined)).toBe(true);
   expect(sectionAllowed("subusers", undefined)).toBe(true);
 });

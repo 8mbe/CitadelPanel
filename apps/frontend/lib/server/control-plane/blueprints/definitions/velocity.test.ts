@@ -20,7 +20,7 @@ describe("port handling", () => {
   test("the primary port env is panel-owned, not part of the schema", () => {
     expect(velocity.primaryPortEnv).toBe("CFG_PROXY_PORT");
     // Present in envSchema it would be editable by owners and injectable at
-    // create time — the whole point of primaryPortEnv is that only the panel
+    // create time. The whole point of primaryPortEnv is that only the panel
     // writes it.
     expect(velocity.envSchema).not.toHaveProperty("CFG_PROXY_PORT");
   });
@@ -78,8 +78,8 @@ describe("install script", () => {
   test("does not try to fix up ownership itself", () => {
     // The agent runs the install container as the data directory's owner, so
     // what the script writes is already owned by the uid the proxy and the
-    // panel's file tools use. Working around that here — a chown it has no
-    // CAP_CHOWN for, or a world-writable umask — would only widen the mode.
+    // panel's file tools use. Working around that here, with a chown it has no
+    // CAP_CHOWN for or a world-writable umask, would only widen the mode.
     expect(script).not.toContain("umask");
     expect(script).not.toContain("chown");
     expect(velocity.user).toBe("1000:1000");
@@ -113,7 +113,7 @@ describe("environment", () => {
 });
 
 describe("plugins", () => {
-  test("a static Velocity profile — nothing to switch on", () => {
+  test("a static Velocity profile, nothing to switch on", () => {
     const support = resolvePluginSupport(velocity, resolveEnv(velocity, {}).values);
     expect(support).not.toBeNull();
     expect(support!.label).toBe("Plugins");

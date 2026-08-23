@@ -7,22 +7,22 @@
  * panel mints a short-lived, single-use capability token. Four endpoints
  * cooperate:
  *
- *   1. `POST /api/servers/:id/console/session` — browser mints a token
- *      (gated on the `console` permission; does NOT contact the agent).
- *   2. `POST /api/servers/:id/console/revoke` — browser gives up a session
- *      (gated on `console`; idempotent — revoking an unknown/already-revoked
- *      token is a no-op 204).
- *   3. `POST /api/internal/console/sessions/validate` — agent callback at WS
+ *   1. `POST /api/servers/:id/console/session`, where the browser mints a
+ *      token (gated on the `console` permission; does NOT contact the agent).
+ *   2. `POST /api/servers/:id/console/revoke`, where the browser gives up a
+ *      session (gated on `console`, and idempotent, so revoking an unknown or
+ *      already-revoked token is a no-op 204).
+ *   3. `POST /api/internal/console/sessions/validate`, the agent callback at WS
  *      open (gated on the long-lived AGENT_TOKEN bearer; an API key is NOT
  *      an agent bearer and is rejected with 401).
- *   4. `POST /api/internal/console/audit` — agent callback on each typed
+ *   4. `POST /api/internal/console/audit`, the agent callback on each typed
  *      command (same agent-bearer gate; the panel resolves the user from
  *      the token so the agent cannot spoof attribution).
  *
  * The admin key reaches #1 and #2 on the seeded server (it mints + revokes
- * a real token). The user key gets 404 (no access — info-leak prevention).
- * The agent callbacks #3/#4 reject every API key with 401 — a key-holding
- * script cannot enumerate or validate console tokens.
+ * a real token). The user key gets 404, since no access must not leak whether
+ * the server exists. The agent callbacks #3/#4 reject every API key with 401,
+ * so a key-holding script cannot enumerate or validate console tokens.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -33,7 +33,7 @@ import { api, config, e2e, expectStatus, loadFixtures, UNKNOWN_UUID } from "./_h
 
 describe("POST /api/servers/:id/console/session (mint a capability token)", () => {
   e2e("with an admin key returns {token, url, tty}", async () => {
-    // The mint does NOT contact the agent — it queries the server+node,
+    // The mint does NOT contact the agent. It queries the server+node,
     // checks the mixed-content guard, and inserts a console_sessions row.
     const { serverId } = await loadFixtures();
     const res = await api(`/api/servers/${serverId}/console/session`, { method: "POST", key: config.adminKey });
@@ -69,7 +69,7 @@ describe("POST /api/servers/:id/console/session (mint a capability token)", () =
 
 describe("POST /api/servers/:id/console/revoke (give up a session)", () => {
   e2e("with an admin key + a just-minted token is 204", async () => {
-    // Mint then revoke — the revoke is scoped to the caller's user_id and
+    // Mint then revoke. The revoke is scoped to the caller's user_id and
     // idempotent, so the just-minted token is successfully revoked.
     const { serverId } = await loadFixtures();
     const mint = await api(`/api/servers/${serverId}/console/session`, { method: "POST", key: config.adminKey });
@@ -85,7 +85,7 @@ describe("POST /api/servers/:id/console/revoke (give up a session)", () => {
   });
 
   e2e("with an admin key + an unknown token is 204 (idempotent)", async () => {
-    // Revoking a token that never existed is a no-op 204 — the caller's
+    // Revoking a token that never existed is a no-op 204. The caller's
     // intent ("this token is done") is already satisfied.
     const { serverId } = await loadFixtures();
     const res = await api(`/api/servers/${serverId}/console/revoke`, {
@@ -148,7 +148,7 @@ describe("POST /api/internal/console/sessions/validate (agent callback at WS ope
   e2e("with the admin API key is 401 (an API key is not an agent bearer)", async () => {
     // The route authenticates the agent by its long-lived AGENT_TOKEN, which
     // `findNodeByAgentToken` reverse-looks-up to a node. An API key does not
-    // match any node's token, so the call is rejected — a key-holding script
+    // match any node's token, so the call is rejected. A key-holding script
     // cannot validate (consume) console tokens from this surface.
     const res = await api("/api/internal/console/sessions/validate", {
       method: "POST",
@@ -158,7 +158,7 @@ describe("POST /api/internal/console/sessions/validate (agent callback at WS ope
     expect(res.status).toBe(401);
   });
 
-  e2e("with the user API key is 401 (same — not an agent bearer)", async () => {
+  e2e("with the user API key is 401 (same, not an agent bearer)", async () => {
     const res = await api("/api/internal/console/sessions/validate", {
       method: "POST",
       key: config.userKey,
@@ -198,7 +198,7 @@ describe("POST /api/internal/console/audit (agent callback on each command)", ()
     expect(res.status).toBe(401);
   });
 
-  e2e("with the user API key is 401 (same — not an agent bearer)", async () => {
+  e2e("with the user API key is 401 (same, not an agent bearer)", async () => {
     const res = await api("/api/internal/console/audit", {
       method: "POST",
       key: config.userKey,

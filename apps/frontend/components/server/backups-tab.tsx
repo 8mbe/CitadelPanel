@@ -145,7 +145,7 @@ function ActiveRunCard({
           return;
         }
       } catch {
-        // A dropped poll is not worth surfacing — the next one will either
+        // A dropped poll is not worth surfacing. The next one will either
         // succeed or the run will resolve. The reconciler is the source of truth.
       }
       if (!cancelled) timer = setTimeout(poll, POLL_MS);
@@ -341,7 +341,7 @@ function BackupRow({
  *
  * A backup is a restic snapshot in the operator's S3 bucket holding the server's
  * data directory *and* a SQL dump of every database it has provisioned, taken as
- * one unit — so a restore never puts a world back next to a database from a
+ * one unit, so a restore never puts a world back next to a database from a
  * different moment.
  *
  * Runs are asynchronous: the button returns immediately and the node does the
@@ -501,7 +501,7 @@ export function BackupsTab({ serverId }: { serverId: string }) {
     return <p className="text-sm text-destructive">{error}</p>;
   }
 
-  // Nothing works without a destination, and that is an admin's job — so say so
+  // Nothing works without a destination, and that is an admin's job, so say so
   // rather than showing a button that would only ever return an error.
   if (!data.schedule.configured) {
     return (
@@ -533,7 +533,7 @@ export function BackupsTab({ serverId }: { serverId: string }) {
           <CardDescription>
             Each backup is an encrypted, deduplicated snapshot in the panel&apos;s S3
             bucket. It holds this server&apos;s files and a dump of every database it
-            owns, taken together — so restoring never leaves a world next to a
+            owns, taken together, so restoring never leaves a world next to a
             database from a different moment.
           </CardDescription>
         </CardHeader>
@@ -558,12 +558,12 @@ export function BackupsTab({ serverId }: { serverId: string }) {
               ) : (
                 <span className="inline-flex items-center gap-1.5">
                   <Clock className="size-4" />
-                  No automatic schedule — backups run when you take them.
+                  No automatic schedule. Backups run when you take them.
                 </span>
               )}
               <span className="text-xs">
                 {data.quota.max > 0
-                  ? `Keeping ${data.quota.used} of ${data.quota.max} — a new backup replaces the oldest.`
+                  ? `Keeping ${data.quota.used} of ${data.quota.max}. A new backup replaces the oldest.`
                   : `${data.quota.used} kept, no limit set.`}{" "}
                 Times shown in {data.schedule.timezone}.
               </span>
@@ -635,7 +635,7 @@ export function BackupsTab({ serverId }: { serverId: string }) {
         <CardHeader>
           <CardTitle>History</CardTitle>
           <CardDescription>
-            Failed runs are kept alongside successful ones — a backup that did not
+            Failed runs are kept alongside successful ones. A backup that did not
             happen is the thing most worth knowing about.
           </CardDescription>
         </CardHeader>
@@ -704,7 +704,7 @@ export function BackupsTab({ serverId }: { serverId: string }) {
             <DialogTitle>Delete this backup?</DialogTitle>
             <DialogDescription>
               The snapshot is removed from S3 and its data reclaimed. This is the
-              only copy of that point in time — it cannot be undone.
+              only copy of that point in time, and it cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

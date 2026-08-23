@@ -9,13 +9,13 @@ import { Button } from "@/components/ui/button";
 import { DEFAULT_SITE_THEME } from "@/lib/site-theme";
 
 /**
- * The last-resort error page: it replaces the root layout, so it fires only when
- * the layout itself failed — a broken font load, or a settings read that somehow
- * threw despite `lib/server/site-settings.ts` swallowing failures.
+ * The last-resort error page. It replaces the root layout, so it fires only
+ * when the layout itself failed, from a broken font load or a settings read
+ * that somehow threw despite `lib/server/site-settings.ts` swallowing failures.
  *
  * Because it stands in for the root layout it must supply its own `<html>`,
  * `<body>`, and global stylesheet, and it cannot export `metadata` (error
- * boundaries are Client Components) — hence the React `<title>` element.
+ * boundaries are Client Components). Hence the React `<title>` element.
  *
  * The site name is hardcoded here rather than read from settings. Everything
  * that could resolve it is exactly what has already failed by the time this
@@ -23,7 +23,7 @@ import { DEFAULT_SITE_THEME } from "@/lib/site-theme";
  * to render unconditionally.
  *
  * The site theme falls back to its default base for the same reason, and the
- * operator's colour overrides are simply absent — a reader who prefers the site
+ * operator's colour overrides are simply absent. A reader who prefers the site
  * theme sees the shipped palette here rather than their own.
  */
 export default function GlobalError({
@@ -42,7 +42,7 @@ export default function GlobalError({
             <ErrorPage
               code="500"
               title="The panel failed to start this page"
-              description="An error occurred outside any page, so nothing could be rendered around it. If this persists, check the panel's server logs — the reference below appears alongside the stack trace."
+              description="An error occurred outside any page, so nothing could be rendered around it. If this persists, check the panel's server logs. The reference below appears alongside the stack trace."
               icon={<AlertOctagon />}
               detail={
                 error.digest ? `Error reference: ${error.digest}` : undefined

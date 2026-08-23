@@ -47,13 +47,13 @@ function Allocation({ label, value }: { label: string; value: string }) {
  *
  * The permission model (plan.md section 5) shapes this page: an owner manages
  * their server but never sizes it. Resource limits stay admin-only and are not
- * shown here — there is no owner-facing API to change them, and showing inputs
+ * shown here. There is no owner-facing API to change them, and showing inputs
  * would promise something the backend would refuse. Environment variables the
  * blueprint marks `editable` are the one exception: the owner (and subusers with
  * `settings`) may override those after creation.
  *
  * Reinstalling is the one destructive action on this page, and it sits at the
- * bottom of General rather than in a tab of its own — a tab would be a place to
+ * bottom of General rather than in a tab of its own. A tab would be a place to
  * arrive at, and this is a thing to scroll past. It renders for owners and
  * admins only, so a subuser with `settings` can retune the game without being
  * able to erase it.
@@ -82,7 +82,7 @@ export function SettingsTab() {
             <Allocation label="Game" value={server.blueprintKey} />
             <Allocation
               label="Primary port"
-              value={server.primaryPort > 0 ? String(server.primaryPort) : "—"}
+              value={server.primaryPort > 0 ? String(server.primaryPort) : "None"}
             />
           </CardContent>
         </Card>
@@ -204,7 +204,7 @@ function EnvironmentCard({ serverId }: { serverId: string }) {
       setEdits({});
       setNote(null);
     } catch (err) {
-      // 403 means the caller lacks `settings` — hide the card rather than
+      // 403 means the caller lacks `settings`, so hide the card rather than
       // show an error. Anything else is a real failure worth surfacing.
       if (err instanceof ApiError && err.status === 403) {
         setDenied(true);

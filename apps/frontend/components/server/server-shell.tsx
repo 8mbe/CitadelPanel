@@ -30,9 +30,9 @@ import type { ServerView } from "@/lib/types";
  * lockouts (suspended, installing).
  *
  * A client component because everything it gates on moves while the page is
- * open — the data provider's status poll is what notices a suspension lift or
- * an install finish — and because the section guard needs the URL, which only
- * the client knows. The server record it reads arrived resolved during
+ * open. The data provider's status poll is what notices a suspension lift or
+ * an install finish. The section guard also needs the URL, which only the
+ * client knows. The server record it reads arrived resolved during
  * rendering (see `resolveServerView`); nothing here fetches.
  */
 export function ServerShell({ children }: { children: React.ReactNode }) {
@@ -41,16 +41,17 @@ export function ServerShell({ children }: { children: React.ReactNode }) {
   const isAdmin = server.viewer?.kind === "admin";
 
   // Subusers see only the sections their grants cover. The tabs hide the rest,
-  // but each section has its own URL — this guard is what stops a subuser from
-  // opening one directly. The backend rejects the section's API calls anyway;
-  // the guard exists so the denial is explicit instead of a page of 403s.
+  // but each section has its own URL, and this guard is what stops a subuser
+  // from opening one directly. The backend rejects the section's API calls
+  // anyway; the guard exists so the denial is explicit instead of a page of
+  // 403s.
   const active = sectionFromPathname(pathname);
   const sectionGranted = sectionAllowed(active, server.viewer);
 
   // A suspended server is locked down for its owner: they see *why* it was
   // suspended and cannot reach the console, files, ports, or any other section.
   // The backend already blocks every mutating action, but hiding the interactive
-  // UI entirely is the point — there is nothing the owner can do here until an
+  // UI entirely is the point. There is nothing the owner can do here until an
   // admin lifts the suspension. An admin bypasses the lock to inspect the
   // server (the backend grants admins access to any server); they still see the
   // reason as a banner so the suspended state is unmistakable.
@@ -60,7 +61,7 @@ export function ServerShell({ children }: { children: React.ReactNode }) {
 
   // Same shape for a server that is still being built, and for the same reason:
   // there is no container yet, so every section is a page of errors waiting to
-  // happen — the console has nothing to attach to, files has no game to write
+  // happen. The console has nothing to attach to, files has no game to write
   // for, ports and settings would be edited out from under the provision that
   // is still reading them. The owner gets one honest screen instead. Admins
   // keep the shell, because the install log is in the console and reading it is
@@ -114,7 +115,7 @@ function SectionDenied() {
  * cannot say how long an image pull will take, and the install script's output
  * is operator detail (see the install-log route). What the owner needs is that
  * this is normal, that it is happening, and that they do not need to do
- * anything — the page moves on by itself when the server is ready.
+ * anything. The page moves on by itself when the server is ready.
  */
 function InstallingNotice({ server }: { server: ServerView }) {
   return (
@@ -125,7 +126,7 @@ function InstallingNotice({ server }: { server: ServerView }) {
         <AlertDescription>
           <span className="block">
             &ldquo;{server.name}&rdquo; is being set up on its node. This can take
-            a few minutes — the node downloads the game files before the server
+            a few minutes. The node downloads the game files before the server
             can start.
           </span>
         </AlertDescription>
@@ -158,8 +159,8 @@ function InstallingBanner() {
         <span className="block">
           You are viewing this as an administrator. The owner sees an
           &ldquo;installing&rdquo; notice until it finishes. Its container does
-          not exist yet, so power actions and the live console are unavailable —
-          the console shows the install log instead.
+          not exist yet, so power actions and the live console are unavailable.
+          The console shows the install log instead.
         </span>
       </AlertDescription>
     </Alert>
@@ -167,10 +168,10 @@ function InstallingBanner() {
 }
 
 /**
- * Full-page suspension notice. Replaces the entire server shell — no header,
- * tabs, or section content — so the owner cannot interact with the server at
- * all. Shows the reason an admin recorded and, when available, when it
- * happened, then offers a way back to the dashboard.
+ * Full-page suspension notice. Replaces the entire server shell, leaving no
+ * header, tabs, or section content, so the owner cannot interact with the
+ * server at all. Shows the reason an admin recorded and, when available, when
+ * it happened, then offers a way back to the dashboard.
  */
 function SuspendedNotice({ server }: { server: ServerView }) {
   const when = server.suspendedAt ? formatRelative(server.suspendedAt) : null;

@@ -144,7 +144,7 @@ function EmailSection() {
       const refreshed = await refresh();
       // Better Auth returns success even for an already-taken address (to avoid
       // leaking which emails exist). If the email did not actually change, that
-      // is the cause — surface it rather than claiming success.
+      // is the cause, so surface it rather than claiming success.
       if (refreshed && refreshed.email !== newEmail) {
         setError("That email is already in use.");
       } else {
@@ -213,8 +213,8 @@ function PasswordSection() {
     e.preventDefault();
     // React 19 nulls `event.currentTarget` once the synchronous portion of the
     // handler returns (at the first `await`). Capture the form now so the
-    // post-`await` `reset()` still has a live reference — otherwise it throws a
-    // null TypeError that the catch turns into a misleading "Could not change
+    // post-`await` `reset()` still has a live reference. Otherwise it throws
+    // a null TypeError that the catch turns into a misleading "Could not change
     // your password." even though the 200 response means it *was* changed.
     const form = e.currentTarget;
     const data = new FormData(form);
@@ -400,7 +400,7 @@ function DangerZoneSection() {
             <span className="text-muted-foreground">
               You own {user.ownedServers} server
               {user.ownedServers === 1 ? "" : "s"}. Delete or transfer them
-              before you can delete your account — an account that owns servers
+              before you can delete your account. An account that owns servers
               cannot be removed.
             </span>
           </div>

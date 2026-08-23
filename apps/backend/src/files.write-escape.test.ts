@@ -3,10 +3,10 @@
  *
  * The attack these pin down: the game server (which owns its data directory)
  * plants `ln -s /somewhere/outside escape` inside it, and a later panel- or
- * SFTP-triggered write to `escape/<name>` follows the link — executed by the
+ * SFTP-triggered write to `escape/<name>` follows the link, executed by the
  * agent, whose filesystem access on the node is root-equivalent. Reads catch
  * this via `resolveExistingServerPath`; these tests hold the write paths
- * (rename/copy destinations — the ones the 2026-08 audit fix missed) to the
+ * (rename/copy destinations, the ones the 2026-08 audit fix missed) to the
  * same standard.
  */
 

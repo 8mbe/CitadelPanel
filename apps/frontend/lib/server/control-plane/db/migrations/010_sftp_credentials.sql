@@ -4,16 +4,16 @@
 -- (or a subuser with the `files` permission) can mint an SFTP credential from the
 -- panel: a username and a generated password. The password is shown once on
 -- creation/regeneration and stored only as a scrypt hash (the same scheme Better
--- Auth uses for login passwords — `salt:hash` hex). The agent validates the
+-- Auth uses for login passwords, `salt:hash` hex). The agent validates the
 -- credential by calling the panel back at connect time, so this table is the
 -- source of truth and revocation is just `DELETE`.
 --
--- Username format: `{slug(email-local-part)}-{first8(serverUUID)}` — e.g.
+-- Username format: `{slug(email-local-part)}-{first8(serverUUID)}`, e.g.
 -- `admin-a1b2c3d4`. Human-readable and unique via the constraint below. The
 -- username is looked up by exact match (not parsed), so the format is a UX
 -- concern, not a security boundary.
 --
--- One credential per (user, server) — a user minting a new password for the
+-- One credential per (user, server). A user minting a new password for the
 -- same server overwrites the row (ON CONFLICT update), which is the regenerate
 -- flow. Deleting a server or user cascades, so orphaned SFTP credentials never
 -- survive.

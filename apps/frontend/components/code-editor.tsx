@@ -6,7 +6,7 @@ import * as monaco from "monaco-editor/editor";
 // context menu, …) and the Monarch grammars. Both `register.all` entry points
 // are lazy where it counts: every grammar is registered with a `loader` that
 // dynamic-imports the tokenizer, so opening a YAML file fetches YAML and
-// nothing else. JSON is the one language service worth its worker here — game
+// nothing else. JSON is the one language service worth its worker here. Game
 // configs are full of JSON and a trailing comma is worth flagging.
 import "monaco-editor/features/register.all";
 import "monaco-editor/languages/definitions/register.all";
@@ -22,7 +22,7 @@ import { THEME_NAME, buildTheme, observeTheme } from "@/components/code-editor-t
 // Monaco runs its language services off the main thread. The bundler has to be
 // told where those entry points are; `new URL(..., import.meta.url)` is the
 // form both webpack and Turbopack understand as a worker reference, so the
-// workers are served from this origin — never a CDN, which a self-hosted panel
+// workers are served from this origin, never a CDN, which a self-hosted panel
 // may not be able to reach anyway.
 //
 // Both URLs point at one-line modules under `components/monaco/` rather than
@@ -61,7 +61,7 @@ const PLAIN = { id: "plaintext", label: "Plain text" } as const;
 /**
  * Extensions Monaco does not claim but a game server's directory is full of.
  * Everything else is resolved from Monaco's own registry below, so this list
- * stays short on purpose — it is for gaps, not for re-declaring what Monaco
+ * stays short on purpose. It is for gaps, not for re-declaring what Monaco
  * already knows.
  */
 const EXTENSION_OVERRIDES: Record<string, string> = {
@@ -141,13 +141,13 @@ export interface CodeEditorProps {
  *
  * Hand-rolled rather than pulled from a wrapper package for two reasons: the
  * popular wrapper fetches Monaco from a CDN by default, which a self-hosted
- * panel has no business depending on, and the lifecycle here is small — the
+ * panel has no business depending on, and the lifecycle here is small. The
  * editor is created once, then reconfigured through `updateOptions` and its
  * model. Callbacks are read through a ref so a parent re-render never rebuilds
  * the editor.
  *
- * This module is heavy — import it lazily (next/dynamic, `ssr: false`); Monaco
- * touches `document` at import time.
+ * This module is heavy, so import it lazily (next/dynamic, `ssr: false`).
+ * Monaco touches `document` at import time.
  */
 function CodeEditor({
   value,
@@ -281,8 +281,8 @@ function CodeEditor({
     callbacksRef.current.onLanguageInfo?.(language.label);
   }, [filename]);
 
-  // Controlled value. Only a genuinely different document is pushed in —
-  // typing round-trips through `onChange`, and replacing the text on every
+  // Controlled value. Only a genuinely different document is pushed in.
+  // Typing round-trips through `onChange`, and replacing the text on every
   // keystroke would reset the cursor and the undo stack.
   React.useEffect(() => {
     const editor = editorRef.current;

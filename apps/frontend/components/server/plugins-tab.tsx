@@ -328,14 +328,14 @@ function SearchResultRow({
  *
  * Search and installs go through the panel, which executes the blueprint's
  * provider fetch spec (Modrinth for the built-in Minecraft blueprints) and
- * pins every download to the spec's declared hosts — the tab footer always
+ * pins every download to the spec's declared hosts. The tab footer always
  * shows which catalog serves this server, so the content source is never
  * hidden. The installed list is reconciled against the server's actual
  * directory: jars deleted through the Files tab show as missing, manually
  * added ones as untracked.
  *
- * Plugin changes apply the next time the server starts (or restarts — which
- * also runs the release-channel auto-updater first when enabled).
+ * Plugin changes apply the next time the server starts, or on a restart, which
+ * also runs the release-channel auto-updater first when enabled.
  */
 export function PluginsTab({ serverId }: { serverId: string }) {
   const [list, setList] = React.useState<ServerPluginList | null>(null);
@@ -594,7 +594,7 @@ export function PluginsTab({ serverId }: { serverId: string }) {
           <CardTitle>Installed</CardTitle>
           <CardDescription>
             {list?.reconciled === false
-              ? "The node could not be reached, so this is the panel's record — files on disk are unknown."
+              ? "The node could not be reached, so this is the panel's record. Files on disk are unknown."
               : "Tracked against the server's directory. Changes apply the next time the server starts."}
           </CardDescription>
         </CardHeader>
@@ -741,7 +741,7 @@ export function PluginsTab({ serverId }: { serverId: string }) {
 
       {list && (
         <p className="text-xs text-muted-foreground">
-          Content via {list.support.provider.id} —{" "}
+          Content via {list.support.provider.id} at{" "}
           {list.support.provider.baseUrl}, downloads from{" "}
           {list.support.provider.downloadHosts.join(", ")}.
         </p>
@@ -797,7 +797,7 @@ export function PluginsTab({ serverId }: { serverId: string }) {
               <span className="font-mono">
                 {list?.support.directory}/{removeTarget?.title}/
               </span>
-              ) — its settings and data. Uncheck to keep configs for a
+              ) with its settings and data. Uncheck to keep configs for a
               reinstall.
             </span>
           </label>

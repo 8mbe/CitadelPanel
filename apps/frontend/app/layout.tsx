@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 
 /**
  * Metadata is generated per request rather than exported statically because the
- * site name, description, and indexing policy live in `panel_settings` — an
+ * site name, description, and indexing policy live in `panel_settings`. An
  * admin renames the panel and every `<title>` follows without a redeploy. See
  * `lib/server/site-settings.ts` for the build and its failure behaviour.
  */

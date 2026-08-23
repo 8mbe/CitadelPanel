@@ -10,11 +10,11 @@
  *
  * The admin owns the only seeded server, so the admin key reaches every
  * happy-path read on it. The user key has no relationship to that server, so
- * the auth middleware returns 404 (not 403) — revealing that a server exists
- * to someone with no relationship to it is an information leak, by design.
+ * the auth middleware returns 404 (not 403). Revealing that a server exists to
+ * someone with no relationship to it is an information leak, by design.
  *
  * Destructive lifecycle actions (start/stop/restart/kill/delete) are NOT
- * exercised against the real server — they would mutate the dev panel's
+ * exercised against the real server, since they would mutate the dev panel's
  * state. The suite asserts their permission gates (404 for the user key) and
  * validation (400 for a bad serverId), not their side effects.
  */
@@ -59,7 +59,7 @@ describe("GET /api/servers/:id (detail)", () => {
     expect(body.viewer?.kind).toBeTruthy();
   });
 
-  e2e("with a user key is 404 (no access — info-leak prevention)", async () => {
+  e2e("with a user key is 404 (no access, info-leak prevention)", async () => {
     const { serverId } = await loadFixtures();
     const res = await api(`/api/servers/${serverId}`, { key: config.userKey });
     expect(res.status).toBe(404);
@@ -252,7 +252,7 @@ describe("POST /api/servers/:id/ports (settings permission)", () => {
   e2e("with an admin key + a port number in the body is ignored, not honored", async () => {
     // A stale client sending `port` must not get that port. Either the request
     // succeeds with a panel-chosen number or it fails for a real reason (no
-    // pool, node unreachable) — never 400 for the extra key.
+    // pool, node unreachable). Never 400 for the extra key.
     const { serverId } = await loadFixtures();
     const res = await api(`/api/servers/${serverId}/ports`, {
       method: "POST",

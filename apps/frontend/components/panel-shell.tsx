@@ -38,11 +38,11 @@ import { cn } from "@/lib/utils";
  * a persistent sidebar.
  *
  * The brand is text only, and the text comes from the operator's `branding`
- * setting — there is no product glyph beside it, because a fixed icon next to a
+ * setting. There is no product glyph beside it, because a fixed icon next to a
  * renameable name reads as someone else's logo on a panel the operator has
  * branded as their own.
  *
- * Admin surfaces are role-gated here. This is presentation only — every
+ * Admin surfaces are role-gated here. This is presentation only. Every
  * `/api/admin/*` route re-checks the role server-side, so hiding the links is
  * about not showing users doors they cannot open, not about security.
  */
@@ -66,7 +66,7 @@ export function PanelShell({
   const signOut = async () => {
     try {
       // Better Auth's /sign-out parses the body as JSON, so an empty body is a
-      // 400 before the cookie-clearing handler ever runs — send an empty object.
+      // 400 before the cookie-clearing handler ever runs. Send an empty object.
       await fetch("/api/auth/sign-out", {
         method: "POST",
         credentials: "include",
@@ -74,7 +74,7 @@ export function PanelShell({
         body: "{}",
       });
     } catch {
-      // Network failure is not fatal — head to login regardless.
+      // Network failure is not fatal. Head to login regardless.
     }
     window.location.href = "/login";
   };
@@ -199,7 +199,7 @@ export function PanelShell({
  * The small-screen section switcher.
  *
  * Lists the same destinations as the desktop nav plus the admin sub-sections, so
- * a phone can reach every admin page in one tap rather than none — the desktop
+ * a phone can reach every admin page in one tap rather than none. The desktop
  * nav is `hidden md:flex`, and before this existed there was no route to `/admin`
  * on a narrow viewport at all.
  */

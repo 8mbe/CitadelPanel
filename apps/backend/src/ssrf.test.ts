@@ -3,7 +3,7 @@
  *
  * The pull-from-URL guard's job is to keep an owner-supplied URL from reaching
  * the node's own network. These cover the classifier that every host check and
- * redirect hop leans on — the network-dependent DNS/redirect paths are exercised
+ * redirect hop leans on. The network-dependent DNS/redirect paths are exercised
  * separately; here we pin the pure IP rules that decide "public or not".
  */
 

@@ -1,6 +1,6 @@
 /**
- * Unit tests for the plugin fetch engine's pure mapping layer — the two things
- * the plugins tab draws conclusions from and therefore must not mangle: a
+ * Unit tests for the plugin fetch engine's pure mapping layer. The two things
+ * the plugins tab draws conclusions from, and therefore must not mangle, are a
  * project's supported-game-version list (the compatibility badges) and the
  * composed project-page link (the only provider URL the browser ever sees).
  */

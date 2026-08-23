@@ -5,13 +5,13 @@
  * argv builders in `restic.ts`, the dump containers in `dumps.ts`, and the job
  * registry in `jobs.ts` into the operations the panel asks for.
  *
- *   - `startServerBackup`   — a server's data directory. Owner-triggered.
- *   - `startDatabaseBackup` — every database on this node. Admin-triggered.
+ *   - `startServerBackup`:   a server's data directory. Owner-triggered.
+ *   - `startDatabaseBackup`: every database on this node. Admin-triggered.
  *
  * ## The quota is enforced before the new snapshot, not after
  *
  * Both scopes are capped at a plain snapshot count. That cap is applied as the
- * job's *first* real phase — list the snapshots, delete the oldest ones that have
+ * job's *first* real phase. List the snapshots, delete the oldest ones that have
  * to go, and only then write the new one. Three reasons, in order of how much
  * they matter:
  *
@@ -19,7 +19,7 @@
  *      ceiling frees space before asking for more rather than after.
  *   2. It is what "a new backup replaces the oldest" actually means.
  *   3. It happens inside the async job, so the request that started the backup
- *      stays fast — a `forget --prune` rewrites pack files and is not something
+ *      stays fast. A `forget --prune` rewrites pack files and is not something
  *      to do inside an HTTP handler.
  *
  * The job reports which snapshot ids it deleted, because the panel cannot infer
@@ -112,20 +112,20 @@ const LONG_TIMEOUT_MS = 6 * 60 * 60_000;
 const QUICK_TIMEOUT_MS = 5 * 60_000;
 
 /**
- * Ceiling on a *metadata* operation — probe, snapshot list, size measurement.
+ * Ceiling on a *metadata* operation: probe, snapshot list, size measurement.
  * Deliberately short.
  *
  * restic retries backend errors with exponential backoff (roughly 1s, 3s, 8s, 24s,
  * 33s, 1m…) and does not give up for many minutes. That is the right behaviour
- * mid-upload, where a transient S3 blip should not cost an hour of transfer — but
+ * mid-upload, where a transient S3 blip should not cost an hour of transfer, but
  * it is exactly wrong for a metadata read, where the failure is almost always a
  * *configuration* error that will not fix itself. Retrying a wrong region ten
  * times turns a clear "400 Bad Request" into a hang, and a hang reaches the
  * operator as "unreachable: timeout", which tells them nothing about which field
  * to change.
  *
- * So these are capped at a few retries' worth of time and the captured output —
- * which does name the real error — is what gets explained. Any reachable
+ * So these are capped at a few retries' worth of time, and the captured output,
+ * which does name the real error, is what gets explained. Any reachable
  * repository answers all three in well under a second.
  *
  * This must also stay comfortably below the panel's own HTTP timeout for these
@@ -138,7 +138,7 @@ const METADATA_TIMEOUT_MS = 20_000;
  * restic's chunk cache, kept per repository between runs.
  *
  * Without a persistent cache every incremental backup re-downloads the
- * repository index from S3 before it can decide what changed — which is both slow
+ * repository index from S3 before it can decide what changed. That is both slow
  * and a real per-request bill. The cache holds no plaintext tenant data
  * (repository contents are encrypted), so it sits beside the staging area rather
  * than needing separate protection.
@@ -154,7 +154,7 @@ function cachePath(target: RepoTarget): string {
  * sees only the dump staging directory. Neither is given the other's, which is
  * what stops a server backup from ever containing another tenant's data.
  *
- * The data mount is read-only for everything except a restore — a backup has no
+ * The data mount is read-only for everything except a restore. A backup has no
  * business being able to write into the world it is reading.
  */
 async function mountsFor(
@@ -163,7 +163,7 @@ async function mountsFor(
 ): Promise<ToolMount[]> {
   const cacheDir = cachePath(target);
   await mkdir(cacheDir, { recursive: true });
-  // restic runs as image root — in-namespace uid 0, which on a userns-remapped
+  // restic runs as image root, in-namespace uid 0, which on a userns-remapped
   // node cannot write an agent-owned cache directory. No-op otherwise.
   await alignOwnership(docker, cacheDir, { containerUid: 0, containerGid: 0 });
   const mounts: ToolMount[] = [{ hostPath: cacheDir, containerPath: CACHE_MOUNT }];
@@ -227,7 +227,7 @@ async function ensureRepository(
     throw new Error(explainResticFailure(probe.exitCode, probe.output));
   }
 
-  reporter.log("No repository in S3 for this yet — creating one.");
+  reporter.log("No repository in S3 for this yet. Creating one.");
   const init = await runRestic(target, initArgs(), { timeoutMs: QUICK_TIMEOUT_MS });
   if (init.exitCode !== 0) {
     throw new Error(explainResticFailure(init.exitCode, init.output));
@@ -259,7 +259,7 @@ async function enforceLimit(
   reporter: JobReporter,
 ): Promise<string[]> {
   if (keepMax <= 0) {
-    reporter.log("No snapshot limit configured — every backup is kept.");
+    reporter.log("No snapshot limit configured. Every backup is kept.");
     return [];
   }
 
@@ -269,7 +269,7 @@ async function enforceLimit(
 
   if (doomed.length === 0) {
     reporter.log(
-      `${existing.length} of ${keepMax} snapshots kept — room for this one without ` +
+      `${existing.length} of ${keepMax} snapshots kept, room for this one without ` +
         `removing any.`,
     );
     return [];
@@ -356,7 +356,7 @@ async function runBackup(
         if (progress.percent !== lastPercent) {
           lastPercent = progress.percent;
           reporter.log(
-            `${progress.percent}% — ${formatBytes(progress.bytesDone)} read` +
+            `${progress.percent}%, ${formatBytes(progress.bytesDone)} read` +
               (progress.secondsRemaining !== null
                 ? `, ~${formatDuration(progress.secondsRemaining)} remaining`
                 : ""),
@@ -376,7 +376,7 @@ async function runBackup(
 
   const parsed = parseResticOutput(result.output);
 
-  // Exit code 3 means "completed, but some files could not be read" — a snapshot
+  // Exit code 3 means "completed, but some files could not be read". A snapshot
   // exists and is usable, so this is a warning, not a failure.
   if (result.exitCode !== 0 && result.exitCode !== 3) {
     throw new Error(explainResticFailure(result.exitCode, result.output));
@@ -420,7 +420,7 @@ async function runBackup(
  *
  * Files only. A server's databases live on a MariaDB instance shared with every
  * other server on the node, and reading them all needs a root-equivalent
- * credential — so they are backed up at node scope by an administrator instead
+ * credential, so they are backed up at node scope by an administrator instead
  * (`startDatabaseBackup`).
  */
 export function startServerBackup(serverId: string, request: ServerBackupRequest): string {
@@ -451,7 +451,7 @@ export function startServerBackup(serverId: string, request: ServerBackupRequest
  *
  * The panel stops the server before calling and starts it again afterwards: it
  * owns the container lifecycle and the status the owner sees. The agent refuses
- * nothing on that basis — it has no way to know whether a stop is in flight.
+ * nothing on that basis. It has no way to know whether a stop is in flight.
  */
 export function startServerRestore(
   serverId: string,
@@ -474,7 +474,7 @@ export function startServerRestore(
         reporter.progress(progress.percent);
         if (progress.percent !== lastPercent) {
           lastPercent = progress.percent;
-          reporter.log(`${progress.percent}% — ${formatBytes(progress.bytesDone)} written`);
+          reporter.log(`${progress.percent}%, ${formatBytes(progress.bytesDone)} written`);
         }
       },
     });
@@ -482,7 +482,7 @@ export function startServerRestore(
     if (result.timedOut) {
       throw new Error(
         "The restore exceeded its time limit and was stopped. The server's data " +
-          "directory is partially restored — retry before starting the server.",
+          "directory is partially restored. Retry before starting the server.",
       );
     }
     if (result.exitCode !== 0) {
@@ -500,8 +500,8 @@ export function startServerRestore(
 /**
  * Start a backup of every database on this node and return the job id.
  *
- * Dumps run before the snapshot, and the staging directory is wiped afterwards —
- * plaintext SQL for every tenant on the node is not something to leave on disk
+ * Dumps run before the snapshot, and the staging directory is wiped afterwards.
+ * Plaintext SQL for every tenant on the node is not something to leave on disk
  * between backups.
  *
  * A run with zero successful dumps still fails rather than writing an empty
@@ -574,7 +574,7 @@ export function startDatabaseBackup(request: DatabaseBackupRequest): string {
  * Start a restore of this node's databases and return the job id.
  *
  * Restores the dumps out of the snapshot, then imports each one with
- * `CREATE DATABASE IF NOT EXISTS` first — because the reason to run this is
+ * `CREATE DATABASE IF NOT EXISTS` first, because the reason to run this is
  * usually that the databases are gone. The panel re-provisions the scoped users
  * and grants separately from its own encrypted records.
  */
@@ -638,7 +638,7 @@ export function startDatabaseRestore(request: DatabaseRestoreRequest): string {
  *
  * Synchronous (not a job): a metadata read against the repository index, measured
  * in seconds, and the panel wants it inside one request. It is also the
- * reconciliation source — the panel's rows are its own record, and this is the
+ * reconciliation source. The panel's rows are its own record, and this is the
  * ground truth they can be checked against.
  */
 export async function listSnapshots(target: RepoTarget): Promise<SnapshotInfo[]> {
@@ -668,8 +668,8 @@ export async function deleteSnapshot(
 /**
  * Measure a repository on demand, for the storage report.
  *
- * Returns null when the repository does not exist yet, which is not an error —
- * a subject that has never been backed up occupies nothing.
+ * Returns null when the repository does not exist yet, which is not an error.
+ * A subject that has never been backed up occupies nothing.
  */
 export async function repositorySize(target: RepoTarget): Promise<number | null> {
   const result = await runRestic(target, statsArgs(), { timeoutMs: METADATA_TIMEOUT_MS });
@@ -686,7 +686,7 @@ export async function repositorySize(target: RepoTarget): Promise<number | null>
  * Backs the admin settings page's "test connection" button. Deliberately probes a
  * *real* repository path rather than merely listing the bucket, because the
  * failure operators actually hit is a credential that can list but not write. An
- * uninitialised repository counts as success — it is the expected state before
+ * uninitialised repository counts as success. It is the expected state before
  * the first backup, and initialising one as a side effect of a test would leave
  * debris in the bucket.
  */
@@ -707,14 +707,14 @@ export async function checkRepository(
       reachable: true,
       initialised: false,
       detail:
-        "S3 is reachable and the credentials work. No repository exists here yet — " +
-        "the first backup will create one.",
+        "S3 is reachable and the credentials work. No repository exists here " +
+        "yet. The first backup will create one.",
     };
   }
 
   // A probe that hit the wall clock was almost certainly stuck in restic's retry
   // backoff against an error that will not fix itself. The captured output names
-  // the real cause, so it is explained rather than reported as a timeout — the
+  // the real cause, so it is explained rather than reported as a timeout. The
   // whole reason the probe is capped short is to be able to say this.
   return {
     reachable: false,

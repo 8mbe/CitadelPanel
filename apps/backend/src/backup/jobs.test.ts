@@ -254,7 +254,7 @@ describe("hasRunningJob", () => {
 
     expect(hasRunningJob(SERVER)).toBe(true);
     // A busy server must not block backups of a different one, nor the node's
-    // own database backup — the two scopes write to different repositories.
+    // own database backup. The two scopes write to different repositories.
     expect(hasRunningJob(OTHER)).toBe(false);
     expect(hasRunningJob(NODE_DATABASES_SUBJECT)).toBe(false);
 

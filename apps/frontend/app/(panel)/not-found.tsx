@@ -8,8 +8,8 @@ import { Button } from "@/components/ui/button";
 export const metadata: Metadata = { title: "Not found" };
 
 /**
- * The in-panel 404, rendered when a panel route calls `notFound()` — a server id
- * that does not exist, or one the caller may not see.
+ * The in-panel 404, rendered when a panel route calls `notFound()`. It covers a
+ * server id that does not exist, or one the caller may not see.
  *
  * It renders inside the panel shell, so the navigation stays available. The
  * wording avoids confirming whether the resource exists: for a server the caller

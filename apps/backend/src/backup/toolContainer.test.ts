@@ -39,7 +39,7 @@ test("drops the dangerous capabilities", () => {
 test("labels and names the container so a leak is identifiable", () => {
   const first = spec();
   expect(first.Labels?.["citadel.tool"]).toBe("backup");
-  // Not `citadel.managed` — that label means "a tenant's game server" and is
+  // Not `citadel.managed`. That label means "a tenant's game server" and is
   // what the stats collector lists.
   expect(first.Labels?.["citadel.managed"]).toBeUndefined();
   expect(first.name).toMatch(/^citadel-backup-[0-9a-f]{8}$/);

@@ -5,7 +5,7 @@
  * may *do*; none of them changes who the container *is*. Without remapping,
  * uid 0 inside a container is uid 0 on the host, so a single kernel escape is
  * an instant host root. With the daemon's `userns-remap` enabled, container
- * uid N is host uid `base + N` for a subordinate range from `/etc/subuid` —
+ * uid N is host uid `base + N` for a subordinate range from `/etc/subuid`, so
  * a kernel escape then lands in an unprivileged, otherwise-unused host uid.
  * It is most of what a sandbox runtime buys, at none of the syscall cost.
  *
@@ -19,13 +19,13 @@
  * where `offset` is *effective*, not absolute: the agent itself may run inside
  * a remapped container (the docker-compose deployment), in which case its own
  * `/proc/self/uid_map` already applies the same shift and the effective offset
- * is zero — file uids the agent sees are container-side already. Only a
+ * is zero, and file uids the agent sees are container-side already. Only a
  * host-side (bare-process) agent next to a remapped daemon sees a nonzero
  * offset. Computing `daemon base − own base` handles both deployments.
  *
  * Detection is best-effort by design. When the daemon is unreachable at boot
  * the offsets resolve to zero and the next caller retries; nothing here may
- * take the agent down — the same posture as `dataRoot.ts`.
+ * take the agent down. This is the same posture as `dataRoot.ts`.
  */
 
 import { lchown, readdir, readFile } from "node:fs/promises";
@@ -39,7 +39,7 @@ import { config } from "../config";
  * Not a new invention: every shipped blueprint already pins `user: "1000:1000"`
  * (see `blueprints/definitions/`), and a non-remapped node works because the
  * agent conventionally runs as uid 1000 too. Remapping makes the convention
- * explicit — the host-side owner becomes `offset + 1000`, and this constant is
+ * explicit. The host-side owner becomes `offset + 1000`, and this constant is
  * the single place the `1000` comes from.
  */
 export const CONTAINER_DATA_UID = 1000;
@@ -58,8 +58,8 @@ const ZERO_OFFSETS: UsernsOffsets = { uid: 0, gid: 0 };
  *
  * An identity map ("0 0 4294967295") means no namespace shift and parses to 0.
  * A remapped process maps in-namespace 0 to its subordinate base
- * ("0 231072 65536" → 231072). Only the mapping that contains id 0 matters —
- * that is the line the data owner and the tool containers' root live under.
+ * ("0 231072 65536" → 231072). Only the mapping that contains id 0 matters.
+ * That is the line the data owner and the tool containers' root live under.
  */
 export function parseIdMapBase(mapText: string): number {
   for (const line of mapText.split("\n")) {
@@ -76,7 +76,7 @@ export function parseIdMapBase(mapText: string): number {
  * Parse the daemon's remap base out of `DockerRootDir`.
  *
  * A remapped daemon keeps its state in `<data-root>/<uid>.<gid>` (e.g.
- * `/var/lib/docker/231072.231072`) — the suffix is the subordinate range base
+ * `/var/lib/docker/231072.231072`). The suffix is the subordinate range base
  * and is the one place the API exposes it. Returns null when the directory has
  * no such suffix, which is what a non-remapped daemon reports.
  */
@@ -92,7 +92,7 @@ export function parseRemapBaseFromRootDir(
  * Effective offsets from the daemon's base and the agent's own namespace base.
  *
  * A negative result means the agent sits in a *deeper* namespace than the
- * containers it manages — no coherent translation exists, so it clamps to zero
+ * containers it manages. No coherent translation exists, so it clamps to zero
  * (treat ids as aligned) rather than producing uids that underflow.
  */
 export function computeEffectiveOffsets(
@@ -129,14 +129,14 @@ async function readSelfBase(): Promise<{ uid: number; gid: number }> {
  *
  * Memoized on success: the daemon's remap configuration cannot change without
  * a daemon restart, which recreates every managed container anyway. A failed
- * detection (daemon unreachable) is *not* memoized — it returns inactive/zero
+ * detection (daemon unreachable) is *not* memoized. It returns inactive/zero
  * and the next caller retries, so an agent that boots before Docker heals
  * itself once the socket comes back.
  */
 export async function detectUserns(client: Docker): Promise<UsernsState> {
   if (detected) return detected;
 
-  // An explicit operator override skips daemon introspection entirely — for
+  // An explicit operator override skips daemon introspection entirely, for
   // daemons whose data-root naming defeats the suffix parse.
   if (config.usernsUidOffset >= 0 || config.usernsGidOffset >= 0) {
     detected = {
@@ -207,7 +207,7 @@ export async function usernsOffsets(client: Docker): Promise<UsernsOffsets> {
  * undefined when the image's own USER should stand.
  *
  * Under remapping the data directory is owned by `offset + 1000` on the host,
- * which is in-container uid 1000 — an image-default root (in-container uid 0)
+ * which is in-container uid 1000. An image-default root (in-container uid 0)
  * has no `CAP_DAC_OVERRIDE` under `CapDrop: ALL` and could not write its own
  * data dir. Pinning the default to the data owner keeps user-less blueprints
  * working; without remapping the historical behaviour (image default) stands.
@@ -222,7 +222,7 @@ export async function defaultRunAsUser(client: Docker): Promise<string | undefin
  * Translate an agent-visible owner to the container-side `uid:gid` for
  * Docker's `User`. An owner below the offset predates remapping (or was
  * written by a misconfigured tool); the canonical data owner is the only
- * sensible answer for it — `ensureServerDataDir` will have healed the actual
+ * sensible answer for it. `ensureServerDataDir` will have healed the actual
  * files by the time a container starts.
  */
 export function containerOwnerForHost(
@@ -243,7 +243,7 @@ export function containerOwnerForHost(
  * container-side view, which is exactly the pre-remap behaviour. Under a
  * nonzero offset every file the agent creates (editor save, upload, SFTP
  * write, staged dump) is owned by the agent's host uid, which is unmapped in
- * the container's namespace — the game could read it at best and never write
+ * the container's namespace. The game could read it at best and never write
  * or delete it. Chowning to `offset + containerUid` puts it in range.
  *
  * Failures are swallowed after a one-line log: the write this trails already
@@ -338,7 +338,7 @@ export async function reportUsernsAtBoot(client: Docker): Promise<void> {
     console.error(
       `[agent] userns-remap is active but the agent runs as uid ${process.getuid?.()}, ` +
         "not root. It cannot chown server data into the subordinate range or read " +
-        "files containers create there — run the agent as root on remapped nodes.",
+        "files containers create there. Run the agent as root on remapped nodes.",
     );
   }
 }

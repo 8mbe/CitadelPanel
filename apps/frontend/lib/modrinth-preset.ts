@@ -6,7 +6,7 @@
  * the endpoint/mapping declaration. Isomorphic by construction: types only,
  * no server or browser dependencies.
  *
- * Endpoint and field names follow https://docs.modrinth.com/ — search facets
+ * Endpoint and field names follow https://docs.modrinth.com/. Search facets
  * are AND-ed groups (`project_type`, `categories` for loaders, `versions` for
  * game versions); version lists are filtered with the `loaders` /
  * `game_versions` query params and return newest-first.

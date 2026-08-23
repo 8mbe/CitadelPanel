@@ -43,8 +43,8 @@ describe("explainDockerSocketError", () => {
   test("says a new login session is what applies the membership", () => {
     const message = explainDockerSocketError({ code: "EACCES" }, SOCKET, outsider);
 
-    // The whole point: `usermod` alone leaves a running agent — and any shell
-    // opened before it — with the old group set.
+    // The whole point: `usermod` alone leaves a running agent, and any shell
+    // opened before it, with the old group set.
     expect(message).toContain("NEW login session");
     expect(message).toContain("setfacl");
   });

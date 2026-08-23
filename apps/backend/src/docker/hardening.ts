@@ -52,8 +52,8 @@ export interface HardenedContainerSpec {
   /**
    * Optional `uid` or `uid:gid` to run the container as (Docker `--user`).
    *
-   * Images that drop privileges internally — e.g. itzg/minecraft-server runs as
-   * root then `gosu`s to `minecraft` and `chown`s `/data` — cannot do that under
+   * Some images drop privileges internally. itzg/minecraft-server runs as root,
+   * then `gosu`s to `minecraft` and `chown`s `/data`. That cannot work under
    * this layer's `CapDrop: ALL` + `no-new-privileges`, because `setuid`/`chown`
    * need capabilities we deliberately drop. Pinning the run-as user to the one
    * that owns the data directory lets such an image run non-root with no
@@ -75,14 +75,14 @@ export interface HardenedContainerSpec {
    * the panel's ANSI console renderer with nothing to render. A TTY also
    * changes the attach stream from Docker's 8-byte multiplexed framing to a raw
    * byte stream (stdout and stderr merged), which the attach layer detects
-   * per-container. Off by default — most servers don't need it and non-TTY
-   * keeps stdout/stderr cleanly separated.
+   * per-container. Off by default, because most servers don't need it and
+   * non-TTY keeps stdout/stderr cleanly separated.
    */
   tty?: boolean;
 
   /**
    * Additional networks to attach the container to after creation, beyond its
-   * primary isolated `networkName`. Used for `node_db_net` — a server whose
+   * primary isolated `networkName`. Used for `node_db_net`. A server whose
    * owner has provisioned a database must reach the shared MariaDB, so the
    * panel passes that network name here and the agent attaches it post-create.
    */
@@ -91,9 +91,9 @@ export interface HardenedContainerSpec {
   /**
    * OCI runtime to run under (Docker `--runtime`), e.g. `runsc` for gVisor.
    * Unset means the daemon default (`runc`). A node-level knob sourced from
-   * the agent's `CONTAINER_RUNTIME` env — see `config.ts` — for operators who
-   * accept a syscall-performance cost in exchange for a userspace-kernel
-   * boundary under untrusted tenants.
+   * the agent's `CONTAINER_RUNTIME` env, described in `config.ts`. It is for
+   * operators who accept a syscall-performance cost in exchange for a
+   * userspace-kernel boundary under untrusted tenants.
    */
   runtime?: string;
 }
@@ -119,16 +119,16 @@ type HardenedHostConfig = NonNullable<Docker.ContainerCreateOptions["HostConfig"
  */
 function assertSpecIsSane(spec: HardenedContainerSpec): void {
   if (spec.cpuLimit <= 0) {
-    throw new Error("cpuLimit must be greater than 0 — unlimited CPU is not allowed");
+    throw new Error("cpuLimit must be greater than 0. Unlimited CPU is not allowed");
   }
   if (spec.memoryLimitMb <= 0) {
     throw new Error(
-      "memoryLimitMb must be greater than 0 — unlimited memory is not allowed",
+      "memoryLimitMb must be greater than 0. Unlimited memory is not allowed",
     );
   }
   if (!spec.networkName) {
     throw new Error(
-      "networkName is required — a container must never fall back to the default bridge",
+      "networkName is required. A container must never fall back to the default bridge",
     );
   }
   for (const port of spec.ports) {
@@ -141,7 +141,7 @@ function assertSpecIsSane(spec: HardenedContainerSpec): void {
     // inside the container that Docker binds on the host (the panel tells it
     // which number via the blueprint's primary-port env). A split mapping
     // means a confused panel, and the game would listen where nothing is
-    // forwarded — refuse it rather than run a server nobody can reach.
+    // forwarded. Refuse it rather than run a server nobody can reach.
     if (port.containerPort !== port.hostPort) {
       throw new Error(
         `Invalid port mapping ${port.hostPort}→${port.containerPort}: host and container port must be identical`,
@@ -185,8 +185,8 @@ export function buildHardenedContainerConfig(
     // running game server ("op someone", "save-all", "stop"). Without this the
     // console is read-only, and `attach` has nothing to write to.
     //
-    // TTY is opt-in per blueprint (see HardenedContainerSpec.tty): some server
-    // software — notably itzg/minecraft-server via JLine3 — only emits ANSI
+    // TTY is opt-in per blueprint (see HardenedContainerSpec.tty). Some server
+    // software, notably itzg/minecraft-server via JLine3, only emits ANSI
     // color when stdout is a real terminal, so a blueprint that wants colored
     // console output allocates a pty. Non-TTY (the default) keeps stdout and
     // stderr separately 8-byte-framed, which is what the attach/demux layers
@@ -207,7 +207,7 @@ export function buildHardenedContainerConfig(
     },
 
     // dockerode's HostConfig type lacks CgroupnsMode, so the literal is checked
-    // against the widened type and assigned back — no `any`, no silent typos.
+    // against the widened type and assigned back. No `any`, no silent typos.
     HostConfig: ({
       // --- Resource caps (bounds the blast radius of an undetected miner) ---
       Memory: spec.memoryLimitMb * MB,
@@ -313,13 +313,13 @@ export function buildIsolatedNetworkConfig(networkName: string) {
 }
 
 /**
- * Options for a link network — the pairwise bridge that lets exactly two
+ * Options for a link network, the pairwise bridge that lets exactly two
  * linked servers reach each other (see `linkNetworkName`).
  *
  * The mirror image of {@link buildIsolatedNetworkConfig}: ICC is the feature
  * here. A link is an explicit, user-initiated grant of connectivity between
  * two specific servers, so the network holds only those two containers and
- * enables ICC between them — never a third tenant's.
+ * enables ICC between them, never a third tenant's.
  */
 export function buildLinkNetworkConfig(networkName: string) {
   return bridgeNetworkConfig(networkName, true);
@@ -338,11 +338,11 @@ export function serverContainerName(serverId: string): string {
 /**
  * Deterministic name for the pairwise network that links two servers.
  *
- * The two id prefixes are sorted, so (A,B) and (B,A) — the same pair, however
- * the link row is stored — always resolve to one network. Containers on it
- * reach each other by container name (`citadel-<id12>`) via Docker's embedded
- * DNS, which is why links never need to hand out an IP: container IPs change
- * on every recreate, names do not.
+ * The two id prefixes are sorted, so (A,B) and (B,A) always resolve to one
+ * network, however the link row is stored. Containers on it reach each other by
+ * container name (`citadel-<id12>`) via Docker's embedded DNS, which is why
+ * links never need to hand out an IP: container IPs change on every recreate,
+ * names do not.
  */
 export function linkNetworkName(serverIdA: string, serverIdB: string): string {
   const [a, b] = [serverIdA.slice(0, 12), serverIdB.slice(0, 12)].sort();

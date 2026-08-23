@@ -3,7 +3,7 @@
  *
  * Uses the widely-used `itzg/minecraft-server` image, which handles server jar
  * download, EULA acceptance and server type selection (Vanilla/Paper/Fabric...)
- * through environment variables — so no separate install step is needed.
+ * through environment variables, so no separate install step is needed.
  */
 
 import { MODRINTH_PROVIDER_SPEC } from "@/lib/modrinth-preset";
@@ -66,7 +66,7 @@ export const minecraftJava: Blueprint = {
     // Deliberately NOT declared here: DIFFICULTY, MAX_PLAYERS and ONLINE_MODE.
     // The image rewrites server.properties from its property variables on
     // *every* boot, so declaring them would silently revert whatever the owner
-    // edited in the Files tab — and ONLINE_MODE in particular fought the
+    // edited in the Files tab. ONLINE_MODE in particular fought the
     // Velocity setup, which needs online-mode=false in the file
     // (velocity-proxy.md). An unset variable is left alone by the image, so
     // omitting them makes server.properties the only place these live.
@@ -75,7 +75,7 @@ export const minecraftJava: Blueprint = {
     // stay: server-port has to track the host port the panel published, and an
     // owner editing it in the file would only break their own server
     // (ports.md). MOTD stays too, as the one-line "name" a new server ships
-    // with — it carries the same rewrite-on-boot caveat.
+    // with, and it carries the same rewrite-on-boot caveat.
 
     // The image's /start script runs as root, then `gosu`s to `minecraft` and
     // `chown`s /data. Both need capabilities the panel drops (CapDrop: ALL +
@@ -133,10 +133,10 @@ export const minecraftJava: Blueprint = {
   // relies on the image entrypoint rather than a custom startup command.
 
   // Plugin/mod support via Modrinth, declared entirely as data (the panel's
-  // fetch engine interprets it — see plugins/engine.ts). The active profile
+  // fetch engine interprets it, see plugins/engine.ts). The active profile
   // follows the TYPE env: Paper/Purpur/Spigot load Bukkit-style plugins from
   // /plugins, Fabric/Forge load mods from /mods, and vanilla (VANILLA) has no
-  // variant — those servers simply don't get the tab. Purpur also lists
+  // variant, so those servers simply don't get the tab. Purpur also lists
   // paper/spigot loaders because many plugin projects only tag one of the
   // compatible loaders.
   plugins: {
@@ -186,7 +186,7 @@ export const minecraftJava: Blueprint = {
   stopCommand: "stop",
 
   // Run as the data directory's owner (uid 1000) so the image needs no
-  // setuid/chown capabilities — see SKIP_SUDO/SKIP_CHOWN_DATA above.
+  // setuid/chown capabilities. See SKIP_SUDO/SKIP_CHOWN_DATA above.
   user: "1000:1000",
 
   // A Minecraft server is bursty: chunk generation and player joins spike CPU,
@@ -206,7 +206,7 @@ export const minecraftJava: Blueprint = {
   supportsReadOnlyRoot: false,
 
   // Allocate a pseudo-TTY so the image's JLine3 TerminalConsoleAppender emits
-  // ANSI color. Without a TTY JLine strips all color — both log levels (the
+  // ANSI color. Without a TTY JLine strips all color, both log levels (the
   // %highlightError pattern) and Minecraft's own § chat-formatting codes, which
   // it converts to ANSI only when stdout is a real terminal. The panel's ANSI
   // console renderer then has nothing to render. The attach layer detects a TTY

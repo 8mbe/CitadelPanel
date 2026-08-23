@@ -1,8 +1,8 @@
 /**
  * File manager for a server's data directory.
  *
- * Every operation goes through `paths.ts`, which is the containment boundary —
- * nothing here resolves a path by itself. Reads and listings additionally go
+ * Every operation goes through `paths.ts`, which is the containment boundary.
+ * Nothing here resolves a path by itself. Reads and listings additionally go
  * through the symlink-checking variant, because a game server can create a
  * symlink inside its own data directory that a lexical check cannot see.
  *
@@ -39,7 +39,7 @@ export interface FileEntry {
  * game can later write into folders the panel created for it. `mkdir` returns
  * the *first* path it created (or undefined when everything existed), which
  * bounds the alignment to the new subtree instead of re-owning siblings.
- * A no-op on non-remapped nodes — see `docker/userns.ts`.
+ * A no-op on non-remapped nodes. See `docker/userns.ts`.
  */
 async function mkdirAligned(path: string): Promise<void> {
   const created = await mkdir(path, { recursive: true });
@@ -56,7 +56,7 @@ function displayPath(userPath: string, name?: string): string {
  * List a directory.
  *
  * `withFileTypes` avoids a stat per entry for the type, but size and mtime
- * still need one — so listings are capped rather than unbounded.
+ * still need one, so listings are capped rather than unbounded.
  */
 export async function listDirectory(
   serverId: string,
@@ -105,7 +105,7 @@ export async function listDirectory(
     }),
   );
 
-  // Directories first, then alphabetical — the ordering a file browser expects.
+  // Directories first, then alphabetical, the ordering a file browser expects.
   return results.sort((a, b) => {
     if (a.type === "directory" && b.type !== "directory") return -1;
     if (a.type !== "directory" && b.type === "directory") return 1;
@@ -171,8 +171,8 @@ export async function writeFile(
  * Every path is resolved through containment *before* anything is removed, so
  * one bad entry (a traversal, a symlink escape, the data root) fails the whole
  * request instead of half-deleting a selection. A merely-missing entry is a
- * no-op — `rm`'s `force` swallows the ENOENT — matching the single-path
- * behaviour. The batch is capped at the listing cap: a multi-select can never
+ * no-op, matching the single-path behaviour, because `rm`'s `force` swallows
+ * the ENOENT. The batch is capped at the listing cap: a multi-select can never
  * legitimately exceed what one directory listing shows.
  *
  * Overlapping selections (`/plugins` and `/plugins/old.jar`) are harmless for
@@ -204,7 +204,7 @@ export async function deletePaths(
   }
 
   // Removal is sequential, not parallel: two concurrent recursive `rm`s on
-  // overlapping trees (`/plugins` and `/plugins/old.jar`) race — the child
+  // overlapping trees (`/plugins` and `/plugins/old.jar`) race, and the child
   // vanishing mid-recursion can abort the parent's removal with an ENOENT,
   // leaving a directory the request reported as deleted. In sequence either
   // order is safe: the survivor of the overlap is a no-op that `force`
@@ -234,8 +234,8 @@ export async function createDirectory(
 /**
  * Rename or move a file/directory within a server's data directory.
  *
- * Both the source and destination are resolved through containment — the
- * source through the symlink-checking variant (it must exist), the destination
+ * Both the source and destination are resolved through containment. The source
+ * goes through the symlink-checking variant (it must exist), the destination
  * through the lexical variant (it may not exist yet). The data directory root
  * itself is not a valid source or destination.
  *
@@ -253,7 +253,7 @@ export async function renamePath(
   // The write-safe resolver, not the lexical one: the destination may not
   // exist, but a symlink planted in an existing parent (`ln -s /etc plugins`)
   // would otherwise let the `mkdir -p` + `rename` move a file *out* of the
-  // containment boundary — the same class of escape `writeFile` closes.
+  // containment boundary, the same class of escape `writeFile` closes.
   const dest = await resolveWritableServerPath(serverId, toPath);
 
   if (source === root) throw badRequest("Refusing to move the server's data directory.");
@@ -266,7 +266,7 @@ export async function renamePath(
 
   // A name collision is surfaced as a 409 rather than letting rename silently
   // overwrite it (which on POSIX replaces an existing file, or fails on a
-  // non-empty directory — both surprising for a file manager).
+  // non-empty directory, both surprising for a file manager).
   const exists = await stat(dest).catch(() => null);
   if (exists) throw conflict("A file or folder with that name already exists.");
 
@@ -280,7 +280,7 @@ export async function renamePath(
  * Uses `node:fs/promises`.cp with `recursive: true`, which copies directory
  * trees including their contents. Symlinks inside the tree are dereferenced
  * (the default), which keeps everything inside the containment boundary after
- * the copy — a symlink that pointed outside the data dir becomes a real copy,
+ * the copy. A symlink that pointed outside the data dir becomes a real copy,
  * not a re-created escape.
  *
  * The destination must not already exist (same 409 posture as rename), and
@@ -310,7 +310,7 @@ export async function copyPath(
   await mkdirAligned(dirname(dest));
   await cp(source, dest, { recursive: true });
   // The copy was performed by the agent, so on a remapped node the new tree is
-  // owned by the agent's uid — hand it to the data owner like any other write.
+  // owned by the agent's uid. Hand it to the data owner like any other write.
   await alignOwnership(docker, dest, { recursive: true });
 }
 
@@ -382,11 +382,11 @@ async function finalizeStagedFile(
  * so a partial upload never appears as a half-written file to the game server
  * (which could load a truncated world or plugin). The temp file lives next to
  * the target rather than in `/tmp` so the rename is guaranteed to be on the
- * same filesystem — a cross-device rename fails with EXDEV.
+ * same filesystem, because a cross-device rename fails with EXDEV.
  *
  * `content-length` is checked up front when present (cheap rejection of an
  * obviously-oversized upload), and the running total is checked during the
- * stream so a client that lies about the length — or sends no length at all —
+ * stream, so a client that lies about the length, or sends no length at all,
  * is still cut off at the cap.
  */
 export async function uploadFile(
@@ -444,7 +444,7 @@ export async function uploadFile(
  * The agent performs the fetch (rather than the panel) so the bytes cross the
  * network once, directly to where they need to land. The panel applies its own
  * SSRF guardrail before forwarding, and the agent applies its own again here
- * ({@link ssrfSafeFetch}) — resolving the host and re-checking every redirect
+ * ({@link ssrfSafeFetch}), resolving the host and re-checking every redirect
  * hop, because the agent is where the request actually leaves the node and
  * where redirects are followed. The agent still re-checks the final size
  * against the upload cap.
