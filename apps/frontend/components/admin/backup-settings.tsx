@@ -57,7 +57,7 @@ const PREVIEW_DEBOUNCE_MS = 400;
  * do.
  *
  * The destination and the schedule are deliberately separate cards. An operator
- * commonly wants one without the other — a working "Back up now" button with no
+ * commonly wants one without the other. A working "Back up now" button with no
  * cron behind it is a legitimate configuration, and so is temporarily clearing
  * the schedule without discarding the credentials that read the existing
  * snapshots.
@@ -143,7 +143,7 @@ function DestinationCard({
     setSaved(false);
     try {
       // An operator will paste a console URL sooner or later. Rather than rejecting
-      // the form, strip the scheme — and let an explicit `http://` *set the toggle*,
+      // the form, strip the scheme, and let an explicit `http://` *set the toggle*,
       // since that is unambiguously what they meant. The switch visibly moves, so
       // this is a suggestion they can see and undo, not a silent downgrade.
       const raw = endpoint.trim();
@@ -200,7 +200,7 @@ function DestinationCard({
           S3 destination
         </CardTitle>
         <CardDescription>
-          Any S3-compatible bucket — AWS, Backblaze B2, Cloudflare R2, MinIO,
+          Any S3-compatible bucket: AWS, Backblaze B2, Cloudflare R2, MinIO,
           Wasabi. Each server gets its own encrypted repository inside it, so one
           server&apos;s key never opens another&apos;s snapshots.
         </CardDescription>
@@ -229,7 +229,7 @@ function DestinationCard({
               <FieldDescription>
                 {useTls
                   ? "Nodes reach the endpoint over https. Leave this on for any storage reachable from the internet."
-                  : "Nodes will reach the endpoint over plain http. Only do this on a trusted network — the bucket credentials and API traffic are unencrypted in transit. Snapshot contents stay encrypted either way, because that happens on the node before upload."}
+                  : "Nodes will reach the endpoint over plain http. Only do this on a trusted network. The bucket credentials and API traffic are unencrypted in transit. Snapshot contents stay encrypted either way, because that happens on the node before upload."}
               </FieldDescription>
             </div>
             <Switch
@@ -251,7 +251,7 @@ function DestinationCard({
             />
             <FieldDescription>
               Host and optional port, e.g. <code>s3.us-east-1.amazonaws.com</code> or{" "}
-              <code>192.168.1.120:3900</code>. Pasting a full URL is fine — its scheme
+              <code>192.168.1.120:3900</code>. Pasting a full URL is fine. Its scheme
               sets the TLS switch above.
             </FieldDescription>
           </Field>
@@ -327,9 +327,9 @@ function DestinationCard({
         <FieldDescription>
           Give these credentials write access to this bucket and nothing else. Data
           is encrypted on the node before it is uploaded, so the bucket&apos;s
-          contents are unreadable without the panel&apos;s own key — which means the
-          reverse is also true: rotating <code>PANEL_ENCRYPTION_KEY</code> makes
-          every existing snapshot permanently unreadable.
+          contents are unreadable without the panel&apos;s own key. That cuts both
+          ways. Rotating <code>PANEL_ENCRYPTION_KEY</code> makes every existing
+          snapshot permanently unreadable.
         </FieldDescription>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
@@ -359,7 +359,7 @@ function DestinationCard({
           </Button>
         </div>
         <FieldDescription>
-          The test runs on one of your nodes, not on the panel — a node is what has
+          The test runs on one of your nodes, not on the panel. A node is what has
           to reach S3, and it may sit behind a different egress path. Save first.
         </FieldDescription>
       </CardContent>
@@ -391,11 +391,11 @@ function ScheduleCard({
   const [previewError, setPreviewError] = React.useState<string | null>(null);
 
   // The preview is computed server-side so it uses the panel's timezone and the
-  // same parser the scheduler does — a schedule can never preview one thing and
-  // then do another. Debounced so typing does not fire a request per keystroke —
-  // but not on the way in: there is nothing to debounce when the value is the
-  // stored schedule, and waiting made the card sit empty for the delay on every
-  // page load.
+  // same parser the scheduler does, so a schedule can never preview one thing
+  // and then do another. Debounced so typing does not fire a request per
+  // keystroke, though not on the way in. There is nothing to debounce when the
+  // value is the stored schedule, and waiting made the card sit empty for the
+  // delay on every page load.
   const previewedOnce = React.useRef(false);
   React.useEffect(() => {
     let cancelled = false;
@@ -521,7 +521,7 @@ function ScheduleCard({
           />
           <FieldDescription>
             Once a server has this many, taking a new backup removes its oldest one
-            first — so the count never exceeds the limit. Snapshots deduplicate
+            first, so the count never exceeds the limit. Snapshots deduplicate
             against each other, so five costs far less than five full copies. 0 means
             unlimited.
           </FieldDescription>
@@ -566,7 +566,7 @@ function ScheduleCard({
  * Storage: the one-line used / allowed / total report, plus the two limits behind it.
  *
  * `used` is measured (restic's deduplicated repository size, recorded after each
- * backup). `allowed` is enforced — new backups are refused once it is reached.
+ * backup). `allowed` is enforced. New backups are refused once it is reached.
  * `total` is **declared by the operator**, because S3 exposes no capacity API: the
  * size of their storage plan is something only they know, so the panel asks rather
  * than pretending to have discovered it.
@@ -681,7 +681,7 @@ function StorageCard({
               {report.unmeasured > 0 &&
                 ` ${report.unmeasured} not yet measured, so the figure is a floor.`}
               {report.overQuota &&
-                " The limit has been reached — new backups are refused until you delete some or raise it."}
+                " The limit has been reached. New backups are refused until you delete some or raise it."}
             </p>
           </div>
         )}
@@ -716,7 +716,7 @@ function StorageCard({
               onChange={(e) => setCapacityGb(e.target.value)}
             />
             <FieldDescription>
-              Shown for context only — S3 has no way to report how big a bucket may
+              Shown for context only. S3 has no way to report how big a bucket may
               get, so this is whatever your storage plan gives you. 0 leaves it
               unknown.
             </FieldDescription>
@@ -736,7 +736,7 @@ function StorageCard({
           />
           <FieldDescription>
             One glob per line, relative to each server&apos;s data directory. Applies to
-            server file backups on every server — excluding regenerable data (caches,
+            server file backups on every server. Excluding regenerable data (caches,
             logs) shrinks every snapshot in the fleet. Database backups have nothing
             to exclude.
           </FieldDescription>

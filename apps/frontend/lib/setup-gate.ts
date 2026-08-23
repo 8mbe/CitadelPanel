@@ -5,8 +5,8 @@
  *
  * A fresh install must send its first visitor to `/setup`; a configured install
  * must never pay a network round trip to discover it is configured. The trick is
- * that setup completion is *irreversible* — once `completedAt` is set it never
- * clears — so a completed result can be cached in `localStorage` forever and the
+ * that setup completion is *irreversible*. Once `completedAt` is set it never
+ * clears, so a completed result can be cached in `localStorage` forever and the
  * status endpoint is only ever called on installs that have not finished setup.
  *
  * Concretely:
@@ -27,8 +27,8 @@ function cachedComplete(): boolean {
   try {
     return localStorage.getItem(SETUP_DONE_KEY) === "1";
   } catch {
-    // Private mode or storage disabled — treat as "unknown", fall through to a
-    // live check. Correctness over speed when we cannot cache.
+    // Private mode or storage disabled. Treat as "unknown" and fall through to
+    // a live check. Correctness over speed when we cannot cache.
     return false;
   }
 }
@@ -57,7 +57,7 @@ export async function checkSetup(): Promise<SetupGateResult> {
 }
 
 /**
- * Ask the backend directly, bypassing the cache — but still writing to it.
+ * Ask the backend directly, bypassing the cache but still writing to it.
  *
  * Used on paths where correctness matters more than saving one request: the
  * login page (which already calls the backend for its captcha config) and the

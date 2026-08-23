@@ -2,7 +2,7 @@
  * Subuser routes (plan.md section 5).
  *
  * Subusers are the delegation mechanism, scoped to exactly one server. Managing
- * them is owner-or-admin only — a subuser can never invite further subusers,
+ * them is owner-or-admin only. A subuser can never invite further subusers,
  * which would let a delegated grant escalate itself.
  */
 
@@ -58,7 +58,7 @@ export async function handleListSubusers(
 }
 
 /**
- * POST /api/servers/:id/subusers — invite an existing user to a server.
+ * POST /api/servers/:id/subusers. Invites an existing user to a server.
  *
  * The invitee must already have an account. Deliberately no email-invite flow
  * yet: creating accounts as a side effect of an invite is an abuse vector.
@@ -133,7 +133,7 @@ export async function handleInviteSubuser(
   );
 }
 
-/** PATCH /api/servers/:id/subusers/:userId — change granted permissions. */
+/** PATCH /api/servers/:id/subusers/:userId. Changes granted permissions. */
 export async function handleUpdateSubuser(
   request: Request,
   serverId: string,
@@ -171,7 +171,7 @@ export async function handleUpdateSubuser(
   return json({ subuser: { userId: subuserId, permissions } });
 }
 
-/** DELETE /api/servers/:id/subusers/:userId — revoke access. */
+/** DELETE /api/servers/:id/subusers/:userId. Revokes access. */
 export async function handleRemoveSubuser(
   request: Request,
   serverId: string,
@@ -180,7 +180,7 @@ export async function handleRemoveSubuser(
   const id = requireUuidParam(serverId, "serverId");
   const { user } = await requireServerOwner(request, id);
 
-  // Resolve the email before the row disappears — it names the subuser in the
+  // Resolve the email before the row disappears. It names the subuser in the
   // audit record, which must outlive the grant itself.
   const email = await lookupEmail(subuserId);
 

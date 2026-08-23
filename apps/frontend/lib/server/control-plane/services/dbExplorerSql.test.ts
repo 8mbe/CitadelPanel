@@ -62,7 +62,7 @@ test("quoteIdent wraps a vetted identifier in backticks", () => {
 // --- value encoding -----------------------------------------------------------
 
 test("sqlValueLiteral hex-encodes values so nothing is parseable", () => {
-  // The body between the quotes is hex only — quotes, backslashes, newlines
+  // The body between the quotes is hex only. Quotes, backslashes, newlines
   // and comment markers from the value cannot appear there.
   expect(sqlValueLiteral("it's")).toBe("CAST(x'69742773' AS CHAR)");
   expect(sqlValueLiteral("a\\b")).toBe("CAST(x'615c62' AS CHAR)");

@@ -3,7 +3,7 @@
  *
  * Split out from `routes/sftp.ts` so it can be unit-tested without pulling in
  * the DB client (which carries a Next.js `server-only` marker). Pure string
- * logic — no I/O, no deps.
+ * logic. No I/O, no deps.
  */
 
 /**
@@ -13,7 +13,7 @@
  * readable and free of characters SFTP clients dislike; the 8-char UUID prefix
  * disambiguates users with the same local-part across servers. Collisions are
  * possible but vanishingly rare, and the UNIQUE constraint on
- * `sftp_credentials.username` catches them — the mint path retries with a
+ * `sftp_credentials.username` catches them. The mint path retries with a
  * numeric suffix if needed.
  */
 export function buildSftpUsername(email: string, serverId: string): string {

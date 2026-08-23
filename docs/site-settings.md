@@ -8,7 +8,7 @@ take effect without a restart.
 The admin surface is `components/admin/general-settings.tsx`
 (`/admin/settings`), one card per group, each saving independently.
 
-## Branding — the site name is not a constant
+## Branding: the site name is not a constant
 
 `branding` holds two strings: `siteName` and `tagline`. `siteName` defaults to
 "CitadelPanel" and everything user-facing reads it from here:
@@ -28,7 +28,7 @@ Two places deliberately keep the hardcoded name:
 
 - **The 2FA issuer** (`twoFactor({ issuer: "CitadelPanel" })`). It is baked into
   every enrolled authenticator's QR code. Changing it would not rename existing
-  entries — it would make new enrolments inconsistent with old ones, for no
+  entries. It would only make new enrolments inconsistent with old ones, for no
   benefit.
 - **`app/global-error.tsx`**, which renders when the root layout itself failed.
   Everything that could resolve the name is what has already failed.
@@ -52,10 +52,10 @@ rather than a `/api/settings/public` fetch on purpose: the name is then in the
 first HTML response, so there is never a frame showing the wrong brand.
 
 Saving the branding card reloads the page, because the name is baked into
-server-rendered HTML and the document title — a client-side state update would
+server-rendered HTML and the document title. A client-side state update would
 only refresh the form.
 
-## Registration — invite-only means the endpoint refuses
+## Registration: invite-only means the endpoint refuses
 
 `registration` holds `enabled` and `disabledMessage`.
 
@@ -78,7 +78,7 @@ relies on the same exemption, so there is no second code path to keep in sync.
 `GET /api/settings/public` reports `registration.enabled` with the exemption
 already applied, which is what the sign-in page renders from.
 
-## SEO — indexing is off by default
+## SEO: indexing is off by default
 
 `seo` holds `allowIndexing`, `siteUrl`, `description`, `keywords`, and
 `ogImageUrl`.
@@ -86,8 +86,8 @@ already applied, which is what the sign-in page renders from.
 `allowIndexing` defaults to **false**, which is the opposite of most SEO
 settings. A game-server control panel is an authenticated surface with no public
 content worth ranking, and its indexed URLs advertise that a given host runs
-one. An operator who wants the sign-in page listed — a public hosting brand,
-say — opts in.
+one. An operator who wants the sign-in page listed, say a public hosting brand,
+opts in.
 
 The toggle drives two things that must never disagree:
 
@@ -99,7 +99,7 @@ The toggle drives two things that must never disagree:
 
 Both routes are generated rather than static files, because the toggle and the
 canonical URL live in the database. The authenticated paths are disallowed
-explicitly even though they already require a session — a crawler would only
+explicitly even though they already require a session. A crawler would only
 ever see a redirect, but stating it keeps them out of crawl budget and out of the
 "crawled but not indexed" reports operators worry about.
 
@@ -114,36 +114,36 @@ never empty.
 An empty sitemap rather than a missing one is deliberate: it is a clearer answer
 to a crawler that requests it than a 404, and it agrees with `Disallow: /`.
 
-## Analytics — Plausible or Google Analytics 4
+## Analytics: Plausible or Google Analytics 4
 
 `analytics` holds `enabled`, `provider`, and the per-provider fields.
 `components/analytics.tsx` emits the snippet from the root layout.
 
 Two providers, both pure script tags:
 
-- **Plausible** — `plausibleDomain` becomes the script's `data-domain`.
+- **Plausible**: `plausibleDomain` becomes the script's `data-domain`.
   `plausibleScriptUrl` points at a self-hosted instance; blank uses
   `plausible.io`. Cookieless.
-- **Google Analytics 4** — `googleMeasurementId`, validated against
+- **Google Analytics 4**: `googleMeasurementId`, validated against
   `/^G-[A-Z0-9]{4,}$/`. That check exists to catch the common paste of a `GTM-`
   container id or a legacy `UA-` id, either of which would load a snippet that
   silently records nothing. The validation also means the id cannot carry a
   quote into the inline `gtag` snippet.
 
 **There is nothing here to encrypt.** Unlike captcha, mail, and AI, a
-measurement id and a site domain are public by construction — they are visible
+measurement id and a site domain are public by construction. They are visible
 in the page source of every site that uses them. So the admin view carries the
 real values rather than a "is one stored?" boolean, and there is no write-only
 field.
 
 When `enabled` is false the component renders `null`: a private panel makes zero
 third-party requests, rather than loading a script that reports nothing. The
-snippet uses the default `afterInteractive` strategy — analytics are never
+snippet uses the default `afterInteractive` strategy. Analytics are never
 required for the page to work, and blocking first paint on a third-party host
 for a pageview beacon is the wrong trade in a control panel.
 
 `isAnalyticsUsable()` gates on the provider's identifier being present, so a
-provider chosen but left unconfigured is not treated as "analytics is on" — that
+provider chosen but left unconfigured is not treated as "analytics is on". That
 would inject a script tag that 404s on every page load.
 
 ### Consent is the operator's problem, and the panel says so
@@ -151,7 +151,7 @@ would inject a script tag that 404s on every page load.
 The panel ships **no consent banner**. Plausible sets no cookies and collects no
 personal data, so in most jurisdictions it needs none. Google Analytics does set
 cookies and does share data with Google, and in many jurisdictions that requires
-consent *before* the script loads — which this implementation does not gate on.
+consent *before* the script loads, which this implementation does not gate on.
 The GA field's help text says so and links to `/admin/legal`, and the privacy
 policy draft has a section for it. An operator enabling GA in a consent
 jurisdiction needs to solve that themselves.
@@ -159,18 +159,18 @@ jurisdiction needs to solve that themselves.
 ## Error pages
 
 Not a setting, but the same surface. All four are built on the existing `Empty`
-primitive via `components/error-page.tsx` — an error page is an empty state with
+primitive via `components/error-page.tsx`. An error page is an empty state with
 a status code.
 
-- `app/not-found.tsx` — unmatched URLs and `notFound()` above the panel.
-- `app/error.tsx` — the root 500.
-- `app/(panel)/not-found.tsx`, `app/(panel)/error.tsx` — the same two states
+- `app/not-found.tsx`: unmatched URLs and `notFound()` above the panel.
+- `app/error.tsx`: the root 500.
+- `app/(panel)/not-found.tsx`, `app/(panel)/error.tsx`: the same two states
   *inside* the panel shell, so the user keeps their session and navigation
   instead of being dropped onto a bare full-screen error. The in-panel 404
   wording does not distinguish "does not exist" from "not yours": for a server
   the caller has no access to, those must be indistinguishable or the 404
   becomes an existence oracle.
-- `app/global-error.tsx` — the root layout itself failed. Supplies its own
+- `app/global-error.tsx`: the root layout itself failed. Supplies its own
   `<html>`, `<body>`, and stylesheet, and cannot export `metadata` (error
   boundaries are Client Components), so it uses React's `<title>`.
 
@@ -179,16 +179,16 @@ this, and retry is the right one here: the usual cause is a failed data read, an
 retry re-fetches before re-rendering where `reset` would re-render the same
 stale failure.
 
-403 is **not** a route. The panel denies access in place — `SectionDenied` in the
-server layout for a section a subuser lacks, and a JSON 403 from the API — which
+403 is **not** a route. The panel denies access in place: `SectionDenied` in the
+server layout for a section a subuser lacks, and a JSON 403 from the API. That
 keeps the user's context. Next's `forbidden.js`/`unauthorized.js` conventions
 would need the experimental `authInterrupts` flag, which is not worth enabling
 for a case already handled.
 
 ## Related
 
-- `docs/theming.md` — the site theme, the fourth thing on this admin page: the
+- `docs/theming.md`: the site theme, the fourth thing on this admin page. The
   operator's own palette, offered next to light and dark.
-- `docs/legal-pages.md` — the terms and privacy documents these settings link to.
-- `docs/first-time-setup.md` — the wizard that writes the first settings.
-- `docs/api-keys.md` — the other consumer of `GET /api/settings/public`.
+- `docs/legal-pages.md`: the terms and privacy documents these settings link to.
+- `docs/first-time-setup.md`: the wizard that writes the first settings.
+- `docs/api-keys.md`: the other consumer of `GET /api/settings/public`.

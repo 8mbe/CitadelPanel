@@ -13,7 +13,7 @@ export type PanelTheme = (typeof PANEL_THEMES)[number];
  *
  * The switcher used to offer light/dark/system, so anyone who chose "system" has
  * that string in `localStorage.theme`. There is no system option any more, and
- * next-themes would happily write `class="system"` onto `<html>` — a class no
+ * next-themes would happily write `class="system"` onto `<html>`, a class no
  * stylesheet defines, which renders the light palette while the switcher claims
  * otherwise. A new key retires those values instead of migrating them.
  */
@@ -24,7 +24,7 @@ const STORAGE_KEY = "panel-theme";
  *
  * The base of the site theme is baked into the class it applies (`site-light` /
  * `site-dark`) via next-themes' `value` map, which the provider also hands to
- * its blocking inline script — so the correct palette, including the operator's
+ * its blocking inline script, so the correct palette, including the operator's
  * one, is on `<html>` before first paint rather than after hydration.
  *
  * `enableSystem` is off: the panel offers exactly three themes, and the site

@@ -4,7 +4,7 @@
  * The agent validates the panel's bodies because its token is root-equivalent for
  * this host: these fields decide which S3 endpoint the node connects to, which
  * host directory gets mounted, and which identifiers reach SQL. Three cases carry
- * real weight — a scheme in the endpoint (which would downgrade the bucket
+ * real weight. A scheme in the endpoint (which would downgrade the bucket
  * credentials to plaintext HTTP), a mismatched scope (which would mount the wrong
  * tree into the wrong repository), and an absent `keepMax` (which must not be read
  * as "keep none").
@@ -50,8 +50,8 @@ describe("parseRepoTarget", () => {
 
   test("the scope comes from the route, not the body", () => {
     // A body cannot talk the server-backup route into writing into a node's
-    // database repository — the scope decides both the repository path and which
-    // host directory is mounted, so it is never taken from the caller.
+    // database repository. The scope decides both the repository path and
+    // which host directory is mounted, so it is never taken from the caller.
     const body = { ...validRepo(), scope: "node" } as Record<string, unknown>;
     expect(parseRepoTarget(body, "server", SERVER).scope).toBe("server");
   });
@@ -143,7 +143,7 @@ describe("parseRepoTarget", () => {
 
 describe("parseKeepMax", () => {
   test("absent means unlimited, never keep-none", () => {
-    // The alternative reading of a missing field — "keep zero snapshots" — would
+    // The alternative reading of a missing field, "keep zero snapshots", would
     // wipe a repository on a malformed request.
     expect(parseKeepMax({})).toBe(0);
   });

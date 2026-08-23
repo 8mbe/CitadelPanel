@@ -266,9 +266,9 @@ export async function updateBlueprint(
 /**
  * Delete a custom blueprint.
  *
- * Refused for built-ins, and for any blueprint still referenced by a server —
- * checked explicitly so the caller gets a readable count instead of a raw
- * foreign-key violation.
+ * Refused for built-ins, and for any blueprint still referenced by a server.
+ * That reference is checked explicitly so the caller gets a readable count
+ * instead of a raw foreign-key violation.
  */
 export async function deleteBlueprint(id: string): Promise<void> {
   const current = await loadDetail(id);

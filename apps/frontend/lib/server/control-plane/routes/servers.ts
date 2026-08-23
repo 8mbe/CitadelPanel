@@ -15,7 +15,7 @@
  *   - reinstall       -> owner or admin only (never delegable), and the caller
  *                        must name the server in the body
  *
- * Read endpoints gate on the same permission as their mutations — a subuser
+ * Read endpoints gate on the same permission as their mutations. A subuser
  * granted only `console` sees the console (and the activity feed) and nothing
  * else. The detail view returns the caller's access (`viewer`) so the UI can
  * hide sections the caller cannot use; the API remains the enforcement point.
@@ -38,13 +38,14 @@ import {
   notFound,
   optionalString,
   parseJsonBody,
-  requireNumber,
   requireUuidParam,
 } from "../lib/http";
 import {
   accessAllowsOwnerOnly,
+  accessFromRow,
   isAdmin,
   resolveServerAccess,
+  type ServerAccessRow,
 } from "../auth/rbac";
 import { listBlueprints, getBlueprintByKey } from "../blueprints/registry";
 import { recordAuditFromRequest } from "../services/auditLog";
@@ -77,10 +78,15 @@ import {
 } from "../services/serverLinks";
 import { listAuditLogs } from "../services/auditLog";
 // (killServer kept at the end of the lifecycle-action group.)
-import { getServerLogs, getServerStats } from "../nodes/nodeServerApi";
+import {
+  getServerLogs,
+  getServerStats,
+  sampleNodeServers,
+  type ServerStatsSample,
+} from "../nodes/nodeServerApi";
 import { sql } from "../db/client";
 
-/** GET /api/blueprints — the blueprints a user can choose from. */
+/** GET /api/blueprints. The blueprints a user can choose from. */
 export async function handleListBlueprints(request: Request): Promise<Response> {
   await requireAuth(request);
 
@@ -99,11 +105,11 @@ export async function handleListBlueprints(request: Request): Promise<Response> 
 }
 
 /**
- * GET /api/servers — servers the caller owns or is a subuser on.
+ * GET /api/servers. Servers the caller owns or is a subuser on.
  *
  * The dashboard is a personal view, so admins see their own servers here too;
  * the fleet-wide listing lives on the admin endpoints (GET /api/admin/servers).
- * Admins still reach any individual server via the admin panel —
+ * Admins still reach any individual server via the admin panel, where
  * `resolveServerAccess` grants them access regardless of ownership.
  */
 export async function handleListServers(request: Request): Promise<Response> {
@@ -114,7 +120,7 @@ export async function handleListServers(request: Request): Promise<Response> {
   return json({ servers });
 }
 
-/** GET /api/servers/:id — detail view, with a live status reconcile. */
+/** GET /api/servers/:id. Detail view, with a live status reconcile. */
 export async function handleGetServer(
   request: Request,
   serverId: string,
@@ -129,7 +135,7 @@ export async function handleGetServer(
   const server = await getServerReconciled(id);
 
   // Tell the caller what they can do here so the UI can hide sections they
-  // hold no permission for. Owners/admins have an empty permission set — the
+  // hold no permission for. Owners/admins have an empty permission set, and the
   // `kind` says they implicitly hold all of them.
   return json({
     server,
@@ -174,7 +180,7 @@ export async function handleRestartServer(
 }
 
 /**
- * POST /api/servers/:id/kill — force-stop with SIGKILL.
+ * POST /api/servers/:id/kill. Force-stop with SIGKILL.
  *
  * The escape hatch for a container stuck in a graceful stop/restart. Same
  * `start_stop` permission as Stop/Restart: anyone who can stop a server can
@@ -198,7 +204,7 @@ export async function handleKillServer(
  * World data is retained unless `?deleteData=true` is passed explicitly.
  *
  * `?force=true` deletes the panel's record even when the node cannot confirm the
- * container is gone, and is **admin-only** — an owner deleting their own server
+ * container is gone, and is **admin-only**. An owner deleting their own server
  * does not get to leave a running container and its files on an operator's node.
  * The 502 that a normal delete fails with names this as the way out.
  */
@@ -225,7 +231,7 @@ export async function handleDeleteServer(
 }
 
 /**
- * POST /api/servers/:id/reinstall — delete every file and build the server
+ * POST /api/servers/:id/reinstall. Deletes every file and builds the server
  * again from its blueprint.
  *
  * Owner-or-admin only, like delete: this destroys more of the owner's work than
@@ -233,7 +239,7 @@ export async function handleDeleteServer(
  * should be able to do on their behalf.
  *
  * The body must carry `confirmName`, matching the server's name exactly. That is
- * not belt-and-braces on top of the UI's confirmation — it is the rule the UI's
+ * not belt-and-braces on top of the UI's confirmation. It is the rule the UI's
  * type-the-name box implements. Every other destructive endpoint here can be hit
  * with an empty body, so a mis-routed retry, a stale tab replaying a request, or
  * a script iterating the wrong list can fire one; this one cannot be reached
@@ -267,13 +273,13 @@ export async function handleReinstallServer(
   const server = await reinstallServer(id, user.id);
 
   // The rebuild outlives this response (see serverManager.reinstallServer), so
-  // the runtime is told to keep it alive — exactly as the create path does.
+  // the runtime is told to keep it alive, exactly as the create path does.
   after(() => waitForProvisioning(id));
 
   return json({ server });
 }
 
-/** GET /api/servers/:id/env — masked environment variables the owner may edit. */
+/** GET /api/servers/:id/env. Masked environment variables the owner may edit. */
 export async function handleGetServerEnv(
   request: Request,
   serverId: string,
@@ -297,8 +303,8 @@ interface ServerLocation {
  * The logs and stats endpoints are polled for as long as a server page is open,
  * and both spent a database round trip on the guard and then another on a
  * two-column read. Running them together halves that. The guard is still what
- * gates the response: if it throws, this rejects and the caller gets its error —
- * the row is read but never surfaced.
+ * gates the response: if it throws, this rejects and the caller gets its error.
+ * The row is read but never surfaced.
  */
 async function requireConsoleAccessAndLocation(
   request: Request,
@@ -313,7 +319,7 @@ async function requireConsoleAccessAndLocation(
   return rows[0];
 }
 
-/** GET /api/servers/:id/logs — recent console output. */
+/** GET /api/servers/:id/logs. Recent console output. */
 export async function handleGetServerLogs(
   request: Request,
   serverId: string,
@@ -333,13 +339,13 @@ export async function handleGetServerLogs(
 }
 
 /**
- * GET /api/servers/:id/install-log — the provisioning output.
+ * GET /api/servers/:id/install-log. The provisioning output.
  *
  * Admin-only, and not because the log is secret in the usual sense: it is the
  * install script's stdout, and a blueprint's script is written by whoever
  * registered the blueprint. It can name internal image registries, echo an env
- * value, or print a node-side path — operator detail, not owner detail. The
- * owner does not need it either. What they need to know is "this is still
+ * value, or print a node-side path. That is operator detail, not owner detail.
+ * The owner does not need it either. What they need to know is "this is still
  * installing", which the status already says; *why* an install failed is an
  * operator's problem to read and act on.
  *
@@ -361,7 +367,7 @@ export async function handleGetServerInstallLog(
   return json({ installLog: view });
 }
 
-/** GET /api/servers/:id/stats — a live resource sample. */
+/** GET /api/servers/:id/stats. A live resource sample. */
 export async function handleGetServerStats(
   request: Request,
   serverId: string,
@@ -378,8 +384,90 @@ export async function handleGetServerStats(
 }
 
 /**
+ * How many servers one batch stats request may name. The dashboard polls for
+ * every tile it is showing; anything larger is not a dashboard, it is a scan.
+ */
+const STATS_BATCH_LIMIT = 50;
+
+/**
+ * POST /api/servers/stats-batch. A live sample per named server.
+ *
+ * The dashboard's tiles poll every few seconds while any server is running,
+ * and the per-server endpoint costs one authenticated round trip each, so
+ * an owner with ten servers paid ten requests per tick. This resolves the
+ * caller's access to every named server in ONE statement (the subuser grant
+ * LEFT JOINed on, same decision `resolveServerAccess` makes), groups the
+ * allowed ones by node so each node's agent is asked exactly once, and returns
+ * a map. Servers the caller cannot reach are simply absent, the same
+ * hide-existence rule the individual endpoint applies with its 404.
+ *
+ * Malformed ids are dropped rather than rejected: the client sends the ids it
+ * already has, and one stale id should not fail the whole refresh.
+ */
+export async function handleListServerStatsBatch(
+  request: Request,
+): Promise<Response> {
+  const user = await requireAuth(request);
+
+  const body = await parseJsonBody(request);
+  if (!Array.isArray(body.ids)) {
+    throw badRequest('"ids" must be an array of server ids.');
+  }
+  const ids = [
+    ...new Set(
+      body.ids.filter((id: unknown): id is string => typeof id === "string" && isUuid(id)),
+    ),
+  ];
+  if (ids.length === 0) return json({ stats: {} });
+  if (ids.length > STATS_BATCH_LIMIT) {
+    throw badRequest(`No more than ${STATS_BATCH_LIMIT} servers per request.`);
+  }
+
+  const rows = (await sql`
+    SELECT s.id, s.owner_id, s.node_id, s.container_id, su.permissions
+    FROM servers s
+    LEFT JOIN server_subusers su
+      ON su.server_id = s.id AND su.user_id = ${user.id}
+    WHERE s.id = ANY(${sql.array(ids, 2950)})
+  `) as (ServerAccessRow & { node_id: string; container_id: string | null })[];
+
+  // Group the servers this caller may see by node, so sampling stays at one
+  // agent request per node regardless of how many of their servers live there.
+  const serverIdsByNode = new Map<string, string[]>();
+  for (const row of rows) {
+    if (!accessFromRow(user, row)) continue;
+    const list = serverIdsByNode.get(row.node_id) ?? [];
+    list.push(row.id);
+    serverIdsByNode.set(row.node_id, list);
+  }
+
+  const samplesByServer = new Map<string, ServerStatsSample>();
+  await Promise.all(
+    [...serverIdsByNode].map(async ([nodeId, nodeServerIds]) => {
+      try {
+        for (const sample of await sampleNodeServers(nodeId, nodeServerIds, 10_000)) {
+          samplesByServer.set(sample.serverId, sample);
+        }
+      } catch {
+        // Node unreachable, so its servers report no sample below, exactly as
+        // the per-server endpoint would fail one fetch for them.
+      }
+    }),
+  );
+
+  const stats: Record<string, ServerStatsSample | null> = {};
+  for (const row of rows) {
+    if (!accessFromRow(user, row)) continue;
+    stats[row.id] = samplesByServer.get(row.id) ?? null;
+  }
+
+  return json({ stats });
+}
+
+
+/**
  * Resolve the blueprint backing a server. Throws if the server or its blueprint
- * is missing — both are bugs in practice, since deletion cascades.
+ * is missing. Both are bugs in practice, since deletion cascades.
  */
 async function getServerBlueprint(id: string) {
   const rows = (await sql`
@@ -405,7 +493,7 @@ async function getServerBlueprint(id: string) {
  *
  * Keys with no stored row yet (an editable field without a default that the
  * owner never filled, e.g. JVM_OPTS) are included with their schema default or
- * an empty string — otherwise the owner would have no input to type into and
+ * an empty string. Otherwise the owner would have no input to type into and
  * no way to set the variable at all.
  */
 async function loadOwnerEnv(
@@ -445,7 +533,7 @@ async function loadOwnerEnv(
 }
 
 /**
- * PATCH /api/servers/:id/env — update environment variables.
+ * PATCH /api/servers/:id/env. Updates environment variables.
  *
  * Only keys the blueprint marks `editable` are accepted; everything else is
  * rejected loudly so the owner knows the change did not take effect. Validation
@@ -470,8 +558,8 @@ export async function handleUpdateServerEnv(
 
   // Validate every key *before* writing any of them. Interleaving the two meant
   // a request rejected on its third variable had already committed the first
-  // two — the owner got an error and a half-applied form. Nothing is written
-  // until the whole submission is known to be good.
+  // two, leaving the owner with an error and a half-applied form. Nothing is
+  // written until the whole submission is known to be good.
   const writes: EnvWrite[] = [];
   for (const [key, value] of Object.entries(updates as Record<string, unknown>)) {
     const field = blueprint.envSchema[key];
@@ -491,7 +579,7 @@ export async function handleUpdateServerEnv(
     writes.push({ key, value, isSecret: field.secret === true });
   }
 
-  // Plaintext in, storage decided by `writeEnvValues` — including encrypting the
+  // Plaintext in, storage decided by `writeEnvValues`, including encrypting the
   // secret ones, which this handler used to skip. See its comment for why that
   // mattered.
   await writeEnvValues(id, writes);
@@ -513,7 +601,7 @@ export async function handleUpdateServerEnv(
 }
 
 /**
- * GET /api/servers/:id/activity — per-server audit feed.
+ * GET /api/servers/:id/activity. Per-server audit feed.
  *
  * Visible to anyone with access to the server (owner, subuser, admin). The
  * underlying `listAuditLogs` already filters by `targetType: "server"`,
@@ -572,7 +660,7 @@ export async function handleListServerActivity(
 
 // --- Additional port assignment -----------------------------------------------
 
-/** GET /api/servers/:id/ports — the server's published ports. */
+/** GET /api/servers/:id/ports. The server's published ports. */
 export async function handleListServerPorts(
   request: Request,
   serverId: string,
@@ -587,14 +675,14 @@ export async function handleListServerPorts(
 }
 
 /**
- * POST /api/servers/:id/ports — publish an additional port.
+ * POST /api/servers/:id/ports. Publishes an additional port.
  *
- * Body: { port, protocol, label? }
- *
- * The port is an identity mapping (host N → container N) and must be available:
- * in the node's port pool, unallocated, and free on the host. The container is
- * recreated so the new binding takes effect. Requires the "settings"
- * permission, matching the env-update action.
+ * Body: { label? }. The caller does **not** choose the number. The panel draws
+ * a random free port from the node's pool and publishes it as an identity
+ * mapping (host N → container N) on TCP and UDP both; the allocated number is
+ * in the returned server summary. The container is recreated so the new binding
+ * takes effect. Requires the "settings" permission, matching the env-update
+ * action.
  */
 export async function handleAddServerPort(
   request: Request,
@@ -604,16 +692,6 @@ export async function handleAddServerPort(
   const { user } = await requireServerPermission(request, id, "settings");
 
   const body = await parseJsonBody(request);
-  const port = requireNumber(body, "port", {
-    min: 1,
-    max: 65535,
-  });
-
-  const protocol = body.protocol;
-  if (protocol !== "tcp" && protocol !== "udp") {
-    throw badRequest('"protocol" must be "tcp" or "udp"');
-  }
-
   const label = optionalString(body, "label", { max: 64 });
 
   // A suspended server cannot have its container recreated (it must stay
@@ -628,8 +706,6 @@ export async function handleAddServerPort(
   const updated = await addServerPort({
     serverId: id,
     actorId: user.id,
-    port,
-    protocol,
     label,
   });
 
@@ -637,11 +713,12 @@ export async function handleAddServerPort(
 }
 
 /**
- * DELETE /api/servers/:id/ports — remove an additional port.
+ * DELETE /api/servers/:id/ports. Removes an additional port.
  *
- * Query: ?port=&protocol= identifies the port to remove. Only owner-added
- * (additional) ports are removable; blueprint ports are rejected. The container
- * is recreated to release the binding. Requires "settings".
+ * Query: ?port= identifies the port to remove. One number, both protocols.
+ * Only owner-added (additional) ports are removable; blueprint ports are
+ * rejected. The container is recreated to release the binding. Requires
+ * "settings".
  */
 export async function handleRemoveServerPort(
   request: Request,
@@ -652,7 +729,6 @@ export async function handleRemoveServerPort(
 
   const url = new URL(request.url);
   const portRaw = url.searchParams.get("port");
-  const protocol = url.searchParams.get("protocol");
 
   if (portRaw === null) {
     throw badRequest('"port" query parameter is required');
@@ -660,9 +736,6 @@ export async function handleRemoveServerPort(
   const port = Number(portRaw);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw badRequest('"port" must be an integer between 1 and 65535');
-  }
-  if (protocol !== "tcp" && protocol !== "udp") {
-    throw badRequest('"protocol" must be "tcp" or "udp"');
   }
 
   const server = await getServer(id);
@@ -672,7 +745,7 @@ export async function handleRemoveServerPort(
     );
   }
 
-  const updated = await removeServerPort(id, port, protocol, user.id);
+  const updated = await removeServerPort(id, port, user.id);
 
   return json({ server: updated });
 }
@@ -680,7 +753,7 @@ export async function handleRemoveServerPort(
 // --- Server links ---------------------------------------------------------------
 
 /**
- * GET /api/servers/:id/links — this server's connections to other servers.
+ * GET /api/servers/:id/links. This server's connections to other servers.
  *
  * Same "settings" gate as the ports list: the addresses are management
  * information (they reveal host ports), not something a console-only subuser
@@ -697,7 +770,7 @@ export async function handleListServerLinks(
 }
 
 /**
- * POST /api/servers/:id/links — connect this server to another of the actor's
+ * POST /api/servers/:id/links. Connects this server to another of the actor's
  * servers. Body: { targetId }
  *
  * Owner-or-admin on **both** servers: the link attaches the target's container
@@ -734,7 +807,7 @@ export async function handleCreateServerLink(
 }
 
 /**
- * DELETE /api/servers/:id/links/:linkId — remove a connection.
+ * DELETE /api/servers/:id/links/:linkId. Removes a connection.
  *
  * Owner-or-admin of this server (the service allows a link to be removed from
  * either side). The agent detaches the pair network before the row is deleted,
@@ -757,7 +830,7 @@ export async function handleRemoveServerLink(
 // --- Database provisioning -----------------------------------------------------
 
 /**
- * GET /api/servers/:id/databases — the server's provisioned databases.
+ * GET /api/servers/:id/databases. The server's provisioned databases.
  *
  * Requires the "database" permission, matching every mutation on this
  * resource; the password column is always null here.
@@ -774,12 +847,12 @@ export async function handleListServerDatabases(
 }
 
 /**
- * POST /api/servers/:id/databases — provision a database for this server.
+ * POST /api/servers/:id/databases. Provisions a database for this server.
  *
  * Requires the "database" permission. The database name, user, and host are
  * generated server-side; the owner does not choose them. The password is
  * generated, stored encrypted, and returned **once** in the response so the
- * owner can copy it — it is never decryptable again.
+ * owner can copy it. It is never decryptable again.
  *
  * The panel calls the node agent, which execs SQL against the shared MariaDB
  * container and attaches the server's container to `node_db_net`.
@@ -807,7 +880,7 @@ export async function handleAddServerDatabase(
 }
 
 /**
- * DELETE /api/servers/:id/databases/:databaseId — drop a database.
+ * DELETE /api/servers/:id/databases/:databaseId. Drops a database.
  *
  * Requires the "database" permission. Drops the DB and user on the node MariaDB
  * and removes the panel record. Best-effort on the node: an unreachable node
@@ -827,7 +900,7 @@ export async function handleRemoveServerDatabase(
 }
 
 /**
- * POST /api/servers/:id/databases/:databaseId/reset-password — generate a new
+ * POST /api/servers/:id/databases/:databaseId/reset-password. Generates a new
  * password for the database user.
  *
  * Requires the "database" permission. The new plaintext password is returned

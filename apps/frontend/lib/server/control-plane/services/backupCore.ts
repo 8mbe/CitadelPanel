@@ -10,7 +10,7 @@
  * That split is what makes an agent restart survivable: the row exists before the
  * agent is ever called, so a job that vanishes becomes a *failed run with a
  * reason* rather than one nobody can account for. It is also why the reconciler in
- * `nodes/backupScheduler.ts` — not the scope modules — advances a running backup:
+ * `nodes/backupScheduler.ts`, not the scope modules, advances a running backup:
  * the panel polls, because a node cannot call in.
  *
  * This module holds everything that does not care which scope it is serving:
@@ -49,7 +49,7 @@ export interface BackupRunView {
   percent: number;
   snapshotId: string | null;
   bytesProcessed: number | null;
-  /** Bytes actually uploaded after dedup and compression — the S3 cost. */
+  /** Bytes actually uploaded after dedup and compression, the S3 cost. */
   bytesAdded: number | null;
   /** Databases inside a node-scope snapshot. Always empty for server runs. */
   databases: string[];
@@ -113,9 +113,9 @@ export function toRunView(row: RunRow): BackupRunView {
 /**
  * The repository password for a subject, minted on first use.
  *
- * 48 random bytes, base64 — well past the point where the password is the weak
- * link, and generated per subject so one leaked password reads one server's files
- * or one node's databases, never the fleet.
+ * 48 random bytes, base64. Well past the point where the password is the weak
+ * link, and generated per subject so one leaked password reads one server's
+ * files or one node's databases, never the fleet.
  *
  * `ON CONFLICT DO NOTHING` plus a re-read makes this safe under a race: two
  * concurrent first backups must end up with the *same* password, because the one
@@ -210,7 +210,7 @@ export async function recordRepositorySize(
  * Build the repository block for a subject.
  *
  * Throws rather than returning null when backups are not configured, because every
- * caller's next move would be the same error — and the message names the page the
+ * caller's next move would be the same error, and the message names the page the
  * operator has to visit.
  *
  * `allowDisabled` exists for the admin connection test: the destination may be
@@ -539,7 +539,7 @@ export async function dropForgottenRuns(
  * Trim old *failed* runs for a subject.
  *
  * Successful runs are bounded by the snapshot quota, but failures produce no
- * snapshot and would otherwise accumulate forever — a node whose S3 credentials
+ * snapshot and would otherwise accumulate forever. A node whose S3 credentials
  * are wrong writes one failed row per server per schedule tick. The most recent
  * failures are the diagnostic ones, so the oldest go.
  */

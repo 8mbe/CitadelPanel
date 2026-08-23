@@ -3,16 +3,16 @@
  *
  * Two audiences hit blueprints:
  *
- *   - GET /api/blueprints — any authenticated user, the list they choose from
+ *   - GET /api/blueprints: any authenticated user, the list they choose from
  *     when (hypothetically) creating a server. Internal hints (install
  *     scripts, resource profile) are stripped server-side.
- *   - /api/admin/blueprints/* — admin-only CRUD on the full blueprint row.
+ *   - /api/admin/blueprints/*: admin-only CRUD on the full blueprint row.
  *
  * The admin CRUD happy-path writes (create/update/delete) are not exercised
  * here: they would mutate the seeded blueprints (minecraft-java/bedrock) and
  * their effects cascade onto servers. Instead the suite asserts the
  * permission gates and the strict input validation that guards the install
- * script + ports + env schema — a malformed blueprint never reaches
+ * script + ports + env schema. A malformed blueprint never reaches
  * {@link blueprintManager} because the parser rejects it here.
  */
 
@@ -38,7 +38,7 @@ describe("GET /api/blueprints (user surface)", () => {
   });
 
   e2e("does not leak install scripts or the resource profile", async () => {
-    // The route deliberately strips internal hints — verify they are absent.
+    // The route deliberately strips internal hints, so verify they are absent.
     const res = await api("/api/blueprints", { key: config.adminKey });
     const bps = (res.body as Array<{ install?: unknown; expectedResourceProfile?: unknown }>).blueprints ?? [];
     for (const bp of bps) {
@@ -95,7 +95,7 @@ describe("blueprint input validation (POST /api/admin/blueprints)", () => {
     const res = await api("/api/admin/blueprints", {
       method: "POST",
       key: config.adminKey,
-      body: { key: "UPPER CASE", name: "bad", dockerImage: "img", ports: [{ container: 25565, protocol: "tcp" }] },
+      body: { key: "UPPER CASE", name: "bad", dockerImage: "img", ports: [{ container: 25565 }] },
     });
     expect(res.status).toBe(400);
   });
@@ -109,11 +109,18 @@ describe("blueprint input validation (POST /api/admin/blueprints)", () => {
     expect(res.status).toBe(400);
   });
 
-  e2e("with an admin key + bad port protocol is 400", async () => {
+  e2e("with an admin key + duplicate port number is 400", async () => {
+    // Ports have no protocol any more, so the number alone must be unique:
+    // 25565 twice used to be legal as tcp + udp.
     const res = await api("/api/admin/blueprints", {
       method: "POST",
       key: config.adminKey,
-      body: { key: "valid-key", name: "bad", dockerImage: "img", ports: [{ container: 25565, protocol: "sctp" }] },
+      body: {
+        key: "valid-key",
+        name: "bad",
+        dockerImage: "img",
+        ports: [{ container: 25565 }, { container: 25565 }],
+      },
     });
     expect(res.status).toBe(400);
   });
@@ -126,7 +133,7 @@ describe("blueprint input validation (POST /api/admin/blueprints)", () => {
         key: "valid-key",
         name: "bad",
         dockerImage: "img",
-        ports: [{ container: 25565, protocol: "tcp" }],
+        ports: [{ container: 25565 }],
         expectedResourceProfile: "not-a-profile",
       },
     });
@@ -141,7 +148,7 @@ describe("blueprint input validation (POST /api/admin/blueprints)", () => {
         key: "valid-key",
         name: "bad",
         dockerImage: "img",
-        ports: [{ container: 25565, protocol: "tcp" }],
+        ports: [{ container: 25565 }],
         dataPath: "relative/path",
       },
     });

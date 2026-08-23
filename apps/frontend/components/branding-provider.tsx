@@ -7,8 +7,8 @@ import type { BrandingSettings } from "@/lib/api";
 /**
  * The configured site name, shared with every client component.
  *
- * The value is read from `panel_settings` by the root layout — a server
- * component — and handed down through this context. Client components that
+ * The value is read from `panel_settings` by the root layout, a server
+ * component, and handed down through this context. Client components that
  * render the name (the panel header, the sign-in page, the error pages) read it
  * from here rather than fetching `/api/settings/public` themselves, so the name
  * is in the first HTML response and there is never a frame of the wrong brand.

@@ -9,7 +9,7 @@
  * `isBlockedHost` is the fast literal check (loopback, link-local, RFC-1918) and
  * stays synchronous for the admin paths. The pull path additionally uses
  * `isBlockedUrlResolved`, which resolves the hostname and checks every address
- * it maps to — so a name that points at an internal IP is rejected too. The
+ * it maps to, so a name that points at an internal IP is rejected too. The
  * agent that actually performs the pull re-checks the host and every redirect
  * hop as well (see `apps/backend/src/ssrf.ts`); this is the panel-side layer.
  *
@@ -74,7 +74,7 @@ function isPrivateAddress(ip: string): boolean {
 
 /**
  * Like {@link isBlockedHost} but also resolves the hostname and blocks it when
- * any resolved address is internal — closing the "public-looking name that
+ * any resolved address is internal. That closes the "public-looking name that
  * resolves to 127.0.0.1 / 169.254.169.254 / a LAN host" gap for the
  * owner-reachable pull path. A name that cannot be resolved is blocked (there is
  * nothing safe to fetch from it).

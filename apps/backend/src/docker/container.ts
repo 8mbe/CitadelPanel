@@ -109,7 +109,7 @@ export async function createContainer(
  *
  * Used for one-time provisioning (a blueprint's install step): the container is
  * created, started, waited on, its logs captured, then removed regardless of
- * outcome — nothing is left behind on the node. The caller decides whether a
+ * outcome. Nothing is left behind on the node. The caller decides whether a
  * non-zero exit code is a failure.
  *
  * `wait()` blocks until the process exits, so the panel-side HTTP timeout must
@@ -191,9 +191,9 @@ export async function restartContainer(
  * Force-stop a container with SIGKILL, bypassing the graceful shutdown.
  *
  * Used as the escape hatch when a container is wedged and the graceful `stop`
- * (SIGTERM + grace period) is not completing. SIGKILL is immediate, so there is
- * no timeout — the game gets no chance to save. Idempotent: an already-stopped
- * or already-gone container is treated as success.
+ * (SIGTERM + grace period) is not completing. SIGKILL is immediate, so there
+ * is no timeout, and the game gets no chance to save. Idempotent: an
+ * already-stopped or already-gone container is treated as success.
  */
 export async function killContainer(
   client: Docker,
@@ -242,7 +242,7 @@ export async function removeNetwork(
  * Remove a network only once it has no endpoints left.
  *
  * Returns whether the network was actually removed. A 403 ("network has
- * active endpoints") is not an error — the caller asked "remove if empty",
+ * active endpoints") is not an error. The caller asked "remove if empty",
  * not "remove". Used by link teardown, where a container recreated mid-unlink
  * may legitimately still be attached; the empty network is harmless until the
  * next unlink (or link) tidies it up.
@@ -338,7 +338,7 @@ export async function getContainerLogs(
  * Demultiplex Docker's 8-byte-framed log stream into a stream of payload bytes.
  *
  * The follow-mode (`logs({follow:true})`) stream uses the same framing as a
- * one-shot read — [stream(1), 0,0,0, size(4 BE)] + payload per frame — but
+ * one-shot read, [stream(1), 0,0,0, size(4 BE)] + payload per frame, but
  * arrives incrementally: a single `data` event may hold several frames or only
  * part of one, and a frame header can be split across two reads. So, like the
  * raw-socket attach in `docker/attach.ts`, bytes are buffered and complete
@@ -348,7 +348,7 @@ export async function getContainerLogs(
  * stateful and streaming, so it is what powers the live console's SSE feed.
  *
  * When `tty` is true the container was created with `Tty: true`, so Docker
- * merges stdout/stderr into a single raw byte stream with no framing — the
+ * merges stdout/stderr into a single raw byte stream with no framing. The
  * stream is forwarded verbatim instead of demuxed.
  */
 export function demuxDockerLogStream(

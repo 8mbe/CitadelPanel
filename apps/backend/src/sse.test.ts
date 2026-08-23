@@ -3,7 +3,7 @@
  *
  * `demuxDockerLogStream` and the SSE helpers are pure transforms over buffers
  * and streams, so they can be exercised without a Docker daemon. This is where
- * the framing correctness lives — a bug here would either splice garbage into
+ * the framing correctness lives. A bug here would either splice garbage into
  * the console or drop output silently.
  */
 
@@ -152,7 +152,8 @@ describe("sseWrap", () => {
       },
     });
     // All three lines arrived in one upstream chunk, so they enqueue as one
-    // chunk containing three SSE events — valid: the blank line delimits each.
+    // chunk containing three SSE events, which is valid because the blank line
+    // delimits each.
     expect(await drain(sseWrap(body))).toEqual([
       "data: a\n\ndata: b\n\ndata: c\n\n",
     ]);

@@ -2,7 +2,7 @@
  * Unit tests for the game-version comparators. Catalogs return
  * supported-version lists in arbitrary order (Modrinth's search is
  * oldest-first), and plain string order is wrong for versions ("1.8.8" > 
- * "1.21.1", "26.2" < both) — the UI's "up to X" and compatibility badges
+ * "1.21.1", "26.2" < both). The UI's "up to X" and compatibility badges
  * depend on these comparing correctly.
  */
 

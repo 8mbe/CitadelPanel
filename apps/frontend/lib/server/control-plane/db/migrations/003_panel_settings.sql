@@ -7,7 +7,7 @@
 --
 -- WHAT BELONGS HERE: things an operator tunes while the panel is running.
 -- WHAT DOES NOT: anything the backend needs in order to boot (DATABASE_URL,
--- PANEL_ENCRYPTION_KEY, BETTER_AUTH_SECRET). Those stay in `.env` — a setting
+-- PANEL_ENCRYPTION_KEY, BETTER_AUTH_SECRET). Those stay in `.env`. A setting
 -- required to read the settings table cannot live in the settings table.
 --
 -- Secret values (captcha secret keys) are AES-256-GCM encrypted before they are

@@ -55,8 +55,8 @@ export interface NodeAllocation {
  * A server on a node, as the node detail page renders it.
  *
  * Extends the server view with admin context (owner email) and a live usage
- * sample. Live fields are `null` — not 0 — when the node is unreachable, so the
- * UI can show "—" rather than a misleading 0%.
+ * sample. Live fields are `null` rather than 0 when the node is unreachable, so
+ * the UI can show a placeholder rather than a misleading 0%.
  */
 export type NodeServerView = Omit<
   ServerView,
@@ -93,8 +93,7 @@ export interface NodePortPoolEntry {
   nodeId: string;
   /** Raw entry as the admin typed it, e.g. "25565-25570" or "25565,25578". */
   spec: string;
-  protocol: "tcp" | "udp";
-  /** Expanded individual ports the spec resolves to. */
+  /** Expanded individual ports the spec resolves to (TCP and UDP each). */
   ports: number[];
   createdAt: string;
 }
@@ -115,7 +114,6 @@ export interface NodeDetail {
  */
 export interface NodePortAllocation {
   port: number;
-  protocol: string;
   isPrimary: boolean;
   serverId: string;
   serverName: string;
@@ -123,9 +121,8 @@ export interface NodePortAllocation {
 
 /** A published port on a server, as the UI displays it. */
 export interface ServerPortView {
-  /** The published port — identity mapping: host and container side are this number. */
+  /** The published port: identity-mapped host↔container, on TCP and UDP both. */
   port: number;
-  protocol: string;
   isPrimary: boolean;
   /** True for owner-added ports (removable); false for blueprint ports. */
   isAdditional: boolean;
@@ -186,7 +183,7 @@ export interface ServerView {
   /**
    * The caller's access to this server. Only set by the detail endpoint
    * (`getServer`); list views omit it. Undefined must be read as "no access
-   * information" — see `lib/permissions.ts` for how the UI treats that.
+   * information". See `lib/permissions.ts` for how the UI treats that.
    */
   viewer?: ServerViewerAccess;
   /**
@@ -203,7 +200,7 @@ export interface ServerView {
 
 /**
  * A server's provisioning output, as the console shows it while a server is
- * being built. Admin-only — see the install-log route.
+ * being built. Admin-only. See the install-log route.
  */
 export interface ServerInstallLogView {
   /** Panel phase lines plus the install script's own output, oldest first. */
@@ -234,6 +231,8 @@ export interface InstalledPluginView {
   updatedAt: string;
   /** Reconciled against the directory listing: enabled | disabled | missing. */
   status: "enabled" | "disabled" | "missing";
+  /** The catalog's page for this project; null when the provider has no site. */
+  projectUrl: string | null;
 }
 
 export interface ServerPluginList {
@@ -263,6 +262,8 @@ export interface PluginSearchResult {
   downloads: number;
   categories: string[];
   gameVersions: string[];
+  /** The catalog's page for this project, when the provider declares a site. */
+  projectUrl?: string;
 }
 
 /** A catalog version offered for install. */
@@ -287,7 +288,7 @@ export interface PluginVersionView {
 //
 // Mirrors the server's `BlueprintPluginSupport` (control-plane module
 // `blueprints/plugins.ts`, which validates it strictly). Duplicated here
-// because client code never imports server modules — keep the two in sync.
+// because client code never imports server modules. Keep the two in sync.
 
 export interface BlueprintPluginProfileSpec {
   label?: string;
@@ -326,6 +327,8 @@ export interface BlueprintPluginProviderSpec {
   id: string;
   baseUrl: string;
   downloadHosts: string[];
+  siteUrl?: string;
+  projectPath?: string;
   facets?: { source: "projectType" | "loaders" | "gameVersion"; prefix: string }[];
   search: {
     path: string;

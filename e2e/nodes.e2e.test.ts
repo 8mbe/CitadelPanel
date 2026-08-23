@@ -4,7 +4,7 @@
  * Every node route is admin-only without exception: a node's agent token is
  * root-equivalent access to that machine. The suite exercises the admin-key
  * happy-path reads (list, detail, health, port pool) and the strict input
- * validation on create/update/probe — but never actually registers, drains,
+ * validation on create/update/probe. It never actually registers, drains,
  * or deletes a node, because those mutations would destabilize the dev panel
  * (the one seeded node hosts the one seeded server).
  *
@@ -180,7 +180,7 @@ describe("POST /api/admin/nodes (register a node)", () => {
   });
 
   e2e("with an admin key + partial DB config is 400", async () => {
-    // dbAdminHost without dbAdminUser/dbAdminPassword — the route enforces
+    // dbAdminHost without dbAdminUser/dbAdminPassword. The route enforces
     // all-or-none on the shared-node DB credentials.
     const res = await api("/api/admin/nodes", {
       method: "POST",
@@ -242,7 +242,7 @@ describe("DELETE /api/admin/nodes/:id (safety gates)", () => {
   });
 
   e2e("with an admin key on the active seeded node is 409 (drain first)", async () => {
-    // The dev panel's seeded node is active and hosts a server — both safety
+    // The dev panel's seeded node is active and hosts a server, so both safety
     // gates refuse. The route surfaces 409 (not a silent cleanup) so an admin
     // sees the count of servers they need to remove first.
     const { nodeId } = await loadFixtures();
@@ -256,7 +256,7 @@ describe("POST /api/admin/nodes/:id/ports (port-pool entry)", () => {
     const res = await api("/api/admin/nodes/not-a-uuid/ports", {
       method: "POST",
       key: config.adminKey,
-      body: { spec: "25565", protocol: "tcp" },
+      body: { spec: "25565" },
     });
     expect(res.status).toBe(400);
   });
@@ -267,14 +267,16 @@ describe("POST /api/admin/nodes/:id/ports (port-pool entry)", () => {
     expect(res.status).toBe(400);
   });
 
-  e2e("with an admin key + bad protocol is 400", async () => {
+  e2e("with an admin key + unparseable spec is 409", async () => {
+    // A pool entry is a set of numbers and nothing else. There is no protocol
+    // to get wrong, so a bad spec is the only rejectable input left.
     const { nodeId } = await loadFixtures();
     const res = await api(`/api/admin/nodes/${nodeId}/ports`, {
       method: "POST",
       key: config.adminKey,
-      body: { spec: "25565", protocol: "sctp" },
+      body: { spec: "25570-25565" },
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
   });
 });
 

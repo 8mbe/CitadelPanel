@@ -2,7 +2,7 @@
  * Current-user routes.
  *
  * Account creation, login and logout are handled entirely by Better Auth's own
- * mounted handler — these endpoints only expose panel-specific profile data.
+ * mounted handler. These endpoints only expose panel-specific profile data.
  */
 
 import { requireAuth } from "../auth/middleware";
@@ -18,7 +18,7 @@ import { sql } from "../db/client";
 import { recordAuditFromRequest } from "../services/auditLog";
 import { loadMeProfile } from "../services/me";
 
-/** GET /api/me — the caller's identity and role. */
+/** GET /api/me. Returns the caller's identity and role. */
 export async function handleGetMe(request: Request): Promise<Response> {
   const user = await requireAuth(request);
 
@@ -44,13 +44,13 @@ export async function handleGetMe(request: Request): Promise<Response> {
 }
 
 /**
- * POST /api/account/delete — delete the caller's own account.
+ * POST /api/account/delete. Deletes the caller's own account.
  *
  * Two guards, both deliberate:
  *
  *  - The caller must own **zero** servers. `servers.owner_id` cascades on user
  *    deletion (`001_initial_schema.sql`), so allowing a delete with owned
- *    servers would silently destroy those servers — and their data. The gate is
+ *    servers would silently destroy those servers and their data. The gate is
  *    checked here, server-side, so a tampered client cannot bypass it. (An admin
  *    who wants a user gone reassigns or deletes their servers first.)
  *  - The caller must re-supply their password. Account deletion is irreversible,
@@ -74,7 +74,7 @@ export async function handleDeleteAccount(request: Request): Promise<Response> {
 
   if ((owned[0]?.count ?? 0) > 0) {
     throw conflict(
-      "Delete your servers before deleting your account. An account that owns servers cannot be removed — doing so would delete those servers and their data.",
+      "Delete your servers before deleting your account. An account that owns servers cannot be removed, because doing so would delete those servers and their data.",
     );
   }
 
@@ -106,7 +106,7 @@ export async function handleDeleteAccount(request: Request): Promise<Response> {
   }
 
   // The deletion succeeded only if Better Auth says so. A wrong password comes
-  // back as a 4xx with a JSON body — pass that through verbatim.
+  // back as a 4xx with a JSON body, so pass that through verbatim.
   const payload = (await result.json().catch(() => null)) as
     | { success?: boolean; message?: string }
     | null;

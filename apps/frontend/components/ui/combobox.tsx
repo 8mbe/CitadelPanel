@@ -75,7 +75,7 @@ function ComboboxItem({ className, ...props }: ComboboxPrimitive.Item.Props) {
 function ComboboxEmpty({ className, ...props }: ComboboxPrimitive.Empty.Props) {
   // Base UI keeps this element mounted (for screen-reader announcements) and
   // only nulls its children when the list is non-empty. So it must carry NO
-  // padding of its own — otherwise it shows as a gap above the results. Style
+  // padding of its own, otherwise it shows as a gap above the results. Style
   // the message passed as children instead.
   return (
     <ComboboxPrimitive.Empty data-slot="combobox-empty" className={className} {...props} />

@@ -62,7 +62,7 @@ import { guessTimezone, listTimezones } from "@/lib/timezones";
  * change never implies a mail change. Loaded once from
  * `GET /api/admin/settings`; updates go to `PATCH /api/admin/settings`.
  *
- * The terms of service and privacy policy are deliberately *not* here — they are
+ * The terms of service and privacy policy are deliberately *not* here. They are
  * documents rather than settings and get their own editor at `/admin/legal`.
  */
 export function AdminGeneralSettings() {
@@ -675,7 +675,7 @@ function MailCard({
                       onChange={(e) => set("smtpPassword", e.target.value)}
                       placeholder={
                         m.hasSmtpPassword
-                          ? "Stored — leave blank to keep unchanged"
+                          ? "Stored, leave blank to keep unchanged"
                           : "Server password"
                       }
                       autoComplete="off"
@@ -707,7 +707,7 @@ function MailCard({
                     onChange={(e) => set("resendApiKey", e.target.value)}
                     placeholder={
                       m.hasResendApiKey
-                        ? "Stored — leave blank to keep unchanged"
+                        ? "Stored, leave blank to keep unchanged"
                         : "re_xxxxxxxxxxxx"
                     }
                     autoComplete="off"
@@ -930,7 +930,7 @@ function AiCard({
                   onChange={(e) => set("apiKey", e.target.value)}
                   placeholder={
                     a.hasApiKey
-                      ? "Stored — leave blank to keep unchanged"
+                      ? "Stored, leave blank to keep unchanged"
                       : "sk-..."
                   }
                   autoComplete="off"
@@ -1430,7 +1430,7 @@ function AnalyticsCard({
         </CardTitle>
         <CardDescription>
           Optional page-view analytics. When off, the panel loads no third-party
-          script at all — not a disabled one.
+          script at all, not even a disabled one.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -1483,7 +1483,7 @@ function AnalyticsCard({
                       autoComplete="off"
                     />
                     <FieldDescription>
-                      Exactly as registered in Plausible — this becomes the
+                      Exactly as registered in Plausible. This becomes the
                       script&apos;s <code>data-domain</code>.
                     </FieldDescription>
                   </Field>
@@ -1521,7 +1521,7 @@ function AnalyticsCard({
                   <FieldDescription>
                     A GA4 measurement id. Container (<code>GTM-</code>) and legacy
                     (<code>UA-</code>) ids are not supported. Google Analytics
-                    sets cookies and shares data with Google — in many
+                    sets cookies and shares data with Google. In many
                     jurisdictions that needs consent, and needs saying in your{" "}
                     <a
                       href="/admin/legal"

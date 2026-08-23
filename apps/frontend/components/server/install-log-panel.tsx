@@ -14,14 +14,14 @@ const POLL_MS = 2_000;
  * Provisioning output, in place of the live console.
  *
  * A server being built has no container to attach to, so the console has
- * nothing to show — but the interesting output exists: the blueprint's install
+ * nothing to show. But the interesting output exists: the blueprint's install
  * script is running on the node right now, and before it there was an image to
  * pull. This is that output, polled rather than streamed. Polling is the right
  * shape here: the panel merges two sources (its own record of the provision and
  * the live tail from the node), a provision is minutes long, and a two-second
  * refresh reads the same as a stream at this pace.
  *
- * Admin-only, matching the endpoint. Non-admins never render this — they see the
+ * Admin-only, matching the endpoint. Non-admins never render this. They see the
  * installing notice in the server shell instead.
  *
  * Polling stops as soon as the log says the provision is over, so a finished
@@ -49,7 +49,7 @@ export function InstallLogPanel({ serverId }: { serverId: string }) {
         if (cancelled) return;
         setView(fresh);
         setError(null);
-        // Once provisioning is done the log is final — stop asking.
+        // Once provisioning is done the log is final, so stop asking.
         if (fresh.provisioning) timer = setTimeout(tick, POLL_MS);
       } catch (caught) {
         if (cancelled) return;
@@ -89,7 +89,7 @@ export function InstallLogPanel({ serverId }: { serverId: string }) {
           {view === null
             ? "Reading install log…"
             : view.provisioning
-              ? "Installing — this server is being built on its node"
+              ? "Installing this server on its node"
               : view.status === "error"
                 ? "Provisioning failed"
                 : "Provisioning finished"}
@@ -103,7 +103,7 @@ export function InstallLogPanel({ serverId }: { serverId: string }) {
       >
         {lines.length === 0 ? (
           <div className="flex h-full items-center justify-center text-zinc-500">
-            {error ?? "No output yet — the node is pulling the install image."}
+            {error ?? "No output yet. The node is pulling the install image."}
           </div>
         ) : (
           lines.map((line, i) => (

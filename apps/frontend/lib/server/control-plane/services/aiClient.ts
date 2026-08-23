@@ -4,7 +4,7 @@
  * The panel calls the AI provider server-side only: the browser never receives
  * the API key and never composes the prompt (it sends only the free-text
  * question). This matches the "panel-composed, never browser-supplied" posture
- * the database explorer takes with SQL — the prompt is assembled here from
+ * the database explorer takes with SQL. The prompt is assembled here from
  * server-side context (logs, game, version), not from client input.
  *
  * The base URL is whatever the admin configured (`apiUrl`), with `/models` and
@@ -47,7 +47,7 @@ export interface AiProviderConfig {
 
 /**
  * Fetch the list of model ids the provider offers, for the admin settings
- * "fetch models" button. Returns ids only — enough to populate a select.
+ * "fetch models" button. Returns ids only, enough to populate a select.
  */
 export async function fetchAiModels(
   config: AiProviderConfig,
@@ -126,9 +126,9 @@ function extractContent(data: unknown): string | null {
  *
  * Some OpenAI-compatible providers stream by default even when `stream:false`
  * is requested (or ignore it). The body is then `data: {json}\n\ndata:
- * {json}\n\ndata: [DONE]` — not valid JSON as a whole, so `response.json()`
- * throws. Each chunk carries `choices[0].delta.content`; concatenating them
- * reconstructs the full reply.
+ * {json}\n\ndata: [DONE]`, which is not valid JSON as a whole, so
+ * `response.json()` throws. Each chunk carries `choices[0].delta.content`;
+ * concatenating them reconstructs the full reply.
  */
 function parseSseStream(text: string): string | null {
   let result = "";
@@ -143,7 +143,7 @@ function parseSseStream(text: string): string | null {
         ?.choices?.[0]?.delta?.content;
       if (typeof delta === "string") result += delta;
     } catch {
-      // Skip an unparseable chunk — partial SSE is still salvageable.
+      // Skip an unparseable chunk. Partial SSE is still salvageable.
     }
   }
   return result || null;
@@ -159,13 +159,13 @@ function parseChatResponse(text: string): string | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
 
-  // Standard OpenAI JSON shape (or a non-standard one — extractContent
+  // Standard OpenAI JSON shape (or a non-standard one, since extractContent
   // handles the variants).
   try {
     const content = extractContent(JSON.parse(trimmed));
     if (content) return content;
   } catch {
-    // Not JSON — fall through to the SSE / plain-text cases.
+    // Not JSON, so fall through to the SSE / plain-text cases.
   }
 
   // An unexpected stream: the provider streamed despite stream:false.
@@ -174,8 +174,9 @@ function parseChatResponse(text: string): string | null {
     if (sse) return sse;
   }
 
-  // Plain text — some minimal providers return the reply directly. Reject
-  // HTML (likely a misrouted error page) rather than presenting it as a reply.
+  // Plain text, because some minimal providers return the reply directly.
+  // Reject HTML (likely a misrouted error page) rather than presenting it as a
+  // reply.
   if (trimmed.startsWith("<")) return null;
   return trimmed;
 }
@@ -194,7 +195,7 @@ export interface AiChatConfig extends AiProviderConfig {
  * The request explicitly sends `stream: false`; some providers stream by
  * default and would otherwise return an SSE body that is not valid JSON. The
  * response parser tolerates an SSE body anyway, for providers that ignore the
- * hint — matching how every OpenAI-compatible server in the wild actually
+ * hint, matching how every OpenAI-compatible server in the wild actually
  * behaves.
  */
 export async function chatCompletion(
@@ -235,7 +236,7 @@ export async function chatCompletion(
     throw new HttpError(
       502,
       text.trim().startsWith("<")
-        ? "The AI provider returned an HTML page instead of a completion — the API URL may point at a web UI rather than the API endpoint."
+        ? "The AI provider returned an HTML page instead of a completion. The API URL may point at a web UI rather than the API endpoint."
         : "The AI provider returned an empty response. Check the model and API URL.",
     );
   }

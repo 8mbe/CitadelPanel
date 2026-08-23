@@ -3,7 +3,7 @@
  *
  * Call sites in `serverManager.ts` and the routes talk to this module rather
  * than building request paths by hand, so the agent's wire format lives in one
- * place. Every function is addressed by **server id** — the panel does not know
+ * place. Every function is addressed by **server id**. The panel does not know
  * or send container ids or host paths (see `apps/backend/src/servers.ts`).
  */
 
@@ -14,6 +14,22 @@ export interface PortBinding {
   hostPort: number;
   containerPort: number;
   protocol: "tcp" | "udp";
+}
+
+/**
+ * Expand one published port number into the bindings the agent expects.
+ *
+ * The panel stores a port as a number and claims it on both protocols (see
+ * migration `023_ports_dual_protocol.sql`); the agent's container spec is still
+ * per-protocol, so the pair is produced here rather than stored twice. Keeping
+ * the wire format protocol-aware means no node has to be upgraded in lockstep
+ * with the panel.
+ */
+export function portBindingsFor(port: number): PortBinding[] {
+  return [
+    { hostPort: port, containerPort: port, protocol: "tcp" },
+    { hostPort: port, containerPort: port, protocol: "udp" },
+  ];
 }
 
 /**
@@ -36,7 +52,7 @@ export interface CreateContainerRequest {
   user?: string;
   /** Extra networks to attach (e.g. node_db_net when the server has a DB). */
   extraNetworks?: string[];
-  /** Allocate a pseudo-TTY — see Blueprint.tty. */
+  /** Allocate a pseudo-TTY. See Blueprint.tty. */
   tty?: boolean;
 }
 
@@ -136,7 +152,7 @@ export async function runServerInstall(
  * The install container's output while its script is still running.
  *
  * {@link runServerInstall} returns the whole log, but only once the script has
- * exited — which is the wrong shape for a console watching a provision happen.
+ * exited, which is the wrong shape for a console watching a provision happen.
  * Short timeout: this is polled, and a slow node must not hold the poll open
  * longer than the interval between polls.
  *
@@ -283,11 +299,11 @@ export async function sampleNodeServers(
 // --- Server links --------------------------------------------------------------
 
 /**
- * POST /v1/servers/:id/links — put two linked servers on their pairwise
+ * POST /v1/servers/:id/links. Puts two linked servers on their pairwise
  * network so each reaches the other by container name.
  *
  * Only called for same-node links: servers on different nodes share no Docker
- * daemon, so there is no network to attach — those links ride the target's
+ * daemon, so there is no network to attach. Those links ride the target's
  * public `nodeHostname:port` and never touch the agent.
  */
 export async function linkServerContainers(
@@ -302,8 +318,8 @@ export async function linkServerContainers(
 }
 
 /**
- * DELETE /v1/servers/:id/links/:targetId — detach both containers from the
- * pair's network and remove it. Idempotent agent-side.
+ * DELETE /v1/servers/:id/links/:targetId. Detaches both containers from the
+ * pair's network and removes it. Idempotent agent-side.
  */
 export async function unlinkServerContainers(
   nodeId: string,
@@ -327,7 +343,7 @@ export interface NodeDbInfo {
 }
 
 /**
- * GET /v1/database/info — the node DB container's address.
+ * GET /v1/database/info. Returns the node DB container's address.
  *
  * The panel calls this to show the database host when a server owner creates a
  * database, and to check the node has a DB before offering the option. `host`
@@ -347,11 +363,11 @@ export interface ProvisionedDatabase {
 }
 
 /**
- * POST /v1/servers/:id/database — create a database + scoped user on the node.
+ * POST /v1/servers/:id/database. Creates a database + scoped user on the node.
  *
  * The admin credentials are decrypted from the node row and passed through; the
  * agent execs SQL inside the MariaDB container. The `dbPassword` is generated
- * panel-side (and stored encrypted) — the agent never persists it.
+ * panel-side (and stored encrypted). The agent never persists it.
  *
  * `dbName` and `dbUser` are generated panel-side (server-id prefix + random
  * suffix) so each database on a server gets a distinct name. The agent
@@ -375,7 +391,7 @@ export async function provisionServerDatabase(
 }
 
 /**
- * DELETE /v1/servers/:id/database — drop the database and user.
+ * DELETE /v1/servers/:id/database. Drops the database and user.
  *
  * The admin credentials and the stored `dbName`/`dbUser` are passed in the body
  * (the agent needs them to exec the DROP). Idempotent: a missing database or
@@ -399,8 +415,8 @@ export async function dropServerDatabase(
 /**
  * One statement's result from the agent's explorer query endpoint: column names
  * (empty when the statement returned no rows) and rows of nullable strings.
- * Values stay strings end-to-end — BIGINT ids must not round-trip through
- * JavaScript numbers.
+ * Values stay strings end-to-end, because BIGINT ids must not round-trip
+ * through JavaScript numbers.
  */
 export interface DbQueryResult {
   columns: string[];
@@ -408,13 +424,13 @@ export interface DbQueryResult {
 }
 
 /**
- * POST /v1/servers/:id/database/query — run explorer SQL as the scoped user.
+ * POST /v1/servers/:id/database/query. Runs explorer SQL as the scoped user.
  *
  * The database user's password is decrypted from the `server_databases` row and
  * passed through; the agent execs it inside the DB container with the database
  * preselected, so the scoped user's grants are the containment. Statements are
- * composed by the panel from structured explorer operations — see
- * `services/dbExplorerSql.ts` — never forwarded from the browser.
+ * composed by the panel from structured explorer operations in
+ * `services/dbExplorerSql.ts`, never forwarded from the browser.
  */
 export async function queryServerDatabase(
   nodeId: string,
@@ -584,7 +600,7 @@ export async function downloadServerFile(
  * The body is streamed straight through to the agent (`rawBody`), so a large
  * upload is never buffered in the panel's memory. Returns the agent's `{ path,
  * sizeBytes }` result. The caller is responsible for enforcing the panel-side
- * size cap *before* calling this — once the stream is forwarded, the cap is the
+ * size cap *before* calling this. Once the stream is forwarded, the cap is the
  * agent's job.
  *
  * @param path POSIX destination path relative to the server's data root.

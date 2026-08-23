@@ -5,7 +5,7 @@
  * is stubbed per-test, and the two contracts pinned are (1) validate throws on
  * any rejection and (2) the request carries the agent bearer + panel URL
  * exactly. There is no "audit never throws" contract here because SFTP auth is
- * synchronous with the connection — a failure rejects the SSH login.
+ * synchronous with the connection, so a failure rejects the SSH login.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -36,7 +36,7 @@ function stubFetch(responder: (url: string, init: RequestInit) => Response | Pro
 }
 
 beforeEach(() => {
-  // Captured fresh each file — Bun runs all test files in one process, so a
+  // Captured fresh each file. Bun runs all test files in one process, so a
   // stale reference from another file could leak.
   originalFetch = globalThis.fetch;
   lastCall = null;

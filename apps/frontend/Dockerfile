@@ -20,7 +20,7 @@ COPY --from=deps /app ./
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 # `config/env.ts` validates at import time and Next evaluates route modules
-# while collecting build metadata, so the build needs values that parse — not
+# while collecting build metadata, so the build needs values that parse, not
 # values that work. Nothing connects: the db clients are lazy. Runtime env
 # replaces all three (`process.env` wins over any .env file).
 ENV DATABASE_URL=postgres://build:build@localhost:5432/build
@@ -47,8 +47,8 @@ EXPOSE 3000
 
 # Migrations, then serve. Deliberately NOT `bun run setup`: that also runs
 # `env:init`, which would write a .env this container never reads and mint a
-# fresh PANEL_ENCRYPTION_KEY that disagrees with the one compose passed in —
-# and every secret already encrypted at rest becomes unreadable. Secrets are
+# fresh PANEL_ENCRYPTION_KEY that disagrees with the one compose passed in, so
+# every secret already encrypted at rest becomes unreadable. Secrets are
 # the operator's to supply; see docs/docker.md.
 # Both migrations are idempotent, so this is the install and the upgrade path.
 CMD ["sh", "-c", "bun run migrate && bun run start"]

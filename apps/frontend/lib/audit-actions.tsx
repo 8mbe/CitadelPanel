@@ -240,7 +240,7 @@ export const CATEGORY_TONE: Record<ActionCategory, string> = {
  * safe to surface directly.
  *
  * Actions performed with an API key (rather than the session cookie) get a
- * "via API key" suffix regardless of action — the marker is stamped on the
+ * "via API key" suffix regardless of action. The marker is stamped on the
  * metadata by the audit writer, not per-action.
  */
 export function describeMetadata(
@@ -399,7 +399,7 @@ function describeActionMetadata(
       // Who the action touched, then the granted flags. The email is
       // denormalized into the record at write time so history survives the
       // grant being revoked or the account deleted; older rows predate it and
-      // fall back to flags only. subuserId is a UUID — not useful to display.
+      // fall back to flags only. subuserId is a UUID, not useful to display.
       const email = str(meta.subuserEmail);
       const perms = meta.permissions;
       const flags =

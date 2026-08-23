@@ -2,8 +2,8 @@
  * Running the agent's own tooling containers (restic, `mariadb-dump`).
  *
  * These are not tenant containers, so they do not go through
- * `docker/hardening.ts`: that module builds a spec for a *game* — one bind
- * mount, published ports, a per-server isolated network — and every one of its
+ * `docker/hardening.ts`: that module builds a spec for a *game* with one bind
+ * mount, published ports, and a per-server isolated network. Every one of its
  * invariants is wrong here. A backup container needs several mounts, no ports,
  * and outbound HTTPS to S3.
  *
@@ -16,7 +16,7 @@
  * Progress is read by polling the log tail rather than by following the log
  * stream. Following would mean a second streaming log implementation alongside
  * `demuxDockerLogStream`, and the thing being watched only emits a line every
- * few seconds — so a poll of the proven one-shot reader is both simpler and
+ * few seconds, so a poll of the proven one-shot reader is both simpler and
  * sufficient. See `restic.PROGRESS_FPS` for the other half of that trade.
  */
 
@@ -35,7 +35,7 @@ import { randomBytes } from "node:crypto";
  * Marks a container as one of the agent's own tooling containers.
  *
  * Deliberately *not* `citadel.managed`, which means "a tenant's game server" and
- * is what `docker/stats.ts` lists to collect per-server statistics — a restic
+ * is what `docker/stats.ts` lists to collect per-server statistics. A restic
  * container appearing in that list would be reported as somebody's server.
  */
 const TOOL_LABEL = "citadel.tool";
@@ -57,7 +57,7 @@ export interface ToolRunSpec {
   env: Record<string, string>;
   mounts: ToolMount[];
   /**
-   * Extra networks to attach after creation — `node_db_net` for a dump
+   * Extra networks to attach after creation, such as `node_db_net` for a dump
    * container, which must resolve the MariaDB container by name.
    */
   extraNetworks?: string[];
@@ -93,7 +93,7 @@ const LOG_TAIL_LINES = 400;
 /**
  * Run a tool container to completion, polling its logs for progress.
  *
- * Always removes the container, including on timeout — a leaked restic holding
+ * Always removes the container, including on timeout. A leaked restic holding
  * a repository lock would block every later backup for that server.
  */
 export async function runToolContainer(spec: ToolRunSpec): Promise<ToolRunResult> {
@@ -155,7 +155,7 @@ export async function runToolContainer(spec: ToolRunSpec): Promise<ToolRunResult
  * Remove tool containers left over from a previous run of this process.
  *
  * The `finally` above cannot run if the agent is killed mid-backup, and what it
- * leaves behind is a restic holding a repository lock — which makes every later
+ * leaves behind is a restic holding a repository lock, which makes every later
  * backup of that subject fail with a stale-lock error until somebody finds and
  * deletes an anonymous container by hand. So they carry a label, and the agent
  * sweeps them at boot.
@@ -198,7 +198,7 @@ export async function removeOrphanedToolContainers(): Promise<void> {
  *
  * Resolves *only* on timeout: on a normal exit it never resolves, which is what
  * lets the `Promise.race` above be decided by the `wait()` side. A read failure
- * is swallowed — the container disappearing mid-poll is the exit path, not an
+ * is swallowed. The container disappearing mid-poll is the exit path, not an
  * error to propagate.
  */
 async function pollUntilSettled(
@@ -247,7 +247,7 @@ async function readLogs(container: Docker.Container): Promise<string> {
  * The capabilities a backup tool needs, on top of a dropped-everything base.
  *
  * These containers run as root (the images do), and dropping *all* capabilities
- * takes `CAP_DAC_OVERRIDE` with it — which is what lets root ignore file
+ * takes `CAP_DAC_OVERRIDE` with it, which is what lets root ignore file
  * permissions. Without it root is weaker than an ordinary user for file access:
  * it can only touch paths whose mode grants access to `other`. Every host
  * directory these containers are given is owned by the agent's own user, so the
@@ -258,14 +258,14 @@ async function readLogs(container: Docker.Container): Promise<string> {
  * Reading every file regardless of who owns it *is* what a backup is, so this is
  * the one place where a DAC bypass is the point rather than a weakening:
  *
- *   - `DAC_OVERRIDE` — read a world whose files belong to the game's uid, and
+ *   - `DAC_OVERRIDE`: read a world whose files belong to the game's uid, and
  *     write the cache, the dumps, and a restore's output.
- *   - `CHOWN` / `FOWNER` — put ownership and modes back as they were on restore,
+ *   - `CHOWN` / `FOWNER`: put ownership and modes back as they were on restore,
  *     rather than leaving a restored world owned by root.
  *
  * Everything actually dangerous stays dropped (`SYS_ADMIN`, `NET_RAW`,
  * `SETUID`, `MKNOD`, …), the container gets no tenant network, and it sees only
- * the mounts its scope needs — so the blast radius is the paths it was handed.
+ * the mounts its scope needs, so the blast radius is the paths it was handed.
  */
 const TOOL_CAPABILITIES = ["DAC_OVERRIDE", "CHOWN", "FOWNER"];
 
@@ -275,7 +275,7 @@ const TOOL_CAPABILITIES = ["DAC_OVERRIDE", "CHOWN", "FOWNER"];
  * The hardening that does apply is kept: no new privileges, every capability
  * except `TOOL_CAPABILITIES` dropped, no port publishing, and a memory ceiling
  * so a restic indexing a huge repository cannot OOM the node. `AutoRemove` is
- * deliberately off — the exit code and the log tail must still be readable after
+ * deliberately off. The exit code and the log tail must still be readable after
  * the process exits, and Docker removes an auto-remove container before either
  * can be fetched.
  *
@@ -303,6 +303,10 @@ export function buildToolConfig(spec: ToolRunSpec): Docker.ContainerCreateOption
       CapDrop: ["ALL"],
       CapAdd: TOOL_CAPABILITIES,
       SecurityOpt: ["no-new-privileges"],
+      // The same alternative-runtime knob as tenant containers (CONTAINER_RUNTIME):
+      // these are trusted images, but they parse untrusted tenant data. A
+      // node that pays for gVisor on games should get it here too.
+      ...(config.containerRuntime ? { Runtime: config.containerRuntime } : {}),
       // restic's index and cache for a multi-terabyte repository is the memory
       // consumer here; 2 GB is far above what a game-server-sized repository
       // needs and far below what would destabilise a node.

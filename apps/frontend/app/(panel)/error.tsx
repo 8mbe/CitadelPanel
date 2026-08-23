@@ -25,7 +25,7 @@ export default function PanelError({
     <ErrorPage
       code="500"
       title="This page could not be loaded"
-      description="The panel reached an error while rendering. Your session is still active — retry, or pick another page from the navigation above."
+      description="The panel reached an error while rendering. Your session is still active. Retry, or pick another page from the navigation above."
       icon={<AlertTriangle />}
       detail={error.digest ? `Error reference: ${error.digest}` : undefined}
       actions={

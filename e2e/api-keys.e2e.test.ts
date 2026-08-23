@@ -1,13 +1,13 @@
 /**
  * End-to-end tests for the API-key surface (see docs/api-keys.md).
  *
- * Two real keys drive the suite — a non-admin owner's key and an admin's key —
+ * Two real keys drive the suite, a non-admin owner's key and an admin's key,
  * read from `.env.e2e` (see `.env.e2e.example`). The suite covers:
  *
  *   - unauthenticated and bogus-credential requests are 401
  *   - the `x-api-key` and `Authorization: Bearer` conventions are equivalent
  *     (the panel aliases Bearer onto `x-api-key` in auth/middleware.ts)
- *   - a key resolves to its owner's session (role, email) — "a key is its owner"
+ *   - a key resolves to its owner's session (role, email), so a key is its owner
  *   - a user key reaches user routes but every /api/admin/* is 403
  *   - an admin key reaches admin routes
  *   - the admin key lifecycle: mint → works → disable (401) → re-enable → revoke
@@ -197,7 +197,7 @@ describe("admin API-key lifecycle (a key is its owner)", () => {
         key: config.adminKey,
       });
     } catch {
-      /* swallow — cleanup must not fail the suite */
+      /* swallowed, cleanup must not fail the suite */
     }
   });
 
@@ -221,7 +221,7 @@ describe("admin API-key lifecycle (a key is its owner)", () => {
     created = { id: body.key!.id!, token: body.token!, name };
 
     // Session synthesis: the freshly-minted key authenticates as the admin
-    // owner — a key carries no permissions of its own, it is its owner.
+    // owner. A key carries no permissions of its own, it is its owner.
     const viaNewKey = await api("/api/me", { key: created.token });
     expect(viaNewKey.status).toBe(200);
     const newUser = (viaNewKey.body as { user?: { role?: string } }).user;
@@ -246,7 +246,7 @@ describe("admin API-key lifecycle (a key is its owner)", () => {
     );
     expect(entry).toBeDefined();
     const meta = entry!.metadata ?? {};
-    // The actor authenticated with the admin's key — stamped onto the entry.
+    // The actor authenticated with the admin's key, stamped onto the entry.
     expect(meta.viaApiKey).toBe(true);
     expect(meta.viaKeyPrefix).toBe(config.adminKey.slice(0, 8));
     // The handler-supplied description of the key being acted on.
@@ -298,6 +298,6 @@ describe("admin API-key lifecycle (a key is its owner)", () => {
     const keys = (list.body as { keys?: Array<{ id?: string }> }).keys ?? [];
     expect(keys.find((k) => k.id === created!.id)).toBeUndefined();
 
-    created = null; // already revoked — afterAll should not try again
+    created = null; // already revoked, afterAll should not try again
   });
 });

@@ -4,7 +4,7 @@
  * Keys live in Better Auth's `apikey` table (created by `auth:migrate`): only
  * the hashed `key` column is secret, and it is never selected here. Owners
  * manage their own keys through the plugin's `/api/auth/api-key/*` endpoints;
- * this module is the *admin* surface — fleet-wide visibility and revocation —
+ * this module is the *admin* surface for fleet-wide visibility and revocation,
  * which the plugin deliberately has no cross-user equivalent for, so it reads
  * the table directly like the other admin list routes.
  */
@@ -71,7 +71,7 @@ export async function setApiKeyEnabled(
   if (!row) return null;
 
   // Re-join the owner so the response (and the audit entry) can name the key's
-  // owner — the UPDATE ... RETURNING above cannot carry the join. The owner may
+  // owner. The UPDATE ... RETURNING above cannot carry the join. The owner may
   // be gone if the account was deleted; the key is still administrable.
   const ownerRows = (await sql`
     SELECT u.id AS owner_id, u.email AS owner_email, u.name AS owner_name, u.role AS owner_role

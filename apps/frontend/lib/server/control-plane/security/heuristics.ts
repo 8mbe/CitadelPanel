@@ -3,7 +3,7 @@
  *
  * Scope, which drives every weight in this file:
  *
- *   This detects abuse of the NODE — stolen compute, principally cryptomining.
+ *   This detects abuse of the NODE, stolen compute, principally cryptomining.
  *   It deliberately does NOT police what happens inside a game: griefing, op
  *   abuse, plugin crash-loops and similar are the server owner's problem, not
  *   the platform's, and flagging them buries the signals that actually matter.
@@ -110,8 +110,8 @@ function mean(values: number[]): number {
 /**
  * Signal: CPU pegged for the whole window.
  *
- * Requires EVERY sample above the threshold, not just the average — a spike
- * during chunk generation should not qualify, only genuinely continuous load.
+ * Requires EVERY sample above the threshold rather than the average, so a
+ * spike during chunk generation does not qualify, only continuous load.
  */
 export function scoreSustainedHighCpu(
   window: ObservationWindow,
@@ -141,7 +141,7 @@ export const NEAR_ZERO_IO_BYTES = 1024 * 1024; // 1 MB
  * Signal: high CPU with almost no I/O.
  *
  * This is the strongest behavioural discriminator available. A real game server
- * under sustained load is constantly doing I/O — world saves, chunk reads,
+ * under sustained load is constantly doing I/O: world saves, chunk reads,
  * player packets. A miner computes and reports results occasionally.
  */
 export function scoreCpuWithoutIo(
@@ -163,7 +163,7 @@ export function scoreCpuWithoutIo(
     score: WEIGHTS.cpuWithoutIo,
     reason: `Sustained ${averageCpu.toFixed(
       1,
-    )}% CPU with near-zero disk and network I/O (${totalIo} bytes) — atypical for a game server under load`,
+    )}% CPU with near-zero disk and network I/O (${totalIo} bytes), atypical for a game server under load`,
     detail: {
       averageCpuPercent: averageCpu,
       diskIoBytes: window.diskIoBytes,
@@ -269,7 +269,7 @@ const RULES: ((
  * Run every heuristic and accumulate a score.
  *
  * Returns the evidence alongside the number so the admin UI can explain exactly
- * why something was flagged — an unexplained score is not actionable.
+ * why something was flagged. An unexplained score is not actionable.
  */
 export function scoreObservation(
   window: ObservationWindow,

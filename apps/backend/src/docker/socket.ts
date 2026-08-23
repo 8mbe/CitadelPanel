@@ -1,17 +1,17 @@
 /**
  * Reachability of the local Docker socket.
  *
- * Everything this agent does — power actions, stats sampling, backups, the
- * orphan sweep at boot — is a call on `config.dockerSocket`. When the agent
- * cannot open that socket it stays up and answers requests, but every one of
- * those operations fails, and the original symptom was a dockerode stack trace
- * per sampled server:
+ * Everything this agent does is a call on `config.dockerSocket`: power actions,
+ * stats sampling, backups, the orphan sweep at boot. When the agent cannot open
+ * that socket it stays up and answers requests, but every one of those
+ * operations fails, and the original symptom was a dockerode stack trace per
+ * sampled server:
  *
  *     [agent] failed to sample server <id>: connect EACCES /var/run/docker.sock
  *
  * which says what failed and nothing about the fix. The fix is almost always
  * one of two things, and they are distinguishable from the socket's own inode
- * plus the process's credentials — so the agent works it out and prints it.
+ * plus the process's credentials, so the agent works it out and prints it.
  *
  * The check has the same shape as `dataRoot.ts`, for the same reasons:
  *   - probed at boot and logged with the exact command that fixes it;
@@ -92,9 +92,10 @@ export async function readSocketContext(path: string): Promise<SocketContext> {
  * Turn a Docker connection error into something an admin can act on.
  *
  * The distinctions matter because the fixes differ: a permission problem is a
- * group membership (and, more often than not, a *login session* — see below), a
- * missing socket is a daemon that was never installed or a wrong
- * `DOCKER_SOCKET`, and a refused connection is a daemon that is not running.
+ * group membership, and more often than not a *login session* as well,
+ * described below. A missing socket is a daemon that was never installed or a
+ * wrong `DOCKER_SOCKET`, and a refused connection is a daemon that is not
+ * running.
  */
 export function explainDockerSocketError(
   error: unknown,
@@ -111,13 +112,13 @@ export function explainDockerSocketError(
       // The common case, and the one that looks like a bug: the user *is* in
       // the docker group, `id` on a new shell proves it, and the agent still
       // gets EACCES. Supplementary groups are fixed when a process starts, so
-      // an agent launched before `usermod -aG` never sees the new group — no
+      // an agent launched before `usermod -aG` never sees the new group. No
       // amount of re-running usermod helps, only a new login session does.
       const missingGroup = socketGid !== undefined && !groups.includes(socketGid);
       const detail = missingGroup
         ? `the socket is owned by group ${group} (gid ${socketGid}) and this ` +
           `process's groups (${groups.join(", ") || "none"}) do not include it`
-        : "the socket rejected this process even though its group matches — " +
+        : "the socket rejected this process even though its group matches. " +
           "AppArmor/SELinux policy or a sandbox is the usual cause";
 
       return (
@@ -133,7 +134,7 @@ export function explainDockerSocketError(
     case "ENOENT":
       return (
         `${path} does not exist. Docker is not installed on this node, or its ` +
-        `socket is elsewhere — set DOCKER_SOCKET to the right path. ` +
+        `socket is elsewhere. Set DOCKER_SOCKET to the right path. ` +
         `Check with: sudo systemctl status docker`
       );
     case "ECONNREFUSED":
@@ -170,7 +171,7 @@ export async function probeDockerSocket(): Promise<DockerSocketStatus> {
 /**
  * Log the Docker socket's state at boot.
  *
- * Deliberately does not exit on failure — the same call as `dataRoot.ts` makes.
+ * Deliberately does not exit on failure, the same call as `dataRoot.ts` makes.
  * A process that refuses to start reads to the panel as "node unreachable",
  * which sends an operator after a networking problem when the actual fault is a
  * group membership on this host. Staying up means `/v1/health` can say so.

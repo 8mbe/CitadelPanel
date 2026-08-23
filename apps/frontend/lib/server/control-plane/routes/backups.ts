@@ -9,8 +9,8 @@
  *
  * Restore overwrites a world and delete destroys the only copy of a point in time.
  * Neither is something to hand to a subuser on the strength of a flag that also
- * means "can press the backup button" — the same reasoning that keeps server
- * deletion off the `settings` grant.
+ * means "can press the backup button". That is the same reasoning that keeps
+ * server deletion off the `settings` grant.
  *
  * **Node database backups** are admin-only throughout. They read every database on
  * a node using its root-equivalent MariaDB admin credential, so there is no version
@@ -68,8 +68,8 @@ import { describeCron, isValidCron, nextCronRun, parseCron } from "@/lib/cron";
 // --- Server file backups --------------------------------------------------------------
 
 /**
- * GET /api/servers/:id/backups — history plus the context the tab needs in one
- * round trip.
+ * GET /api/servers/:id/backups. Returns history plus the context the tab needs
+ * in one round trip.
  *
  * Bundled rather than split across endpoints because the tab cannot draw anything
  * useful without all of it: whether backups are configured at all (otherwise it
@@ -102,7 +102,7 @@ export async function handleListServerBackups(
   return json({
     backups,
     schedule: {
-      // Never the credentials — only whether a destination exists and what the
+      // Never the credentials, only whether a destination exists and what the
       // schedule is. Everything secret stays in the admin-only settings view.
       configured: settings.usable,
       cron: schedule,
@@ -120,7 +120,7 @@ export async function handleListServerBackups(
   });
 }
 
-/** GET /api/servers/:id/backups/:runId — one run's current state. */
+/** GET /api/servers/:id/backups/:runId. Returns one run's current state. */
 export async function handleGetServerBackup(
   request: Request,
   serverId: string,
@@ -134,7 +134,7 @@ export async function handleGetServerBackup(
 }
 
 /**
- * GET /api/servers/:id/backups/:runId/logs?afterSeq=N — the run's log.
+ * GET /api/servers/:id/backups/:runId/logs?afterSeq=N. Returns the run's log.
  *
  * `afterSeq` is what makes a live tail cheap: while a backup runs the browser polls
  * with the highest sequence number it has and receives only new lines rather than
@@ -165,7 +165,7 @@ export async function handleGetServerBackupLogs(
 }
 
 /**
- * POST /api/servers/:id/backups — start a backup.
+ * POST /api/servers/:id/backups. Starts a backup.
  *
  * 202, not 201: the work has been accepted, not completed. The response carries the
  * run so the UI can begin polling it immediately.
@@ -188,7 +188,7 @@ export async function handleCreateServerBackup(
 }
 
 /**
- * POST /api/servers/:id/backups/:runId/restore — restore a server's files.
+ * POST /api/servers/:id/backups/:runId/restore. Restores a server's files.
  *
  * Owner or admin only. Stops the server, overwrites its data directory, and leaves
  * it stopped. Databases are not touched: they are not part of a server backup.
@@ -208,7 +208,7 @@ export async function handleRestoreServerBackup(
   return json({ backup: restore }, 202);
 }
 
-/** POST /api/servers/:id/backups/start-server — start the server after a restore. */
+/** POST /api/servers/:id/backups/start-server. Starts the server after a restore. */
 export async function handleStartServerAfterRestore(
   request: Request,
   serverId: string,
@@ -229,7 +229,7 @@ export async function handleStartServerAfterRestore(
 }
 
 /**
- * DELETE /api/servers/:id/backups/:runId — delete a backup.
+ * DELETE /api/servers/:id/backups/:runId. Deletes a backup.
  *
  * Owner or admin only: this destroys the only copy of that point in time.
  */
@@ -247,7 +247,7 @@ export async function handleDeleteServerBackup(
 }
 
 /**
- * PATCH /api/servers/:id/backups/settings — per-server schedule opt-out.
+ * PATCH /api/servers/:id/backups/settings. The per-server schedule opt-out.
  *
  * Requires `settings` rather than `backups`: whether a server participates in the
  * fleet's schedule is a property of the server, alongside its resources and env,
@@ -270,7 +270,7 @@ export async function handleUpdateServerBackupSettings(
 }
 
 /**
- * GET /api/servers/:id/backups/snapshots — what S3 actually holds.
+ * GET /api/servers/:id/backups/snapshots. Returns what S3 actually holds.
  *
  * Owner or admin: it reaches out to S3 on every call, which is not something a
  * subuser should be able to trigger in a loop.
@@ -288,7 +288,7 @@ export async function handleListRepositorySnapshots(
 // --- Node database backups (admin) ------------------------------------------------------
 
 /**
- * GET /api/admin/backups/databases — per-node database backup status.
+ * GET /api/admin/backups/databases. Returns per-node database backup status.
  *
  * The admin page's database section: one row per node with its database count,
  * whether it is scheduled, and its last run.
@@ -320,7 +320,7 @@ export async function handleListDatabaseBackupNodes(request: Request): Promise<R
   });
 }
 
-/** GET /api/admin/backups/databases/:nodeId — one node's database backup history. */
+/** GET /api/admin/backups/databases/:nodeId. Returns one node's backup history. */
 export async function handleListNodeDatabaseBackups(
   request: Request,
   nodeId: string,
@@ -330,7 +330,7 @@ export async function handleListNodeDatabaseBackups(
   return json({ backups: await listNodeDatabaseBackups(id) });
 }
 
-/** POST /api/admin/backups/databases/:nodeId — back up every database on a node. */
+/** POST /api/admin/backups/databases/:nodeId. Backs up every database on a node. */
 export async function handleCreateNodeDatabaseBackup(
   request: Request,
   nodeId: string,
@@ -345,7 +345,7 @@ export async function handleCreateNodeDatabaseBackup(
 }
 
 /**
- * GET /api/admin/backups/databases/:nodeId/runs/:runId/logs — a run's log tail.
+ * GET /api/admin/backups/databases/:nodeId/runs/:runId/logs. A run's log tail.
  *
  * Same cursor protocol as the server-scope logs, so the admin page can reuse the
  * live-tail component.
@@ -373,8 +373,8 @@ export async function handleGetNodeDatabaseBackupLogs(
 }
 
 /**
- * POST /api/admin/backups/databases/:nodeId/runs/:runId/restore — restore a node's
- * databases.
+ * POST /api/admin/backups/databases/:nodeId/runs/:runId/restore. Restores a
+ * node's databases.
  *
  * The most destructive operation in the panel: it overwrites the live contents of
  * every database in the snapshot, across every tenant on that node.
@@ -398,7 +398,7 @@ export async function handleRestoreNodeDatabaseBackup(
   return json({ backup: restore }, 202);
 }
 
-/** DELETE /api/admin/backups/databases/:nodeId/runs/:runId — delete a snapshot. */
+/** DELETE /api/admin/backups/databases/:nodeId/runs/:runId. Deletes a snapshot. */
 export async function handleDeleteNodeDatabaseBackup(
   request: Request,
   nodeId: string,
@@ -412,7 +412,7 @@ export async function handleDeleteNodeDatabaseBackup(
   return noContent();
 }
 
-/** PATCH /api/admin/backups/databases/:nodeId — include this node in the schedule. */
+/** PATCH /api/admin/backups/databases/:nodeId. Includes this node in the schedule. */
 export async function handleUpdateNodeDatabaseBackupSettings(
   request: Request,
   nodeId: string,
@@ -429,7 +429,7 @@ export async function handleUpdateNodeDatabaseBackupSettings(
   return json({ enabled: body.enabled });
 }
 
-/** GET /api/admin/backups/databases/:nodeId/snapshots — what S3 actually holds. */
+/** GET /api/admin/backups/databases/:nodeId/snapshots. What S3 actually holds. */
 export async function handleListNodeRepositorySnapshots(
   request: Request,
   nodeId: string,
@@ -442,7 +442,7 @@ export async function handleListNodeRepositorySnapshots(
 // --- Storage, testing and schedule preview (admin) ---------------------------------------
 
 /**
- * GET /api/admin/backups/storage — used / allowed / total, for the one-line report.
+ * GET /api/admin/backups/storage. Used / allowed / total, for the one-line report.
  *
  * `used` is summed from per-repository sizes recorded after each backup rather than
  * measured live: measuring means one `restic stats` container per repository, which
@@ -456,7 +456,7 @@ export async function handleGetBackupStorage(request: Request): Promise<Response
 }
 
 /**
- * POST /api/admin/backups/test — verify the S3 destination from a real node.
+ * POST /api/admin/backups/test. Verifies the S3 destination from a real node.
  *
  * Runs on a node rather than from the panel because the node is what has to reach
  * S3; a panel that can see the bucket proves nothing about a node behind a
@@ -466,7 +466,7 @@ export async function handleGetBackupStorage(request: Request): Promise<Response
  *
  * The probe borrows a subject to address a repository path: the caller may name a
  * node, otherwise the oldest active one is used. Node scope rather than server
- * scope so a panel with no servers yet can still be tested — configuring backups
+ * scope so a panel with no servers yet can still be tested. Configuring backups
  * before creating servers is the sensible order.
  */
 export async function handleTestBackupDestination(request: Request): Promise<Response> {
@@ -490,7 +490,7 @@ export async function handleTestBackupDestination(request: Request): Promise<Res
   if (!probe) {
     throw notFound(
       "There is no node to test the destination against. The test runs on a node, " +
-        "because the node is what has to reach S3 — register a node first.",
+        "because the node is what has to reach S3. Register a node first.",
     );
   }
 
@@ -528,11 +528,11 @@ export async function handleTestBackupDestination(request: Request): Promise<Res
 }
 
 /**
- * POST /api/admin/backups/preview-schedule — validate a cron expression and show
- * the next few runs.
+ * POST /api/admin/backups/preview-schedule. Validates a cron expression and
+ * shows the next few runs.
  *
  * Server-side rather than in the form's own JavaScript so the preview is computed in
- * the panel's timezone with the same parser the scheduler uses — a schedule can
+ * the panel's timezone with the same parser the scheduler uses. A schedule can
  * never preview one thing and then do another.
  */
 export async function handlePreviewBackupSchedule(request: Request): Promise<Response> {
@@ -548,7 +548,7 @@ export async function handlePreviewBackupSchedule(request: Request): Promise<Res
   if (body.cron.trim().length === 0) {
     return json({
       valid: true,
-      description: "Manual backups only — no automatic schedule.",
+      description: "Manual backups only, no automatic schedule.",
       nextRuns: [],
       timezone,
     });

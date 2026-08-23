@@ -193,7 +193,7 @@ describe("networking", () => {
   test("enables inter-container communication on link networks only", () => {
     // ICC is the entire point of a link: without it, two containers on the
     // pairwise bridge could never reach each other. The isolated config must
-    // never inherit this — that would collapse tenant isolation.
+    // never inherit this. That would collapse tenant isolation.
     expect(buildLinkNetworkConfig("citadel_link_aaa_bbb").Options[
       "com.docker.network.bridge.enable_icc"
     ]).toBe("true");
@@ -251,7 +251,7 @@ describe("link naming", () => {
 
   test("is canonical: the same pair yields one network however it is ordered", () => {
     // The panel stores a link as (server, target) but the network is
-    // bidirectional — if the names differed, A→B and B→A would silently get
+    // bidirectional. If the names differed, A→B and B→A would silently get
     // two networks and unlinking one would tear down the other's.
     expect(linkNetworkName(a, b)).toBe(linkNetworkName(b, a));
   });
@@ -296,7 +296,7 @@ describe("environment and labels", () => {
 describe("console attachment", () => {
   test("keeps stdin open so the console can send commands", () => {
     // Without OpenStdin the container has no stdin to attach to, and the
-    // console silently becomes read-only — you can watch a server but never
+    // console silently becomes read-only. You can watch a server but never
     // type "stop" or "op someone".
     const config = buildHardenedContainerConfig(baseSpec());
 
@@ -314,10 +314,55 @@ describe("console attachment", () => {
 
   test("allocates a TTY when the blueprint opts in", () => {
     // A TTY container merges stdout/stderr into a raw stream that carries the
-    // server's own ANSI color codes — needed for software like JLine3 that
+    // server's own ANSI color codes, needed for software like JLine3 that
     // only emits color to a terminal. The attach layer detects this and reads
     // the stream without 8-byte framing.
     const config = buildHardenedContainerConfig(baseSpec({ tty: true }));
     expect(config.Tty).toBe(true);
+  });
+});
+
+describe("node stability under a hostile tenant", () => {
+  test("forbids core dumps so a crash loop cannot fill the node disk", () => {
+    const config = buildHardenedContainerConfig(baseSpec());
+    expect(config.HostConfig?.Ulimits).toContainEqual({ Name: "core", Soft: 0, Hard: 0 });
+  });
+
+  test("biases the host OOM killer toward the game, not the node's services", () => {
+    const config = buildHardenedContainerConfig(baseSpec());
+    expect(config.HostConfig?.OomScoreAdj).toBeGreaterThan(0);
+  });
+
+  test("runs docker-init as PID 1 so zombies cannot eat the pid limit", () => {
+    const config = buildHardenedContainerConfig(baseSpec());
+    expect(config.HostConfig?.Init).toBe(true);
+  });
+
+  test("gets a private cgroup namespace, hiding the host's cgroup tree", () => {
+    const config = buildHardenedContainerConfig(baseSpec());
+    expect(
+      (config.HostConfig as { CgroupnsMode?: string } | undefined)?.CgroupnsMode,
+    ).toBe("private");
+  });
+});
+
+describe("alternative runtimes", () => {
+  test("passes a configured runtime through to the daemon", () => {
+    const config = buildHardenedContainerConfig(baseSpec({ runtime: "runsc" }));
+    expect(config.HostConfig?.Runtime).toBe("runsc");
+  });
+
+  test("leaves the daemon default (runc) when no runtime is configured", () => {
+    // Omitting the field entirely matters: sending Runtime: "" or null is not
+    // the same request to every daemon version as not sending it.
+    const config = buildHardenedContainerConfig(baseSpec());
+    expect("Runtime" in (config.HostConfig ?? {})).toBe(false);
+  });
+
+  test("a custom runtime does not weaken any other protection", () => {
+    const config = buildHardenedContainerConfig(baseSpec({ runtime: "runsc" }));
+    expect(config.HostConfig?.CapDrop).toEqual(["ALL"]);
+    expect(config.HostConfig?.SecurityOpt).toContain("no-new-privileges");
+    expect(config.HostConfig?.Privileged).toBe(false);
   });
 });

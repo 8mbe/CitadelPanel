@@ -1,12 +1,12 @@
 /**
- * SQL composition for the database explorer — pure, no I/O, heavily tested.
+ * SQL composition for the database explorer. Pure, no I/O, heavily tested.
  *
  * The explorer never lets the browser send SQL. The UI posts structured
  * operations (create this table, update this row, …) and *this module* compiles
  * them to MariaDB statements under three rules that make injection impossible:
  *
  *   1. Every identifier (table/column name) must match a strict backtick-safe
- *      shape before it is ever interpolated — `assertSqlIdentifier` is the gate.
+ *      shape before it is ever interpolated. `assertSqlIdentifier` is the gate.
  *   2. Every data value is encoded as a hex literal wrapped in CAST
  *      (`CAST(x'…' AS CHAR)`), which contains no characters MySQL parses, so
  *      quoting/sql_mode cannot be subverted. MariaDB coerces the resulting
@@ -15,12 +15,12 @@
  *      from, optionally parameterized with a digits-only length. The form never
  *      sends free-form SQL type syntax.
  *
- * The one place a quoted literal is unavoidable — DDL `DEFAULT` and `COMMENT`,
- * where MySQL requires a literal rather than an expression — uses
+ * One place needs a quoted literal: DDL `DEFAULT` and `COMMENT`, where MySQL
+ * requires a literal rather than an expression. That path uses
  * `quoteStringLiteral`, which escapes both `'` and `\`.
  *
  * Even if all of this failed, the statements run as the database's scoped
- * user, whose grants cover exactly that one database — but the panel still
+ * user, whose grants cover exactly that one database, but the panel still
  * validates everything itself rather than leaning on that backstop.
  */
 
@@ -59,7 +59,7 @@ export function quoteIdent(value: string): string {
 }
 
 /**
- * Encode a value as a hex literal cast to CHAR — safe in every expression
+ * Encode a value as a hex literal cast to CHAR, safe in every expression
  * context (WHERE, INSERT VALUES, SET). Round-trips any UTF-8 including quotes,
  * backslashes, and newlines, without caring about sql_mode.
  */
@@ -139,10 +139,10 @@ export interface ColumnSpecInput {
   baseType: string;
   /** `(n)` or `(m,d)` parameter, e.g. "255" or "10,2". Digits and one comma. */
   length?: string;
-  /** `UNSIGNED` — numeric types only. */
+  /** `UNSIGNED`: numeric types only. */
   unsigned?: boolean;
   nullable: boolean;
-  /** AUTO_INCREMENT — only valid on a keyed column; enforced where used. */
+  /** AUTO_INCREMENT. Only valid on a keyed column; enforced where used. */
   autoIncrement?: boolean;
   /** Include in the table's PRIMARY KEY (create-table only). */
   primaryKey?: boolean;

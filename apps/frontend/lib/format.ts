@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Display formatting helpers
 //
-// Pure functions shared across the panel UI. No data, no side effects — just
+// Pure functions shared across the panel UI. No data, no side effects, just
 // the presentation logic for bytes, durations, timestamps and abuse scores.
 // ---------------------------------------------------------------------------
 
@@ -43,8 +43,8 @@ export function formatCores(cores: number): string {
  *
  * Prints the unit once ("4.5/8 GB") instead of twice ("4.50 GB / 8.00 GB"),
  * which is what made these values wrap and orphan the unit onto its own line in
- * the server tiles. Precision is dropped to whatever reads cleanly at a glance —
- * an exact byte count belongs on the server page, not a summary card.
+ * the server tiles. Precision is dropped to whatever reads cleanly at a glance.
+ * An exact byte count belongs on the server page, not a summary card.
  */
 export function formatMbPair(usedMb: number, totalMb: number): string {
   const compact = (mb: number, unit: "GB" | "MB") => {
@@ -58,7 +58,7 @@ export function formatMbPair(usedMb: number, totalMb: number): string {
 }
 
 export function formatUptime(seconds: number): string {
-  if (seconds <= 0) return "—";
+  if (seconds <= 0) return "0m";
   const d = Math.floor(seconds / 86400);
   const h = Math.floor((seconds % 86400) / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -121,8 +121,8 @@ export function initials(name: string): string {
 // --- Game versions ---------------------------------------------------------------
 
 /**
- * Compare game version strings by numeric segments, not lexicographically —
- * string order would call "1.8.8" newer than "1.21.1", and date-style
+ * Compare game version strings by numeric segments, not lexicographically.
+ * String order would call "1.8.8" newer than "1.21.1", and date-style
  * versions ("26.2") older than both. Each dot-separated segment contributes
  * its leading integer (0 when it has none) and missing segments count as 0,
  * so "1.21" equals "1.21.0". A version carrying non-numeric characters
@@ -149,7 +149,7 @@ export function compareGameVersions(a: string, b: string): number {
 }
 
 /**
- * The newest version in a list — catalogs return supported-version lists in
+ * The newest version in a list. Catalogs return supported-version lists in
  * arbitrary (often oldest-first) order, so the last or first element can't be
  * trusted to be it.
  */

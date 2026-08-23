@@ -74,7 +74,7 @@ export interface NodeWithSecrets {
   lastHeartbeatAt: Date | null;
 }
 
-/** Safe node shape for API responses — no credentials of any kind. */
+/** Safe node shape for API responses. No credentials of any kind. */
 export interface PublicNode {
   id: string;
   name: string;
@@ -206,8 +206,8 @@ export async function getNode(nodeId: string): Promise<PublicNode | null> {
 /**
  * Short-lived cache of resolved node credentials, keyed by node id.
  *
- * Every call to a node's agent starts here — a console attach, a status
- * reconcile, a stats poll, a file listing — so this SELECT (plus its AES
+ * Every call to a node's agent starts here: a console attach, a status
+ * reconcile, a stats poll, a file listing. So this SELECT (plus its AES
  * decrypt) sat in front of *every* node round trip. Nodes are edited by an
  * admin, roughly never, while the panel reads them several times per page load,
  * so a few seconds of staleness buys back a database round trip per node call.
@@ -261,7 +261,7 @@ export async function listActiveNodesWithSecrets(): Promise<NodeWithSecrets[]> {
  * to a node to attribute the session and enforce that a token minted for node X
  * is not validated/audited by node Y). Fleet sizes are small, so an O(nodes)
  * scan after decrypt is cheap and avoids a stored hash column. Returns null when
- * no active node matches — callers treat that as a 401.
+ * no active node matches. Callers treat that as a 401.
  */
 export async function findNodeByAgentToken(
   token: string,
@@ -305,7 +305,7 @@ export interface UpdateNodeInput {
   apiToken?: string;
   /**
    * Public browser WS URL. Omit to keep current; set to a string to change it.
-   * (Clearing back to null is not supported via this input — a node that needs
+   * (Clearing back to null is not supported via this input. A node that needs
    * that can be re-registered.)
    */
   consoleUrl?: string;
@@ -360,7 +360,7 @@ export async function recordHeartbeat(nodeId: string): Promise<void> {
  * Delete a node.
  *
  * `servers.node_id` is ON DELETE RESTRICT, so Postgres refuses while any server
- * still references it — throwing SQLSTATE 23001 (`restrict_violation`), not
+ * still references it, throwing SQLSTATE 23001 (`restrict_violation`), not
  * 23503. Callers should pre-check the server count (and the drain flag) for a
  * readable error; this low-level function relies on the constraint as the
  * race-condition backstop. Orphaning running containers would be worse than a

@@ -45,25 +45,13 @@ export function sectionFromPathname(pathname: string): ServerSectionKey {
 }
 
 /**
- * Whether a section renders the live CPU/memory/disk cards.
- *
- * The sample behind those cards is a real request to the node on every poll, so
- * it is fetched for the sections that show it and no others. Keep this in step
- * with wherever `ResourceStats` is rendered — the provider's poll is gated the
- * same way, at runtime, by `useLiveResourceStats`.
- */
-export function sectionShowsResourceStats(section: ServerSectionKey): boolean {
-  return section === "console";
-}
-
-/**
  * The section switcher for a server page. Horizontal underline tabs that
  * scroll sideways on narrow screens; one route per section so each has its own
  * URL.
  *
  * Two things hide a section: the viewer lacking its permission (a console-only
  * subuser sees Console and Activity and nothing else), and the blueprint not
- * supporting it — the plugins tab only exists when the server's blueprint
+ * supporting it. The plugins tab only exists when the server's blueprint
  * declares plugin support that resolves for its current configuration (a
  * vanilla Minecraft server has no tab even though the blueprint is the same).
  * Its label comes from the blueprint too ("Plugins" for Paper, "Mods" for

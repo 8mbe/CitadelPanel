@@ -111,6 +111,7 @@ import {
   handleListServerLinks,
   handleListServerPorts,
   handleListServers,
+  handleListServerStatsBatch,
   handleAddServerPort,
   handleRemoveServerPort,
   handleCreateServerLink,
@@ -204,6 +205,10 @@ const exact = new Map<string, Partial<Record<string, Handler>>>([
   ["account/delete", { POST: handleDeleteAccount }],
   ["blueprints", { GET: handleListBlueprints }],
   ["servers", { GET: handleListServers }],
+  // Batched live samples for the dashboard's tiles (see routes/servers.ts).
+  // Exact-match, so it is found before the `servers/:id` pattern could ever
+  // read "stats-batch" as an id.
+  ["servers/stats-batch", { POST: handleListServerStatsBatch }],
   ["admin/nodes", { GET: handleListNodes, POST: handleCreateNode }],
   ["admin/nodes/health", { GET: handleAllNodesHealth }],
   ["admin/nodes/probe", { POST: handleProbeNode }],

@@ -3,7 +3,7 @@
  *
  * Why this is hand-rolled instead of dockerode's `container.exec().start()`:
  * `exec.start({ hijack: true })` relies on Node's `http` upgrade mechanics,
- * which Bun does not implement — the call throws
+ * which Bun does not implement. The call throws
  * `(HTTP code 101) unexpected - <first bytes of output>` instead of returning
  * a stream. This is the same limitation documented in `docker/attach.ts`. The
  * exec *create* and *inspect* calls are plain JSON over HTTP, so those stay on
@@ -66,7 +66,7 @@ export async function execInContainer(
 
   const { stdout, stderr } = await startExecRaw(socketPath, execId);
 
-  // Exit code comes from a separate JSON inspect — the hijacked stream itself
+  // Exit code comes from a separate JSON inspect. The hijacked stream itself
   // does not carry it. Works under Bun (plain HTTP GET).
   const inspect = await exec.inspect();
   return { stdout, stderr, exitCode: inspect.ExitCode ?? -1 };

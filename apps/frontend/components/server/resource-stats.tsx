@@ -9,7 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
+import { UsageMeter } from "@/components/usage-meter";
 import {
   useLiveResourceStats,
   useServerStatus,
@@ -52,7 +52,7 @@ export function ResourceStats({ server }: { server: ServerView }) {
               {server.cpuLimit} vCPU{server.cpuLimit === 1 ? "" : "s"}
             </span>
           </div>
-          <Progress value={cpuPct} className="w-full" />
+          <UsageMeter value={cpuPct} label="CPU load" />
         </CardContent>
       </Card>
 
@@ -69,7 +69,7 @@ export function ResourceStats({ server }: { server: ServerView }) {
             <span>Limit</span>
             <span className="tabular-nums">{formatMb(server.memoryLimitMb)}</span>
           </div>
-          <Progress value={memPct} className="w-full" />
+          <UsageMeter value={memPct} label="Memory used" />
         </CardContent>
       </Card>
 
@@ -86,7 +86,7 @@ export function ResourceStats({ server }: { server: ServerView }) {
             <span>Quota</span>
             <span className="tabular-nums">{formatMb(server.diskLimitMb)}</span>
           </div>
-          <Progress value={diskPct} className="w-full" />
+          <UsageMeter value={diskPct} label="Disk used" />
         </CardContent>
       </Card>
     </div>

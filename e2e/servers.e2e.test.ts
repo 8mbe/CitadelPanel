@@ -10,11 +10,11 @@
  *
  * The admin owns the only seeded server, so the admin key reaches every
  * happy-path read on it. The user key has no relationship to that server, so
- * the auth middleware returns 404 (not 403) — revealing that a server exists
- * to someone with no relationship to it is an information leak, by design.
+ * the auth middleware returns 404 (not 403). Revealing that a server exists to
+ * someone with no relationship to it is an information leak, by design.
  *
  * Destructive lifecycle actions (start/stop/restart/kill/delete) are NOT
- * exercised against the real server — they would mutate the dev panel's
+ * exercised against the real server, since they would mutate the dev panel's
  * state. The suite asserts their permission gates (404 for the user key) and
  * validation (400 for a bad serverId), not their side effects.
  */
@@ -59,7 +59,7 @@ describe("GET /api/servers/:id (detail)", () => {
     expect(body.viewer?.kind).toBeTruthy();
   });
 
-  e2e("with a user key is 404 (no access — info-leak prevention)", async () => {
+  e2e("with a user key is 404 (no access, info-leak prevention)", async () => {
     const { serverId } = await loadFixtures();
     const res = await api(`/api/servers/${serverId}`, { key: config.userKey });
     expect(res.status).toBe(404);
@@ -227,47 +227,46 @@ describe("GET /api/servers/:id/ports", () => {
 });
 
 describe("POST /api/servers/:id/ports (settings permission)", () => {
+  // The caller cannot name a port: the panel allocates a random one from the
+  // node's pool. So the only inputs left to reject are the label and access.
   e2e("with a user key is 404 (no access)", async () => {
     const { serverId } = await loadFixtures();
     const res = await api(`/api/servers/${serverId}/ports`, {
       method: "POST",
       key: config.userKey,
-      body: { port: 25566, protocol: "tcp" },
+      body: {},
     });
     expect(res.status).toBe(404);
   });
 
-  e2e("with an admin key + missing port is 400", async () => {
-    const { serverId } = await loadFixtures();
-    const res = await api(`/api/servers/${serverId}/ports`, { method: "POST", key: config.adminKey, body: { protocol: "tcp" } });
-    expect(res.status).toBe(400);
-  });
-
-  e2e("with an admin key + bad protocol is 400", async () => {
+  e2e("with an admin key + over-long label is 400", async () => {
     const { serverId } = await loadFixtures();
     const res = await api(`/api/servers/${serverId}/ports`, {
       method: "POST",
       key: config.adminKey,
-      body: { port: 25566, protocol: "sctp" },
+      body: { label: "x".repeat(65) },
     });
     expect(res.status).toBe(400);
   });
 
-  e2e("with an admin key + out-of-range port is 400", async () => {
+  e2e("with an admin key + a port number in the body is ignored, not honored", async () => {
+    // A stale client sending `port` must not get that port. Either the request
+    // succeeds with a panel-chosen number or it fails for a real reason (no
+    // pool, node unreachable). Never 400 for the extra key.
     const { serverId } = await loadFixtures();
     const res = await api(`/api/servers/${serverId}/ports`, {
       method: "POST",
       key: config.adminKey,
-      body: { port: 99999, protocol: "tcp" },
+      body: { port: 25566, protocol: "tcp" },
     });
-    expect(res.status).toBe(400);
+    expect(res.status).not.toBe(400);
   });
 });
 
 describe("DELETE /api/servers/:id/ports (settings permission)", () => {
   e2e("with a user key is 404 (no access)", async () => {
     const { serverId } = await loadFixtures();
-    const res = await api(`/api/servers/${serverId}/ports?port=25565&protocol=tcp`, {
+    const res = await api(`/api/servers/${serverId}/ports?port=25565`, {
       method: "DELETE",
       key: config.userKey,
     });
@@ -276,13 +275,13 @@ describe("DELETE /api/servers/:id/ports (settings permission)", () => {
 
   e2e("with an admin key + missing port is 400", async () => {
     const { serverId } = await loadFixtures();
-    const res = await api(`/api/servers/${serverId}/ports?protocol=tcp`, { method: "DELETE", key: config.adminKey });
+    const res = await api(`/api/servers/${serverId}/ports`, { method: "DELETE", key: config.adminKey });
     expect(res.status).toBe(400);
   });
 
-  e2e("with an admin key + bad protocol is 400", async () => {
+  e2e("with an admin key + out-of-range port is 400", async () => {
     const { serverId } = await loadFixtures();
-    const res = await api(`/api/servers/${serverId}/ports?port=25565&protocol=sctp`, {
+    const res = await api(`/api/servers/${serverId}/ports?port=99999`, {
       method: "DELETE",
       key: config.adminKey,
     });

@@ -153,7 +153,7 @@ export function ImportBlueprintDialog({
               onChange={(e) => setText(e.target.value)}
             />
             <FieldDescription>
-              Matches the exported format — see the built-in blueprints for a
+              Matches the exported format. See the built-in blueprints for a
               template.
             </FieldDescription>
           </Field>

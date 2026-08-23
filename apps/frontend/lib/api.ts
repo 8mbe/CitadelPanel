@@ -54,8 +54,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     );
   }
 
-  // A success response may carry no body — notably 204 No Content (used by the
-  // server delete endpoint). An empty body on a 2xx is valid, not an error: the
+  // A success response may carry no body. Notably 204 No Content, used by the
+  // server delete endpoint. An empty body on a 2xx is valid, not an error. The
   // callers of such endpoints expect void.
   if (response.ok && response.status === 204) {
     return undefined as T;
@@ -143,12 +143,12 @@ export interface SetupStatus {
   nodeCount: number;
   timezone: string;
   captcha: PublicCaptchaSettings;
-  /** False once an admin exists — the first-admin step must then be skipped. */
+  /** False once an admin exists. The first-admin step must then be skipped. */
   canCreateAdmin: boolean;
 }
 
 /**
- * GET /api/setup/status — unauthenticated.
+ * GET /api/setup/status. No authentication required.
  *
  * Drives both the wizard and the redirect that sends a fresh install there.
  */
@@ -157,7 +157,7 @@ export function getSetupStatus(): Promise<SetupStatus> {
 }
 
 /**
- * POST /api/setup/admin — claim the first admin account.
+ * POST /api/setup/admin. Claims the first admin account.
  *
  * The response carries a session cookie, so the caller is signed in afterwards
  * and the remaining wizard steps authenticate normally.
@@ -177,13 +177,13 @@ export interface CaptchaSettingsInput {
   enabled: boolean;
   provider?: CaptchaProvider | null;
   siteKey?: string | null;
-  /** Omit to keep the stored secret — it is never readable back. */
+  /** Omit to keep the stored secret. It is never readable back. */
   secretKey?: string | null;
   apiEndpoint?: string | null;
   minScore?: number;
 }
 
-/** PATCH /api/setup/settings — timezone and/or captcha. Requires admin. */
+/** PATCH /api/setup/settings. Sets timezone and/or captcha. Requires admin. */
 export function updateSetupSettings(payload: {
   timezone?: string;
   captcha?: CaptchaSettingsInput;
@@ -194,7 +194,7 @@ export function updateSetupSettings(payload: {
   });
 }
 
-/** POST /api/setup/complete — close the setup window. Idempotent. */
+/** POST /api/setup/complete. Closes the setup window. Idempotent. */
 export function completeSetup(): Promise<{
   completedAt: string;
   alreadyComplete: boolean;
@@ -203,17 +203,17 @@ export function completeSetup(): Promise<{
 }
 
 /**
- * GET /api/settings/public — unauthenticated panel-wide settings.
+ * GET /api/settings/public. Panel-wide settings, no authentication required.
  *
  * Surfaces the captcha config (for the sign-in form), the upload size cap (so
  * the file manager can pre-validate uploads client-side), the site branding, and
  * whether sign-up and the legal pages are available. Everything here is public
- * by construction — it is text and booleans the sign-in page renders.
+ * by construction. It is text and booleans the sign-in page renders.
  */
 export interface PublicSettings {
   captcha: PublicCaptchaSettings;
   uploadMaxBytes: number;
-  /** Whether the AI console helper is configured — the console shows the button only when true. */
+  /** Whether the AI console helper is configured. The console shows the button only when true. */
   ai: { enabled: boolean };
   branding: BrandingSettings;
   /** `enabled` already accounts for the bootstrap exemption. */
@@ -226,7 +226,7 @@ export async function getPublicSettings(): Promise<PublicSettings> {
   return request<PublicSettings>("/api/settings/public");
 }
 
-/** POST /api/admin/nodes — register a node. Returns a generated token once. */
+/** POST /api/admin/nodes. Registers a node. Returns a generated token once. */
 export function adminCreateNode(payload: {
   name: string;
   hostname: string;
@@ -284,7 +284,6 @@ export interface ApiServerSummary {
   diskLimitMb: number;
   ports: {
     port: number;
-    protocol: string;
     isPrimary: boolean;
     isAdditional: boolean;
     label: string | null;
@@ -311,10 +310,9 @@ export interface CreateServerPayload {
   diskLimitMb: number;
   /** Optional explicit node; the scheduler picks one when omitted. */
   nodeId?: string;
-  preferredPort?: number;
 }
 
-/** POST /api/admin/servers — provision a server for a user (admin only). */
+/** POST /api/admin/servers. Provisions a server for a user (admin only). */
 export function adminCreateServer(
   payload: CreateServerPayload,
 ): Promise<ApiServerSummary> {
@@ -358,8 +356,8 @@ export function toServerView(summary: ApiServerSummary): ServerView {
 }
 
 /**
- * GET /api/servers — servers visible to the caller: owned plus any the caller
- * is a subuser on. Fleet-wide listings live on the admin endpoints.
+ * GET /api/servers. Returns the servers visible to the caller: owned, plus any
+ * the caller is a subuser on. Fleet-wide listings live on the admin endpoints.
  */
 export function listServers(): Promise<ServerView[]> {
   return request<{ servers: ApiServerSummary[] }>("/api/servers").then((data) =>
@@ -368,7 +366,7 @@ export function listServers(): Promise<ServerView[]> {
 }
 
 /**
- * GET /api/servers/:id — one server's detail. Returns null on 404. The
+ * GET /api/servers/:id. One server's detail. Returns null on 404. The
  * response also carries the caller's access (`viewer`), which the server page
  * uses to hide sections the caller holds no permission for.
  */
@@ -388,12 +386,12 @@ export async function getServer(id: string): Promise<ServerView | null> {
 }
 
 /**
- * DELETE /api/servers/:id — remove a server. Owner-or-admin only. When
+ * DELETE /api/servers/:id. Removes a server. Owner-or-admin only. When
  * `deleteData` is true the node also wipes the server's data directory;
  * otherwise the files are left on disk.
  *
  * A node that cannot confirm the container was removed fails the delete with a
- * 502 and changes nothing — retry it once the node is back. `force` (admin-only)
+ * 502 and changes nothing. Retry it once the node is back. `force` (admin-only)
  * drops the panel's record anyway, for a node that is never coming back, and
  * accepts the container and files it leaves behind.
  */
@@ -421,7 +419,7 @@ export interface ServerStats {
   sampledAt: string;
 }
 
-/** GET /api/servers/:id/stats — a live sample, or null when not running. */
+/** GET /api/servers/:id/stats. Returns a live sample, or null when not running. */
 export async function getServerStats(id: string): Promise<ServerStats | null> {
   const data = await request<{ stats: ServerStats | null }>(
     `/api/servers/${id}/stats`,
@@ -429,7 +427,32 @@ export async function getServerStats(id: string): Promise<ServerStats | null> {
   return data.stats;
 }
 
-/** GET /api/servers/:id/logs — recent console output as one string. */
+/**
+ * POST /api/servers/stats-batch. Returns one live sample per named server.
+ *
+ * The dashboard polls this once per tick for all its tiles instead of once per
+ * server: the endpoint resolves access to every named id in one query and asks
+ * each node's agent exactly once, so a page of running servers costs one
+ * request per refresh rather than one per tile. Servers with no sample (not
+ * accessible, no container, or their node unreachable) are absent from the
+ * result.
+ */
+export async function getServersStatsBatch(
+  ids: string[],
+): Promise<Record<string, ServerStats>> {
+  if (ids.length === 0) return {};
+  const data = await request<{ stats: Record<string, ServerStats | null> }>(
+    "/api/servers/stats-batch",
+    { method: "POST", body: JSON.stringify({ ids }) },
+  );
+  const out: Record<string, ServerStats> = {};
+  for (const [id, stats] of Object.entries(data.stats)) {
+    if (stats) out[id] = stats;
+  }
+  return out;
+}
+
+/** GET /api/servers/:id/logs. Returns recent console output as one string. */
 export async function getServerLogs(id: string, tail = 200): Promise<string> {
   const data = await request<{ logs: string }>(
     `/api/servers/${id}/logs?tail=${tail}`,
@@ -438,9 +461,9 @@ export async function getServerLogs(id: string, tail = 200): Promise<string> {
 }
 
 /**
- * GET /api/servers/:id/install-log — provisioning output. Admin-only; throws
- * `ApiError` 403 for anyone else, so callers must gate on the viewer's kind
- * before polling rather than relying on the error.
+ * GET /api/servers/:id/install-log. Returns provisioning output. Admin-only;
+ * throws `ApiError` 403 for anyone else, so callers must gate on the viewer's
+ * kind before polling rather than relying on the error.
  */
 export async function getServerInstallLog(
   id: string,
@@ -464,7 +487,7 @@ export interface ServerEnvVar {
   options: string[] | null;
 }
 
-/** GET /api/servers/:id/env — the editable env vars for a server. */
+/** GET /api/servers/:id/env. Returns the editable env vars for a server. */
 export async function getServerEnv(id: string): Promise<ServerEnvVar[]> {
   const data = await request<{ env: ServerEnvVar[] }>(
     `/api/servers/${id}/env`,
@@ -473,7 +496,7 @@ export async function getServerEnv(id: string): Promise<ServerEnvVar[]> {
 }
 
 /**
- * PATCH /api/servers/:id/env — update one or more editable env vars.
+ * PATCH /api/servers/:id/env. Updates one or more editable env vars.
  *
  * Send only the keys that changed. Returns the full refreshed set and a note
  * that changes take effect on the next restart.
@@ -492,9 +515,8 @@ export async function updateServerEnv(
 
 /** A published port on a server, as the ports card renders it. */
 export interface ServerPort {
-  /** The published port — identity mapping: host and container side are this number. */
+  /** The published port: identity-mapped host↔container, on TCP and UDP both. */
   port: number;
-  protocol: "tcp" | "udp";
   isPrimary: boolean;
   /** True for owner-added ports (removable); false for blueprint ports. */
   isAdditional: boolean;
@@ -513,7 +535,7 @@ export type BackupTrigger = "manual" | "scheduled";
  *
  * `bytesProcessed` is what was read from disk; `bytesAdded` is what actually
  * went to S3 after restic deduplicated and compressed it. Showing both is the
- * point — the second number is the one that maps to the operator's storage bill,
+ * point. The second number is the one that maps to the operator's storage bill,
  * and on a large world it is usually a tiny fraction of the first.
  */
 export interface ServerBackup {
@@ -529,8 +551,8 @@ export interface ServerBackup {
   bytesProcessed: number | null;
   bytesAdded: number | null;
   /**
-   * Databases inside the snapshot. Always empty for a server backup — those are
-   * files only; databases are backed up per node by an administrator.
+   * Databases inside the snapshot. Always empty for a server backup, which is
+   * files only. Databases are backed up per node by an administrator.
    */
   databases: string[];
   error: string | null;
@@ -576,13 +598,13 @@ export interface ServerBackupsView {
   active: boolean;
 }
 
-/** GET /api/servers/:id/backups — history plus schedule context in one call. */
+/** GET /api/servers/:id/backups. Returns history plus schedule context in one call. */
 export async function getServerBackups(id: string): Promise<ServerBackupsView> {
   return request<ServerBackupsView>(`/api/servers/${id}/backups`);
 }
 
 /**
- * POST /api/servers/:id/backups — start a backup.
+ * POST /api/servers/:id/backups. Starts a backup.
  *
  * Returns immediately with the run in `pending`/`running`; the work happens on
  * the node and is followed by polling {@link getServerBackupLogs}.
@@ -595,7 +617,7 @@ export async function createServerBackup(id: string): Promise<ServerBackup> {
 }
 
 /**
- * GET /api/servers/:id/backups/:backupId/logs?afterSeq= — the live log tail.
+ * GET /api/servers/:id/backups/:backupId/logs?afterSeq=. The live log tail.
  *
  * Pass the highest `seq` already displayed and only newer lines come back, which
  * is what keeps a two-second poll cheap while a long backup runs.
@@ -615,7 +637,7 @@ export async function getServerBackupLogs(
 }
 
 /**
- * POST /api/servers/:id/backups/:backupId/restore — restore from a backup.
+ * POST /api/servers/:id/backups/:backupId/restore. Restores from a backup.
  *
  * Owner or admin only. Stops the server, overwrites its data directory and every
  * database in the snapshot, and leaves it stopped.
@@ -631,17 +653,17 @@ export async function restoreServerBackup(
   return data.backup;
 }
 
-/** POST /api/servers/:id/backups/start-server — start the server after a restore. */
+/** POST /api/servers/:id/backups/start-server. Starts the server after a restore. */
 export async function startServerAfterRestore(id: string): Promise<void> {
   await request<void>(`/api/servers/${id}/backups/start-server`, { method: "POST" });
 }
 
-/** DELETE /api/servers/:id/backups/:backupId — drop the snapshot and the record. */
+/** DELETE /api/servers/:id/backups/:backupId. Drops the snapshot and the record. */
 export async function deleteServerBackup(id: string, backupId: string): Promise<void> {
   await request<void>(`/api/servers/${id}/backups/${backupId}`, { method: "DELETE" });
 }
 
-/** PATCH /api/servers/:id/backups/settings — include this server in the schedule. */
+/** PATCH /api/servers/:id/backups/settings. Includes or excludes this server. */
 export async function setServerBackupsEnabled(
   id: string,
   enabled: boolean,
@@ -652,7 +674,7 @@ export async function setServerBackupsEnabled(
   });
 }
 
-/** POST /api/admin/backups/test — verify the S3 destination from a real node. */
+/** POST /api/admin/backups/test. Verifies the S3 destination from a real node. */
 export async function testBackupDestination(): Promise<{
   reachable: boolean;
   initialised: boolean;
@@ -664,7 +686,7 @@ export async function testBackupDestination(): Promise<{
 }
 
 /**
- * POST /api/admin/backups/preview-schedule — validate a cron expression.
+ * POST /api/admin/backups/preview-schedule. Validates a cron expression.
  *
  * Server-side so the preview uses the panel's timezone and the same parser the
  * scheduler does; a schedule can never preview one thing and then do another.
@@ -681,7 +703,7 @@ export async function previewBackupSchedule(cron: string): Promise<{
   });
 }
 
-/** GET /api/servers/:id/ports — the server's published ports. */
+/** GET /api/servers/:id/ports. Returns the server's published ports. */
 export async function getServerPorts(id: string): Promise<ServerPort[]> {
   const data = await request<{ ports: ServerPort[] }>(
     `/api/servers/${id}/ports`,
@@ -690,22 +712,19 @@ export async function getServerPorts(id: string): Promise<ServerPort[]> {
 }
 
 /**
- * POST /api/servers/:id/ports — publish an additional port.
+ * POST /api/servers/:id/ports. Publishes an additional port.
  *
- * The port is an identity mapping (host N → container N) and must be available:
- * in the node's port pool, unallocated, and free on the host. The container is
- * recreated to apply the new binding, so a running server is briefly restarted.
- * Returns the updated server summary.
+ * The caller does not choose the number: the panel draws a random free port
+ * from the node's pool and publishes it as an identity mapping (host N →
+ * container N) on TCP and UDP both. The container is recreated to apply the new
+ * binding, so a running server is briefly restarted. Returns the updated server
+ * summary, with the new port in its `ports`.
  *
  * @param label Optional note shown in the ports card, e.g. "Metrics".
  */
 export async function addServerPort(
   id: string,
-  payload: {
-    port: number;
-    protocol: "tcp" | "udp";
-    label?: string;
-  },
+  payload: { label?: string } = {},
 ): Promise<ApiServerSummary> {
   const data = await request<{ server: ApiServerSummary }>(
     `/api/servers/${id}/ports`,
@@ -715,7 +734,7 @@ export async function addServerPort(
 }
 
 /**
- * DELETE /api/servers/:id/ports?port=&protocol= — remove an additional port.
+ * DELETE /api/servers/:id/ports?port=. Removes an additional port.
  *
  * Only owner-added (additional) ports are removable; blueprint ports are
  * rejected. The container is recreated to release the binding. Returns the
@@ -724,10 +743,9 @@ export async function addServerPort(
 export async function removeServerPort(
   id: string,
   port: number,
-  protocol: "tcp" | "udp",
 ): Promise<ApiServerSummary> {
   const data = await request<{ server: ApiServerSummary }>(
-    `/api/servers/${id}/ports?port=${port}&protocol=${protocol}`,
+    `/api/servers/${id}/ports?port=${port}`,
     { method: "DELETE" },
   );
   return data.server;
@@ -757,7 +775,7 @@ export interface ServerLink {
   createdAt: string;
 }
 
-/** GET /api/servers/:id/links — this server's connections to other servers. */
+/** GET /api/servers/:id/links. This server's connections to other servers. */
 export async function getServerLinks(serverId: string): Promise<ServerLink[]> {
   const data = await request<{ links: ServerLink[] }>(
     `/api/servers/${serverId}/links`,
@@ -766,7 +784,7 @@ export async function getServerLinks(serverId: string): Promise<ServerLink[]> {
 }
 
 /**
- * POST /api/servers/:id/links — connect this server to another of the caller's
+ * POST /api/servers/:id/links. Connects this server to another of the caller's
  * servers. Requires owner (or admin) access to both; same-node pairs get a
  * private Docker network, cross-node pairs ride the public address.
  */
@@ -781,7 +799,7 @@ export async function createServerLink(
   return data.link;
 }
 
-/** DELETE /api/servers/:id/links/:linkId — remove a connection. */
+/** DELETE /api/servers/:id/links/:linkId. Removes a connection. */
 export async function removeServerLink(
   serverId: string,
   linkId: string,
@@ -802,14 +820,14 @@ export interface ServerDatabase {
   host: string;
   port: number;
   /**
-   * Plaintext password — only present at creation or password reset. Null when
+   * Plaintext password, only present at creation or password reset. Null when
    * listing; the stored value is encrypted and never decrypted for display.
    */
   password: string | null;
   createdAt: string;
 }
 
-/** GET /api/servers/:id/databases — the server's provisioned databases. */
+/** GET /api/servers/:id/databases. Returns the server's provisioned databases. */
 export async function getServerDatabases(
   serverId: string,
 ): Promise<ServerDatabase[]> {
@@ -820,10 +838,10 @@ export async function getServerDatabases(
 }
 
 /**
- * POST /api/servers/:id/databases — provision a database.
+ * POST /api/servers/:id/databases. Provisions a database.
  *
  * The database name, user, and host are generated server-side. The password is
- * generated, stored encrypted, and returned **once** — the caller must show it
+ * generated, stored encrypted, and returned **once**. The caller must show it
  * immediately because it can never be retrieved again.
  */
 export async function addServerDatabase(
@@ -836,7 +854,7 @@ export async function addServerDatabase(
   return data.database;
 }
 
-/** DELETE /api/servers/:id/databases/:databaseId — drop a database. */
+/** DELETE /api/servers/:id/databases/:databaseId. Drops a database. */
 export async function removeServerDatabase(
   serverId: string,
   databaseId: string,
@@ -847,7 +865,7 @@ export async function removeServerDatabase(
 }
 
 /**
- * POST /api/servers/:id/databases/:databaseId/reset-password — generate a new
+ * POST /api/servers/:id/databases/:databaseId/reset-password. Generates a new
  * password for the database user.
  *
  * Returns the new plaintext password once; the old one is unrecoverable.
@@ -867,7 +885,7 @@ export async function resetServerDatabasePassword(
 /** One table in a database, as the explorer sidebar lists it. */
 export interface DbTableSummary {
   name: string;
-  /** InnoDB's estimate — labeled "≈" in the UI. */
+  /** InnoDB's estimate, labeled "≈" in the UI. */
   rowsEstimate: number | null;
   sizeBytes: number | null;
   engine: string | null;
@@ -893,7 +911,7 @@ export interface DbTableSchema {
   primaryKey: string[];
 }
 
-/** One page of a table's rows. Values stay strings — BIGINTs must not lose precision. */
+/** One page of a table's rows. Values stay strings so BIGINTs keep precision. */
 export interface DbRowsPage {
   columns: string[];
   rows: (string | null)[][];
@@ -913,14 +931,14 @@ export interface DbColumnSpec {
   unsigned?: boolean;
   nullable: boolean;
   autoIncrement?: boolean;
-  /** Create-table only — the UI hides it when editing (keys are table-level). */
+  /** Create-table only. The UI hides it when editing (keys are table-level). */
   primaryKey?: boolean;
   defaultKind: "none" | "null" | "literal" | "currentTimestamp";
   defaultValue?: string;
   comment?: string;
 }
 
-/** GET .../explorer/tables — the database's tables. */
+/** GET .../explorer/tables. Returns the database's tables. */
 export async function getDatabaseTables(
   serverId: string,
   databaseId: string,
@@ -931,7 +949,7 @@ export async function getDatabaseTables(
   return data.tables;
 }
 
-/** GET .../explorer/tables/:table/schema — columns and primary key. */
+/** GET .../explorer/tables/:table/schema. Returns columns and primary key. */
 export async function getDatabaseTableSchema(
   serverId: string,
   databaseId: string,
@@ -943,7 +961,7 @@ export async function getDatabaseTableSchema(
   return data.schema;
 }
 
-/** GET .../explorer/tables/:table/rows — one page of rows. */
+/** GET .../explorer/tables/:table/rows. Returns one page of rows. */
 export async function getDatabaseTableRows(
   serverId: string,
   databaseId: string,
@@ -956,7 +974,7 @@ export async function getDatabaseTableRows(
   return data.page;
 }
 
-/** POST .../explorer/tables — create a table from column specs. */
+/** POST .../explorer/tables. Creates a table from column specs. */
 export async function createDatabaseTable(
   serverId: string,
   databaseId: string,
@@ -969,7 +987,7 @@ export async function createDatabaseTable(
   });
 }
 
-/** DELETE .../explorer/tables/:table — drop a table. */
+/** DELETE .../explorer/tables/:table. Drops a table. */
 export async function dropDatabaseTable(
   serverId: string,
   databaseId: string,
@@ -981,7 +999,7 @@ export async function dropDatabaseTable(
   );
 }
 
-/** POST .../explorer/tables/:table/columns — add a column. */
+/** POST .../explorer/tables/:table/columns. Adds a column. */
 export async function addDatabaseColumn(
   serverId: string,
   databaseId: string,
@@ -994,7 +1012,7 @@ export async function addDatabaseColumn(
   );
 }
 
-/** PATCH .../explorer/tables/:table/columns/:column — edit a column. */
+/** PATCH .../explorer/tables/:table/columns/:column. Edits a column. */
 export async function updateDatabaseColumn(
   serverId: string,
   databaseId: string,
@@ -1008,7 +1026,7 @@ export async function updateDatabaseColumn(
   );
 }
 
-/** DELETE .../explorer/tables/:table/columns/:column — drop a column. */
+/** DELETE .../explorer/tables/:table/columns/:column. Drops a column. */
 export async function dropDatabaseColumn(
   serverId: string,
   databaseId: string,
@@ -1021,7 +1039,7 @@ export async function dropDatabaseColumn(
   );
 }
 
-/** POST .../explorer/tables/:table/rows — insert a row. */
+/** POST .../explorer/tables/:table/rows. Inserts a row. */
 export async function insertDatabaseRow(
   serverId: string,
   databaseId: string,
@@ -1035,7 +1053,7 @@ export async function insertDatabaseRow(
 }
 
 /**
- * PATCH .../explorer/tables/:table/rows — update one row by primary key.
+ * PATCH .../explorer/tables/:table/rows. Updates one row by primary key.
  * Only the changed columns are submitted (binary columns can stay untouched).
  */
 export async function updateDatabaseRow(
@@ -1051,7 +1069,7 @@ export async function updateDatabaseRow(
   );
 }
 
-/** DELETE .../explorer/tables/:table/rows — delete one row by primary key. */
+/** DELETE .../explorer/tables/:table/rows. Deletes one row by primary key. */
 export async function deleteDatabaseRow(
   serverId: string,
   databaseId: string,
@@ -1065,7 +1083,7 @@ export async function deleteDatabaseRow(
 }
 
 /**
- * POST /api/servers/:id/console/session — mint a direct-console capability token.
+ * POST /api/servers/:id/console/session. Mints a direct-console capability token.
  *
  * Returns the one-time token and the agent WebSocket URL the browser should
  * open. The token is single-use and short-lived; a new one is minted on each
@@ -1081,12 +1099,12 @@ export async function requestConsoleSession(
 }
 
 /**
- * POST /api/servers/:id/console/revoke — give up a console session token.
+ * POST /api/servers/:id/console/revoke. Gives up a console session token.
  *
  * Fire-and-forget: this is called from a `pagehide` / unmount path where the
  * page may be torn down before the response arrives, so it uses `keepalive`
  * (the browser will flush the request even as the tab closes) and never awaits.
- * Errors are swallowed — a failed revoke is not worth surfacing to the user,
+ * Errors are swallowed. A failed revoke is not worth reporting to the user,
  * and the token is single-use + short-lived anyway, so the worst case is a
  * dangling row that expires on its own.
  */
@@ -1105,7 +1123,7 @@ export function revokeConsoleSession(id: string, token: string): void {
 // --- File manager --------------------------------------------------------------
 
 /**
- * GET /api/servers/:id/files?path= — list a directory.
+ * GET /api/servers/:id/files?path=. Lists a directory.
  *
  * Entries are server-relative POSIX paths. Directories sort first, then
  * alphabetically (the agent's ordering).
@@ -1119,7 +1137,7 @@ export async function listServerFiles(
   );
 }
 
-/** GET /api/servers/:id/files/content?path= — read a text file's contents. */
+/** GET /api/servers/:id/files/content?path=. Reads a text file's contents. */
 export async function readServerFile(
   serverId: string,
   path: string,
@@ -1131,7 +1149,7 @@ export async function readServerFile(
 }
 
 /**
- * PUT /api/servers/:id/files/content — write a text file.
+ * PUT /api/servers/:id/files/content. Writes a text file.
  *
  * Creates parent directories as needed. Binary files are not supported through
  * this endpoint (contents must be a UTF-8 string); large files are capped
@@ -1149,7 +1167,7 @@ export async function writeServerFile(
 }
 
 /**
- * POST /api/servers/:id/files/delete — delete files/directory trees.
+ * POST /api/servers/:id/files/delete. Deletes files/directory trees.
  *
  * One request for a whole selection. The node validates every path through
  * containment before removing anything, so a bad entry fails the batch rather
@@ -1165,7 +1183,7 @@ export async function deleteServerFiles(
   });
 }
 
-/** POST /api/servers/:id/files/directory — create a directory. */
+/** POST /api/servers/:id/files/directory. Creates a directory. */
 export async function createServerDirectory(
   serverId: string,
   path: string,
@@ -1177,7 +1195,7 @@ export async function createServerDirectory(
 }
 
 /**
- * POST /api/servers/:id/files/rename — rename or move a file/directory.
+ * POST /api/servers/:id/files/rename. Renames or moves a file/directory.
  *
  * `to` is the full destination path (not a folder to move into). The agent
  * rejects a name collision with a 409 and refuses to move a path into its own
@@ -1195,7 +1213,7 @@ export async function renameServerFile(
 }
 
 /**
- * POST /api/servers/:id/files/copy — copy a file or directory tree.
+ * POST /api/servers/:id/files/copy. Copies a file or directory tree.
  *
  * Directories are copied recursively. `to` is the full destination path; a name
  * collision is rejected with a 409.
@@ -1212,7 +1230,7 @@ export async function copyServerFile(
 }
 
 /**
- * GET /api/servers/:id/files/download — download one or more files/folders.
+ * GET /api/servers/:id/files/download. Downloads one or more files/folders.
  *
  * A single file downloads raw; multiple `paths` (or a directory) download as a
  * zip archive built on the fly. Returns a blob the caller can turn into a
@@ -1246,7 +1264,7 @@ export async function downloadServerFiles(
 }
 
 /**
- * POST /api/servers/:id/files/upload?path= — upload a single file.
+ * POST /api/servers/:id/files/upload?path=. Uploads a single file.
  *
  * Uses XMLHttpRequest rather than `fetch` so the browser can report upload
  * progress via `progress` events, which `fetch` cannot do. The file body is
@@ -1300,7 +1318,7 @@ export function uploadServerFile(
 }
 
 /**
- * POST /api/servers/:id/files/pull — fetch a URL into the server's data dir.
+ * POST /api/servers/:id/files/pull. Fetches a URL into the server's data dir.
  *
  * The panel validates the URL (http(s) only, SSRF guardrail) and the agent
  * performs the fetch. Returns the agent's `{ path, sizeBytes }` result. Unlike
@@ -1321,7 +1339,7 @@ export async function pullServerFileFromUrl(
 // --- Plugins --------------------------------------------------------------
 
 /**
- * GET /api/servers/:id/plugins — installed plugins reconciled against the
+ * GET /api/servers/:id/plugins. Installed plugins reconciled against the
  * actual directory, plus the resolved support (label, directory, provider
  * hosts) and the auto-update setting.
  */
@@ -1329,7 +1347,7 @@ export function getServerPlugins(serverId: string): Promise<ServerPluginList> {
   return request<ServerPluginList>(`/api/servers/${serverId}/plugins`);
 }
 
-/** GET /api/servers/:id/plugins/search?q= — catalog search, proxied by the panel. */
+/** GET /api/servers/:id/plugins/search?q=. Catalog search, proxied by the panel. */
 export function searchServerPlugins(
   serverId: string,
   q: string,
@@ -1341,7 +1359,7 @@ export function searchServerPlugins(
   );
 }
 
-/** GET /api/servers/:id/plugins/versions/:projectId — installable versions. */
+/** GET /api/servers/:id/plugins/versions/:projectId. Installable versions. */
 export async function getServerPluginVersions(
   serverId: string,
   projectId: string,
@@ -1353,7 +1371,7 @@ export async function getServerPluginVersions(
 }
 
 /**
- * POST /api/servers/:id/plugins/install — install (or update) a plugin to a
+ * POST /api/servers/:id/plugins/install. Installs (or updates) a plugin to a
  * specific catalog version. The panel re-resolves the version and pins the
  * download URL before the agent fetches it.
  */
@@ -1368,7 +1386,7 @@ export function installServerPlugin(
   });
 }
 
-/** POST /api/servers/:id/plugins/:pluginId/toggle — enable or disable. */
+/** POST /api/servers/:id/plugins/:pluginId/toggle. Enables or disables. */
 export function toggleServerPlugin(
   serverId: string,
   pluginId: string,
@@ -1379,7 +1397,7 @@ export function toggleServerPlugin(
 }
 
 /**
- * DELETE /api/servers/:id/plugins/:pluginId — remove the file and row.
+ * DELETE /api/servers/:id/plugins/:pluginId. Removes the file and row.
  * `deleteData` also wipes the plugin's config/data folder (matched by the
  * project's title/slug inside the install directory).
  */
@@ -1395,7 +1413,7 @@ export function removeServerPlugin(
   );
 }
 
-/** PATCH /api/servers/:id/plugins — per-server plugin settings. */
+/** PATCH /api/servers/:id/plugins. Per-server plugin settings. */
 export function updateServerPluginSettings(
   serverId: string,
   autoUpdate: boolean,
@@ -1426,7 +1444,7 @@ export function restartServer(id: string): Promise<ApiServerSummary> {
 }
 
 /**
- * POST /api/servers/:id/kill — force-stop with SIGKILL.
+ * POST /api/servers/:id/kill. Force-stops with SIGKILL.
  *
  * The escape hatch for a container stuck in a graceful stop/restart: no grace
  * period, no chance to save. Returns the updated summary (status `stopped`).
@@ -1438,11 +1456,11 @@ export function killServer(id: string): Promise<ApiServerSummary> {
 }
 
 /**
- * POST /api/servers/:id/reinstall — delete every file and build the server
+ * POST /api/servers/:id/reinstall. Deletes every file and builds the server
  * again from its blueprint.
  *
  * `confirmName` must be the server's name exactly; the backend refuses anything
- * else without touching the server. Returns the summary in `installing` — the
+ * else without touching the server. Returns the summary in `installing`. The
  * rebuild runs on the node afterwards, and the server page's status poll is what
  * follows it to `stopped`.
  */
@@ -1464,13 +1482,13 @@ export interface SftpCredential {
   serverId: string;
   userId: string;
   username: string;
-  /** Plaintext password — returned only on create/regenerate, never on list. */
+  /** Plaintext password, returned only on create/regenerate, never on list. */
   password: string;
   createdAt: string;
   updatedAt: string;
 }
 
-/** A credential in a list — no password, ever. */
+/** A credential in a list. No password, ever. */
 export interface SftpCredentialSummary {
   id: string;
   serverId: string;
@@ -1489,12 +1507,12 @@ export interface SftpConnection {
   hasCredential: boolean;
 }
 
-/** GET /api/servers/:id/sftp/connection — host/port/username for an SFTP client. */
+/** GET /api/servers/:id/sftp/connection. Host/port/username for an SFTP client. */
 export function getSftpConnection(serverId: string): Promise<SftpConnection> {
   return request<SftpConnection>(`/api/servers/${serverId}/sftp/connection`);
 }
 
-/** GET /api/servers/:id/sftp/credentials — list credentials (no passwords). */
+/** GET /api/servers/:id/sftp/credentials. Lists credentials (no passwords). */
 export async function listSftpCredentials(
   serverId: string,
 ): Promise<SftpCredentialSummary[]> {
@@ -1504,14 +1522,14 @@ export async function listSftpCredentials(
   return data.credentials;
 }
 
-/** POST /api/servers/:id/sftp/credentials — mint (or rotate) the caller's credential. */
+/** POST /api/servers/:id/sftp/credentials. Mints (or rotates) the caller's credential. */
 export function createSftpCredential(serverId: string): Promise<SftpCredential> {
   return request<SftpCredential>(`/api/servers/${serverId}/sftp/credentials`, {
     method: "POST",
   });
 }
 
-/** POST /api/servers/:id/sftp/credentials/regenerate — rotate the password. */
+/** POST /api/servers/:id/sftp/credentials/regenerate. Rotates the password. */
 export function regenerateSftpCredential(serverId: string): Promise<SftpCredential> {
   return request<SftpCredential>(
     `/api/servers/${serverId}/sftp/credentials/regenerate`,
@@ -1519,7 +1537,7 @@ export function regenerateSftpCredential(serverId: string): Promise<SftpCredenti
   );
 }
 
-/** DELETE /api/servers/:id/sftp/credentials/:credentialId — revoke a credential. */
+/** DELETE /api/servers/:id/sftp/credentials/:credentialId. Revokes a credential. */
 export function deleteSftpCredential(
   serverId: string,
   credentialId: string,
@@ -1532,7 +1550,7 @@ export function deleteSftpCredential(
 
 // --- Blueprints ---------------------------------------------------------------
 
-/** GET /api/blueprints — the blueprints a server can be provisioned with. */
+/** GET /api/blueprints. The blueprints a server can be provisioned with. */
 export function listBlueprints(): Promise<BlueprintView[]> {
   return request<{
     blueprints: {
@@ -1553,7 +1571,7 @@ export function listBlueprints(): Promise<BlueprintView[]> {
 
 // --- Subusers -----------------------------------------------------------------
 
-/** GET /api/servers/:id/subusers — delegated users on a server. */
+/** GET /api/servers/:id/subusers. Delegated users on a server. */
 export async function listSubusers(serverId: string): Promise<SubuserView[]> {
   const data = await request<{
     subusers: {
@@ -1577,7 +1595,7 @@ export async function listSubusers(serverId: string): Promise<SubuserView[]> {
   }));
 }
 
-/** POST /api/servers/:id/subusers — invite an existing account. */
+/** POST /api/servers/:id/subusers. Invites an existing account. */
 export async function inviteSubuser(
   serverId: string,
   email: string,
@@ -1589,7 +1607,7 @@ export async function inviteSubuser(
   });
 }
 
-/** DELETE /api/servers/:id/subusers/:userId — revoke access. */
+/** DELETE /api/servers/:id/subusers/:userId. Revokes access. */
 export async function removeSubuser(
   serverId: string,
   userId: string,
@@ -1618,7 +1636,7 @@ export interface ApiUser {
 }
 
 /**
- * GET /api/admin/users — every account on the panel (admin only).
+ * GET /api/admin/users. Every account on the panel (admin only).
  *
  * @param q Optional search term, matched case-insensitively against email/name.
  */
@@ -1662,7 +1680,7 @@ export async function adminListUsers(q?: string): Promise<ApiUser[]> {
 }
 
 /**
- * PATCH /api/admin/users/:id/role — promote or demote an account.
+ * PATCH /api/admin/users/:id/role. Promotes or demotes an account.
  *
  * The backend refuses to let an admin change their own role or to demote the
  * last remaining admin; both come back as 409 with a readable message.
@@ -1678,7 +1696,7 @@ export async function adminUpdateUserRole(
 }
 
 /**
- * POST /api/admin/users/:id/ban — ban a user and suspend their servers.
+ * POST /api/admin/users/:id/ban. Bans a user and suspends their servers.
  *
  * The backend revokes all the user's sessions (so they are signed out
  * everywhere) and suspends every server they own. An admin cannot ban
@@ -1702,7 +1720,7 @@ export async function adminBanUser(
 }
 
 /**
- * POST /api/admin/users/:id/unban — lift a ban.
+ * POST /api/admin/users/:id/unban. Lifts a ban.
  *
  * Servers are NOT unsuspended automatically; the admin re-enables them
  * individually. The UI makes this explicit.
@@ -1728,7 +1746,7 @@ export interface AdminUserDetail {
   servers: ApiServerSummary[];
 }
 
-/** GET /api/admin/users/:id — a single account's profile plus owned servers. */
+/** GET /api/admin/users/:id. A single account's profile plus owned servers. */
 export async function adminGetUser(userId: string): Promise<AdminUserDetail> {
   const data = await request<{
     user: {
@@ -1776,7 +1794,7 @@ export interface ApiMe {
   pendingReviews?: number;
 }
 
-/** GET /api/me — the caller's own account and counts. */
+/** GET /api/me. The caller's own account and counts. */
 export async function getMe(): Promise<ApiMe> {
   const data = await request<{
     user: {
@@ -1818,7 +1836,7 @@ export interface ApiNode {
 }
 
 /**
- * GET /api/admin/nodes/health — health of every active node.
+ * GET /api/admin/nodes/health. The health of every active node.
  *
  * Probes all active nodes in parallel and records a heartbeat for each that
  * answers. Used by the nodes list page's "check on visit" sweep, so the
@@ -1838,7 +1856,7 @@ export async function adminHeartbeatAllNodes(): Promise<
 }
 
 /**
- * GET /api/admin/nodes/:id — one node's full detail (admin only).
+ * GET /api/admin/nodes/:id. One node's full detail (admin only).
  *
  * Aggregates the node, its allocation, the servers on it (with owner emails and
  * a live usage sample), and an abuse summary. Server rows are mapped through
@@ -1878,7 +1896,7 @@ export async function adminGetNode(nodeId: string): Promise<NodeDetail> {
 }
 
 /**
- * PATCH /api/admin/nodes/:id — drain (isActive=false) or activate a node.
+ * PATCH /api/admin/nodes/:id. Drains (isActive=false) or activates a node.
  *
  * Draining stops new servers being scheduled onto the node but leaves existing
  * containers running, so it is reversible. Returns the updated public node.
@@ -1917,7 +1935,7 @@ export interface NodeDetailsUpdate {
 }
 
 /**
- * PATCH /api/admin/nodes/:id — correct a node's connection details.
+ * PATCH /api/admin/nodes/:id. Corrects a node's connection details.
  *
  * For fixing a mistyped hostname, agent URL or token without deleting and
  * re-registering the node (which is blocked while servers reference it). Only
@@ -1938,11 +1956,11 @@ export async function adminUpdateNodeDetails(
 }
 
 /**
- * DELETE /api/admin/nodes/:id — remove a node.
+ * DELETE /api/admin/nodes/:id. Removes a node.
  *
  * Two gates, each returning a 409 with an actionable message:
  * 1. The node must be drained (`isActive = false`) first.
- * 2. It must host no servers — the `servers.node_id` FK is ON DELETE RESTRICT,
+ * 2. It must host no servers. The `servers.node_id` FK is ON DELETE RESTRICT,
  *    so running containers are never orphaned.
  *
  * An empty, drained node deletes cleanly.
@@ -1954,7 +1972,7 @@ export async function adminDeleteNode(nodeId: string): Promise<void> {
 // --- Node port pool ----------------------------------------------------------
 
 /**
- * GET /api/admin/nodes/:id/ports — the node's reserved port-pool entries.
+ * GET /api/admin/nodes/:id/ports. The node's reserved port-pool entries.
  *
  * Folded into `adminGetNode` for the initial page load; this standalone fetch
  * refreshes just the pool after an add/delete without re-fetching the node.
@@ -1969,7 +1987,7 @@ export async function adminListNodePortPool(
 }
 
 /**
- * POST /api/admin/nodes/:id/ports — reserve a port-pool entry.
+ * POST /api/admin/nodes/:id/ports. Reserves a port-pool entry.
  *
  * The backend parses the spec, rejects overlaps, and verifies every port is
  * free on the host via the agent. A 409 names the offending (in-use or
@@ -1978,17 +1996,16 @@ export async function adminListNodePortPool(
 export async function adminAddNodePortPoolEntry(
   nodeId: string,
   spec: string,
-  protocol: "tcp" | "udp" = "tcp",
 ): Promise<NodePortPoolEntry> {
   const data = await request<{ entry: NodePortPoolEntry }>(
     `/api/admin/nodes/${nodeId}/ports`,
-    { method: "POST", body: JSON.stringify({ spec, protocol }) },
+    { method: "POST", body: JSON.stringify({ spec }) },
   );
   return data.entry;
 }
 
 /**
- * DELETE /api/admin/nodes/ports/:entryId — remove a pool entry.
+ * DELETE /api/admin/nodes/ports/:entryId. Removes a pool entry.
  *
  * Existing server bindings are grandfathered; only future allocations change.
  */
@@ -1999,7 +2016,7 @@ export async function adminDeleteNodePortPoolEntry(
 }
 
 /**
- * GET /api/admin/nodes — registered nodes with capacity and allocation.
+ * GET /api/admin/nodes. Registered nodes with capacity and allocation.
  *
  * The list endpoint returns the full public node shape plus an `allocation`
  * block per node; both are mapped into the UI's display types here.
@@ -2049,7 +2066,7 @@ export async function adminListNodes(): Promise<
  *
  * `reachable` is the only field guaranteed on every response: when the agent
  * cannot be reached the BFF still answers 200 with `reachable: false` and an
- * `error` string, so a failed probe is an expected result here — not an
+ * `error` string, so a failed probe is an expected result here, not an
  * `ApiError`. `ApiError` is reserved for transport/permission failures.
  */
 export interface NodeHealthResult {
@@ -2094,7 +2111,7 @@ export interface NodeDockerSocketStatus {
 }
 
 /**
- * GET /api/admin/nodes/:id/health — live reachability check (admin only).
+ * GET /api/admin/nodes/:id/health. Live reachability check (admin only).
  *
  * Probes the node's agent from the control plane and records a heartbeat when
  * it answers. Used by the "Test connection" button on a node card.
@@ -2109,7 +2126,7 @@ export async function adminTestNodeConnection(
 }
 
 /**
- * POST /api/admin/nodes/probe — check connection details before registering.
+ * POST /api/admin/nodes/probe. Checks connection details before registering.
  *
  * Takes raw `apiUrl` + `token` (no node id yet) and pings the agent without
  * persisting anything. The register dialog's "Test connection" button uses
@@ -2140,7 +2157,7 @@ export interface AdminServerSummary extends ApiServerSummary {
   memoryUsageMb: number | null;
 }
 
-/** GET /api/admin/servers — every server on the panel (admin only). */
+/** GET /api/admin/servers. Every server on the panel (admin only). */
 export function adminListServers(): Promise<AdminServerSummary[]> {
   return request<{ servers: AdminServerSummary[] }>("/api/admin/servers").then(
     (data) => data.servers,
@@ -2179,7 +2196,6 @@ export type BlueprintResourceProfile = "bursty" | "steady-low" | "steady-high";
 
 export interface BlueprintPortSpec {
   container: number;
-  protocol: "tcp" | "udp";
   primary?: boolean;
 }
 
@@ -2260,7 +2276,7 @@ export interface BlueprintPayload {
   minimums: { cpuLimit: number; memoryLimitMb: number; diskLimitMb: number };
 }
 
-/** GET /api/admin/blueprints — every blueprint with its server count. */
+/** GET /api/admin/blueprints. Every blueprint with its server count. */
 export async function adminListBlueprints(): Promise<AdminBlueprintSummary[]> {
   const data = await request<{ blueprints: AdminBlueprintSummary[] }>(
     "/api/admin/blueprints",
@@ -2268,7 +2284,7 @@ export async function adminListBlueprints(): Promise<AdminBlueprintSummary[]> {
   return data.blueprints;
 }
 
-/** GET /api/admin/blueprints/:id — full detail for the edit form. */
+/** GET /api/admin/blueprints/:id. Full detail for the edit form. */
 export async function adminGetBlueprint(id: string): Promise<AdminBlueprintDetail> {
   const data = await request<{ blueprint: AdminBlueprintDetail }>(
     `/api/admin/blueprints/${id}`,
@@ -2276,7 +2292,7 @@ export async function adminGetBlueprint(id: string): Promise<AdminBlueprintDetai
   return data.blueprint;
 }
 
-/** POST /api/admin/blueprints — create a custom blueprint. */
+/** POST /api/admin/blueprints. Creates a custom blueprint. */
 export async function adminCreateBlueprint(
   payload: BlueprintPayload,
 ): Promise<AdminBlueprintDetail> {
@@ -2287,7 +2303,7 @@ export async function adminCreateBlueprint(
   return data.blueprint;
 }
 
-/** PATCH /api/admin/blueprints/:id — update a custom blueprint. */
+/** PATCH /api/admin/blueprints/:id. Updates a custom blueprint. */
 export async function adminUpdateBlueprint(
   id: string,
   payload: BlueprintPayload,
@@ -2299,13 +2315,13 @@ export async function adminUpdateBlueprint(
   return data.blueprint;
 }
 
-/** DELETE /api/admin/blueprints/:id — remove a custom, unused blueprint. */
+/** DELETE /api/admin/blueprints/:id. Removes a custom, unused blueprint. */
 export async function adminDeleteBlueprint(id: string): Promise<void> {
   await request(`/api/admin/blueprints/${id}`, { method: "DELETE" });
 }
 
 /**
- * POST /api/admin/blueprints/import-url — server-side fetch of a blueprint JSON
+ * POST /api/admin/blueprints/import-url. Server-side fetch of a blueprint JSON
  * file from a link (avoids browser CORS). Returns the raw parsed object; the
  * caller validates it before opening the review form.
  */
@@ -2322,7 +2338,7 @@ export async function adminImportBlueprintFromUrl(
 // --- Security / suspicious activity ------------------------------------------
 
 /**
- * GET /api/admin/suspicious-activity — the abuse review queue.
+ * GET /api/admin/suspicious-activity. The abuse review queue.
  *
  * The backend joins each flag with server/owner context and stores per-signal
  * detail in a JSON `detail` column; this flattens that detail into the
@@ -2382,7 +2398,7 @@ export async function adminListSuspicious(
   };
 }
 
-/** POST /api/admin/suspicious-activity/:id/review — mark reviewed/dismissed. */
+/** POST /api/admin/suspicious-activity/:id/review. Marks reviewed/dismissed. */
 export async function adminReviewSuspicious(
   id: string,
   reviewed = true,
@@ -2467,7 +2483,7 @@ export interface ServerActivityEntry {
   createdAt: string;
 }
 
-/** GET /api/servers/:id/activity — per-server audit feed. */
+/** GET /api/servers/:id/activity. Per-server audit feed. */
 export async function listServerActivity(
   serverId: string,
   limit = 100,
@@ -2501,7 +2517,7 @@ export interface AdminApiKeyView {
 }
 
 /**
- * GET /api/admin/api-keys — every key on the panel, owner context included
+ * GET /api/admin/api-keys. Every key on the panel, owner context included
  * (admin only). `q` filters by owner email/name or key name.
  */
 export async function adminListApiKeys(q?: string): Promise<AdminApiKeyView[]> {
@@ -2511,7 +2527,7 @@ export async function adminListApiKeys(q?: string): Promise<AdminApiKeyView[]> {
 }
 
 /**
- * POST /api/admin/api-keys — mint a key for the calling admin.
+ * POST /api/admin/api-keys. Mints a key for the calling admin.
  *
  * The full key is returned once, as `token`; it is stored hashed and can never
  * be retrieved again. Show it immediately.
@@ -2525,7 +2541,7 @@ export async function adminCreateApiKey(
   });
 }
 
-/** PATCH /api/admin/api-keys/:id — enable or disable any user's key (admin only). */
+/** PATCH /api/admin/api-keys/:id. Enables or disables any user's key (admin only). */
 export async function adminSetApiKeyEnabled(
   keyId: string,
   enabled: boolean,
@@ -2537,7 +2553,7 @@ export async function adminSetApiKeyEnabled(
   return data.key;
 }
 
-/** DELETE /api/admin/api-keys/:id — revoke any user's key (admin only). */
+/** DELETE /api/admin/api-keys/:id. Revokes any user's key (admin only). */
 export async function adminDeleteApiKey(keyId: string): Promise<void> {
   await request(`/api/admin/api-keys/${keyId}`, { method: "DELETE" });
 }
@@ -2591,7 +2607,7 @@ export interface AdminSettings {
  * only as "is one stored?", since it is encrypted at rest precisely so it cannot
  * be read back.
  *
- * `usable` is separate from `enabled` on purpose — a half-entered destination
+ * `usable` is separate from `enabled` on purpose. A half-entered destination
  * must never render as "backups are on", because the scheduler would skip it and
  * nobody would know why.
  */
@@ -2601,7 +2617,7 @@ export interface AdminBackupSettings {
   endpoint: string | null;
   /**
    * Whether nodes connect over TLS. Its own field rather than part of the
-   * endpoint, so plaintext is always a deliberate choice — needed for a
+   * endpoint, so plaintext is always a deliberate choice, needed for a
    * self-hosted Garage or MinIO on a LAN, which usually has no certificate.
    */
   useTls: boolean;
@@ -2643,7 +2659,7 @@ export interface DatabaseBackupPolicy {
  *
  * `usedBytes` is summed from per-repository sizes recorded after each backup, so it
  * is at most one backup interval stale. `unmeasured` counts repositories never
- * measured, which makes `usedBytes` a floor rather than an exact figure — the UI
+ * measured, which makes `usedBytes` a floor rather than an exact figure. The UI
  * says so instead of presenting it as complete.
  */
 export interface BackupStorageReport {
@@ -2655,7 +2671,7 @@ export interface BackupStorageReport {
   overQuota: boolean;
 }
 
-/** GET /api/admin/backups/storage — used / allowed / total. */
+/** GET /api/admin/backups/storage. Used / allowed / total. */
 export async function getBackupStorage(): Promise<BackupStorageReport> {
   return request<BackupStorageReport>("/api/admin/backups/storage");
 }
@@ -2666,8 +2682,8 @@ export async function getBackupStorage(): Promise<BackupStorageReport> {
  * One node's database-backup status.
  *
  * `hasDatabaseServer` is false when the node has no MariaDB admin credential
- * configured, which is the difference between "nothing to back up" and "cannot back
- * up" — the UI needs to say which.
+ * configured, which is the difference between "nothing to back up" and "cannot
+ * back up". The UI needs to say which.
  */
 export interface DatabaseBackupNode {
   nodeId: string;
@@ -2692,12 +2708,12 @@ export interface DatabaseBackupsView {
   };
 }
 
-/** GET /api/admin/backups/databases — per-node database backup status. */
+/** GET /api/admin/backups/databases. Per-node database backup status. */
 export async function getDatabaseBackupNodes(): Promise<DatabaseBackupsView> {
   return request<DatabaseBackupsView>("/api/admin/backups/databases");
 }
 
-/** GET /api/admin/backups/databases/:nodeId — one node's history. */
+/** GET /api/admin/backups/databases/:nodeId. One node's history. */
 export async function getNodeDatabaseBackups(nodeId: string): Promise<ServerBackup[]> {
   const data = await request<{ backups: ServerBackup[] }>(
     `/api/admin/backups/databases/${nodeId}`,
@@ -2706,7 +2722,7 @@ export async function getNodeDatabaseBackups(nodeId: string): Promise<ServerBack
 }
 
 /**
- * POST /api/admin/backups/databases/:nodeId — dump every database on the node.
+ * POST /api/admin/backups/databases/:nodeId. Dumps every database on the node.
  *
  * Returns immediately with the run in `pending`/`running`; follow it with
  * {@link getNodeDatabaseBackupLogs}.
@@ -2719,7 +2735,7 @@ export async function createNodeDatabaseBackup(nodeId: string): Promise<ServerBa
   return data.backup;
 }
 
-/** GET /api/admin/backups/databases/:nodeId/runs/:runId/logs?afterSeq= — live tail. */
+/** GET /api/admin/backups/databases/:nodeId/runs/:runId/logs?afterSeq=. Live tail. */
 export async function getNodeDatabaseBackupLogs(
   nodeId: string,
   runId: string,
@@ -2737,8 +2753,8 @@ export async function getNodeDatabaseBackupLogs(
 }
 
 /**
- * POST /api/admin/backups/databases/:nodeId/runs/:runId/restore — restore a node's
- * databases.
+ * POST /api/admin/backups/databases/:nodeId/runs/:runId/restore. Restores a
+ * node's databases.
  *
  * Overwrites the live contents of every database in the snapshot, across every
  * tenant on that node.
@@ -2754,7 +2770,7 @@ export async function restoreNodeDatabaseBackup(
   return data.backup;
 }
 
-/** DELETE /api/admin/backups/databases/:nodeId/runs/:runId — drop the snapshot. */
+/** DELETE /api/admin/backups/databases/:nodeId/runs/:runId. Drops the snapshot. */
 export async function deleteNodeDatabaseBackup(
   nodeId: string,
   runId: string,
@@ -2764,7 +2780,7 @@ export async function deleteNodeDatabaseBackup(
   });
 }
 
-/** PATCH /api/admin/backups/databases/:nodeId — include this node in the schedule. */
+/** PATCH /api/admin/backups/databases/:nodeId. Includes or excludes this node. */
 export async function setNodeDatabaseBackupsEnabled(
   nodeId: string,
   enabled: boolean,
@@ -2784,8 +2800,8 @@ export interface BrandingSettings {
 
 /**
  * The operator-configurable third theme. Defined in `@/lib/site-theme`, which is
- * also where the token list and the CSS builder live — re-exported here so the
- * settings forms have one import for the whole admin surface.
+ * also where the token list and the CSS builder live. It is re-exported here so
+ * the settings forms have one import for the whole admin surface.
  */
 export type { SiteThemeSettings };
 
@@ -2808,9 +2824,9 @@ export const ANALYTICS_PROVIDERS = ["plausible", "google"] as const;
 export type AnalyticsProvider = (typeof ANALYTICS_PROVIDERS)[number];
 
 /**
- * Web analytics config. Unlike captcha/mail/AI there is nothing secret here —
- * a measurement id and a site domain are public in any page that uses them —
- * so the admin view carries the real values rather than "is one stored?".
+ * Web analytics config. Unlike captcha/mail/AI there is nothing secret here. A
+ * measurement id and a site domain are public in any page that uses them, so
+ * the admin view carries the real values rather than "is one stored?".
  */
 export interface AnalyticsSettings {
   enabled: boolean;
@@ -2828,7 +2844,7 @@ export interface AdminAiSettings {
   hasApiKey: boolean;
 }
 
-/** GET /api/admin/settings — current general settings (admin only). */
+/** GET /api/admin/settings. Current general settings (admin only). */
 export async function getAdminSettings(): Promise<AdminSettings> {
   return request<AdminSettings>("/api/admin/settings");
 }
@@ -2883,7 +2899,7 @@ export interface AdminSettingsUpdate {
 }
 
 /**
- * PATCH /api/admin/settings — update one or more settings groups. Returns the
+ * PATCH /api/admin/settings. Updates one or more settings groups. Returns the
  * resulting public view of whatever was changed (admin only).
  */
 export async function updateAdminSettings(
@@ -2895,7 +2911,7 @@ export async function updateAdminSettings(
   });
 }
 
-/** POST /api/admin/settings/test-email — send a test message (admin only). */
+/** POST /api/admin/settings/test-email. Sends a test message (admin only). */
 export async function sendTestEmail(to: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>("/api/admin/settings/test-email", {
     method: "POST",
@@ -2906,7 +2922,7 @@ export async function sendTestEmail(to: string): Promise<{ ok: boolean }> {
 // --- AI assistant -------------------------------------------------------------
 
 /**
- * POST /api/admin/settings/ai/models — fetch the provider's model list.
+ * POST /api/admin/settings/ai/models. Fetches the provider's model list.
  *
  * Accepts the form's current `apiUrl`/`apiKey` so an admin can probe a provider
  * before saving it; falls back to the stored config when either is omitted.
@@ -2926,7 +2942,7 @@ export async function fetchAiModels(input: {
 }
 
 /**
- * POST /api/admin/settings/ai/test — ping the provider and wait for the reply.
+ * POST /api/admin/settings/ai/test. Pings the provider and waits for the reply.
  *
  * Accepts the form's current `apiUrl`/`apiKey`/`model`; falls back to stored
  * config when any is omitted. Returns the assistant's reply text.
@@ -2946,7 +2962,7 @@ export async function testAi(input: {
 }
 
 /**
- * POST /api/servers/:id/ai-helper — ask the assistant about this server.
+ * POST /api/servers/:id/ai-helper. Asks the assistant about this server.
  *
  * The browser sends only the free-text question; the panel assembles the full
  * prompt (logs, game, version) server-side. Requires the `console` permission.
@@ -2972,13 +2988,13 @@ export interface LegalDocument {
 export type LegalDocumentKey = "terms" | "privacy";
 export type LegalSettings = Record<LegalDocumentKey, LegalDocument>;
 
-/** GET /api/admin/legal — both documents' Markdown source (admin only). */
+/** GET /api/admin/legal. Both documents' Markdown source (admin only). */
 export async function getLegalDocuments(): Promise<LegalSettings> {
   return request<LegalSettings>("/api/admin/legal");
 }
 
 /**
- * PUT /api/admin/legal/:document — replace one document (admin only).
+ * PUT /api/admin/legal/:document. Replaces one document (admin only).
  *
  * A whole-document replace, because the editor's buffer *is* the document.
  * Saving `""` unpublishes the page.

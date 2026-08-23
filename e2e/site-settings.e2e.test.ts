@@ -6,8 +6,8 @@
  *
  *   - GET /api/settings/public is unauthenticated and carries the branding,
  *     the registration state (with the bootstrap exemption already applied),
- *     and which legal documents are published — everything the sign-in page
- *     needs to render correctly in its *first* response.
+ *     and which legal documents are published. That is everything the sign-in
+ *     page needs to render correctly in its *first* response.
  *   - robots.txt, sitemap.xml, /terms and /privacy agree with those flags. A
  *     crawler must get the same answer whichever of them it reads first.
  *   - The new settings groups validate their input, and the legal routes are
@@ -37,7 +37,7 @@ describe("GET /api/settings/public (unauthenticated)", () => {
       legal?: { terms?: boolean; privacy?: boolean };
     };
 
-    // The site name must never be empty — it is the header text and the
+    // The site name must never be empty. It is the header text and the
     // `<title>` suffix, so a blank value would render a blank brand.
     expect(typeof body.branding?.siteName).toBe("string");
     expect(body.branding?.siteName?.length).toBeGreaterThan(0);
@@ -96,7 +96,7 @@ describe("robots.txt and sitemap.xml follow the SEO settings", () => {
 
     const indexingOff = /^\s*Disallow:\s*\/\s*$/m.test(robots);
     if (indexingOff) {
-      // An empty urlset, not a 404 — a clearer answer to a crawler that asks.
+      // An empty urlset, not a 404, is a clearer answer to a crawler that asks.
       expect(sitemap).not.toContain("<loc>");
     } else {
       expect(sitemap).toContain("/login");
@@ -240,7 +240,7 @@ describe("PATCH /api/admin/settings validates the new groups", () => {
 
   e2e("a colour the panel cannot re-emit is rejected", async () => {
     // The theme ends up inside a <style> element, and the parser is what keeps
-    // that string numeric — so anything it cannot turn back into an oklch()
+    // that string numeric, so anything it cannot turn back into an oklch()
     // triple has to fail at the API, not get quietly dropped on write.
     for (const value of [
       "red",

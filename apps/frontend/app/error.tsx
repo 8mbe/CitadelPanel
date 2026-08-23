@@ -7,7 +7,7 @@ import { ErrorPage } from "@/components/error-page";
 import { Button } from "@/components/ui/button";
 
 /**
- * The root error boundary — the panel's "500" page.
+ * The root error boundary, the panel's "500" page.
  *
  * Catches anything thrown while rendering a route below the root layout, so the
  * theme, fonts, and branding context are all still in place; only the page
@@ -35,7 +35,7 @@ export default function RootError({
       <ErrorPage
         code="500"
         title="Something went wrong"
-        description="The panel could not render this page. This is usually a temporary failure reaching the database or a node — trying again often works."
+        description="The panel could not render this page. This is usually a temporary failure reaching the database or a node, so trying again often works."
         icon={<AlertTriangle />}
         detail={error.digest ? `Error reference: ${error.digest}` : undefined}
         actions={

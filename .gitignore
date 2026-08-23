@@ -1,7 +1,7 @@
 # Dependencies
 node_modules/
 
-# Environment / secrets — never commit these
+# Environment / secrets. Never commit these
 .env
 .env.local
 .env.*.local
@@ -10,7 +10,7 @@ node_modules/
 *.key
 *.crt
 
-# Per-server game data (worlds, plugins) — large and machine-local
+# Per-server game data (worlds, plugins). Large and machine-local
 data/
 
 # Build output

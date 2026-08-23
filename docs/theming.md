@@ -8,7 +8,7 @@ The panel offers exactly three themes, in this order:
 | Light | `light` | `:root` in `app/globals.css` |
 | Dark | `dark` | `.dark` in `app/globals.css` |
 
-The site theme is the default — a visitor who has never touched the switcher
+The site theme is the default. A visitor who has never touched the switcher
 gets the operator's palette, which is the only arrangement in which configuring
 it means anything.
 
@@ -21,7 +21,7 @@ kept alongside.
 
 That leaves the stored preference of everyone who had picked it. next-themes
 would take `"system"` out of `localStorage`, find no mapping for it, and write
-`class="system"` onto `<html>` — a class no stylesheet defines, which renders
+`class="system"` onto `<html>`, a class no stylesheet defines, which renders
 the light palette while the menu claims otherwise. So the storage key changed
 from next-themes' default `theme` to **`panel-theme`**
 (`components/theme-provider.tsx`). Old values are not migrated; they are
@@ -37,7 +37,7 @@ The site theme is stored as a **base plus overrides**, not a complete palette:
 
 The base picks which of the two shipped palettes fills in everything the
 operator did not set. Storing it sparsely is what makes the theme survive a
-redesign — an operator who only ever set `--primary` keeps following the shipped
+redesign. An operator who only ever set `--primary` keeps following the shipped
 values for the other sixteen tokens, so a later tweak to the muted surface
 reaches their panel too.
 
@@ -49,8 +49,8 @@ value={{ site: siteThemeClass(base), light: "light", dark: "dark" }}
 
 **This is why the base cannot live in a separate attribute.** Half the component
 library reaches for Tailwind `dark:` utilities, and that variant is a compiled
-selector — it cannot learn at runtime that a `site` class happens to be dark. So
-`globals.css` widens the variant instead:
+selector, and it cannot learn at runtime that a `site` class happens to be
+dark. So `globals.css` widens the variant instead:
 
 ```css
 @custom-variant dark (&:is(.dark *, .site-dark *));
@@ -94,9 +94,8 @@ This is the one setting whose value reaches the browser as **CSS** rather than
 as text content, so the write path is a parser rather than an escaper:
 
 1. `parseColor` (`lib/color.ts`) accepts `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`,
-   and `oklch(L C H[ / A])`. Everything else — named colours, `rgb()`,
-   `color-mix()`, `var()`, `none` — is rejected. It returns four numbers or
-   null.
+   and `oklch(L C H[ / A])`. Everything else is rejected: named colours,
+   `rgb()`, `color-mix()`, `var()`, `none`. It returns four numbers or null.
 2. `formatOklch` writes the stored string. Nothing the operator typed survives
    into it.
 3. `normalizeSiteTheme` (`lib/site-theme.ts`) runs this over the whole object on
@@ -105,9 +104,9 @@ as text content, so the write path is a parser rather than an escaper:
 
 So `buildSiteThemeCss` does no escaping, and is allowed not to: after
 normalisation there is nothing left to escape. The API rejects a bad colour with
-a 400 naming the token rather than letting the normaliser drop it silently —
-that distinction is right for a stored row but would discard half of an admin's
-form submission without telling them.
+a 400 naming the token rather than letting the normaliser drop it silently.
+Silence is right for a stored row but would discard half of an admin's form
+submission without telling them.
 
 Storing `oklch` rather than hex is not cosmetic. Every token in `globals.css` is
 an OKLCh triple; a hex `--primary` sitting next to an OKLCh `--primary-foreground`
@@ -123,10 +122,10 @@ and the border/input/ring details. Plus `--radius`, in `rem`.
 
 Omitted on purpose:
 
-- **`--chart-*` and `--sidebar-*`** — nothing in the panel consumes them yet, so
+- **`--chart-*` and `--sidebar-*`.** Nothing in the panel consumes them yet, so
   exposing them would be seventeen more fields that change nothing.
-- **`--syntax-*`** (the file editor's highlighting, see `docs/file-editor.md`) —
-  legibility rather than branding. It follows the base palette.
+- **`--syntax-*`** (the file editor's highlighting, see `docs/file-editor.md`)
+  is legibility rather than branding. It follows the base palette.
 
 ## The admin form
 
@@ -134,9 +133,9 @@ Omitted on purpose:
 the site identity card. Two things about it are worth knowing:
 
 **Blank means inherit, and the placeholder proves it.** The inherited value is
-*measured* — `getComputedStyle` on an off-screen probe element carrying the base
-class — rather than kept as a second copy of the palette that could drift from
-`globals.css`.
+*measured*, with `getComputedStyle` on an off-screen probe element carrying the
+base class, rather than kept as a second copy of the palette that could drift
+from `globals.css`.
 
 That measurement needs one detour. Lightning CSS downlevels `oklch()` to `lab()`
 at build time for older browser targets, so the computed tokens come back in a
@@ -144,7 +143,7 @@ syntax `parseColor` deliberately refuses. Rather than teach the parser every
 colour space a build step might emit, `resolveCssColor` hands the string to a
 canvas 2D context and reads back the painted pixel. It reads *pixels* rather
 than `fillStyle`, because the getter round-trips a wide-gamut colour in its own
-space — ask it about a `lab()` and it says `lab()` again. This path is display
+space. Ask it about a `lab()` and it says `lab()` again. This path is display
 only; a stored colour still goes through `parseColor`.
 
 **The preview uses the production builder.** `buildSiteThemeCss` takes a
@@ -156,9 +155,43 @@ Saving reloads the page, like the branding card and for the same reason: the
 palette is in server-rendered HTML, so a client-side state update would only
 refresh the form.
 
+## What the brand colour must not be used for
+
+`--primary` is the operator's paint. That makes it the wrong colour for anything
+whose meaning has to survive being repainted, and resource meters are the case
+that matters.
+
+Every usage bar in the panel used to fill in `bg-primary`, which meant a server
+at 4% of its memory and one 4% from an OOM kill drew the same colour. The bar
+said nothing the number beside it did not, while looking like an alarm at every
+value; and on an install with a green brand it would have looked reassuring at
+every value instead. Either way the colour was decoration.
+
+`components/usage-meter.tsx` owns the rule now. The fill is `bg-muted-foreground`
+until 75%, amber to 90%, then `bg-destructive`, the same
+neutral/notice/act-on-it vocabulary as `StatusBadge` and the node connection
+tests. One component, so the server tiles, the console stat cards, and the admin
+node cards cannot drift apart on where "too full" starts.
+
+Two details in it are not obvious:
+
+- **The floor.** A single-digit percentage is a few pixels of fill, which reads
+  as a rendering artifact rather than a measurement. `min-w-1` rounds it up to a
+  dot; `min-width` is what makes that possible, since Base UI's progress
+  indicator sets its `width` inline and an inline style beats a class.
+- **`indicatorClassName`.** `Progress` in `components/ui/` renders its own track
+  and fill, so the fill needed a way out. That prop is the whole reason it
+  exists. The fill is the one part of a progress bar that carries meaning.
+
+Allocation bars (a node's committed memory and disk) use the same thresholds. A
+node at 95% allocated cannot be scheduled onto, which is worth the same red as a
+server about to run out.
+
 ## Related
 
-- `docs/site-settings.md` — the branding, registration, SEO, and analytics
+- `docs/site-settings.md`: the branding, registration, SEO, and analytics
   groups this sits alongside, and why the site name is a setting.
-- `docs/file-editor.md` — the CodeMirror theme, which reads the same CSS
+- `docs/performance.md`: where the numbers behind those meters come from, and
+  why the agent must never block on `docker stats`.
+- `docs/file-editor.md`: the CodeMirror theme, which reads the same CSS
   variables and is why `--syntax-*` exists.

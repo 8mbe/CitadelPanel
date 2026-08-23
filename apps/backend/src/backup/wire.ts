@@ -2,7 +2,7 @@
  * Validation of the backup request bodies the panel sends.
  *
  * The agent's token is root-equivalent for this host, so "the panel is the only
- * caller" is not a reason to skip validation — it is the reason to do it. These
+ * caller" is not a reason to skip validation. It is the reason to do it. These
  * bodies carry an S3 endpoint the agent will connect to, a MariaDB admin
  * credential, and identifiers that end up in SQL and in shell redirects. A
  * confused panel must produce a 400 here rather than a surprising side effect
@@ -124,7 +124,7 @@ export function parseRepoTarget(
   const password = str(repo, "password", { max: 512 });
   if (password.length < 16) {
     throw badRequest(
-      '"repo.password" must be at least 16 characters — it is the only thing ' +
+      '"repo.password" must be at least 16 characters. It is the only thing ' +
         "standing between the S3 bucket's contents and anyone who can read it.",
     );
   }
@@ -140,8 +140,8 @@ export function parseRepoTarget(
  * Parse the maximum number of snapshots to keep.
  *
  * Absent means unlimited, and so does zero. That default is chosen so a body
- * missing the field can never *delete* anything: the alternative reading — "keep
- * none" — would wipe a repository on a malformed request.
+ * missing the field can never *delete* anything. The alternative reading, "keep
+ * none", would wipe a repository on a malformed request.
  */
 export function parseKeepMax(body: Record<string, unknown>): number {
   if (body.keepMax === undefined) return 0;
@@ -176,7 +176,7 @@ export function parseReason(body: Record<string, unknown>): string {
  * Parse the MariaDB admin credential for a database backup or restore.
  *
  * Root-equivalent on the node's database instance, which is why only the
- * admin-scoped routes accept it — the per-server backup path has no field for it
+ * admin-scoped routes accept it. The per-server backup path has no field for it
  * and no use for one.
  */
 export function parseDbAdmin(body: Record<string, unknown>): DbAdminCredential {

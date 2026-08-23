@@ -10,7 +10,7 @@ import { checkSetup } from "@/lib/setup-gate";
 /**
  * The signed-in account, as the UI needs it.
  *
- * `role` gates every admin affordance in the panel — the admin navigation, the
+ * `role` gates every admin affordance in the panel: the admin navigation, the
  * resource-limit editor, the enforcement actions. It is a display concern only:
  * the backend re-checks the role on every admin route, so a tampered client
  * gains nothing but a broken-looking UI.
@@ -45,12 +45,12 @@ const SessionContext = React.createContext<SessionValue | null>(null);
  * Loads the caller's account once and shares it with the whole panel shell.
  *
  * There is no demo fallback: the panel requires a real backend and a signed-in
- * account. If `/api/me` fails, the visitor is redirected — to `/setup` when the
- * panel has not been configured yet, otherwise to `/login`. Children are not
+ * account. If `/api/me` fails, the visitor is redirected, to `/setup` when the
+ * panel has not been configured yet and otherwise to `/login`. Children are not
  * rendered until a session is in hand, so no panel page ever runs without a
  * `user`.
  *
- * When {@link initialUser} is supplied (the normal case — the panel layout
+ * When {@link initialUser} is supplied (the normal case, where the panel layout
  * resolves the session server-side and seeds it), the provider starts with a
  * user in hand and renders children on first paint. The `GET /api/me` round
  * trip is skipped entirely, collapsing the old "session blocks → page fetches →
@@ -106,8 +106,9 @@ export function SessionProvider({
   }, [toSessionUser]);
 
   React.useEffect(() => {
-    // Seeded from SSR — nothing to fetch. The layout already redirected an
-    // unauthenticated visitor, so a seeded user is always present here.
+    // Seeded from SSR, so there is nothing to fetch. The layout already
+    // redirected an unauthenticated visitor, so a seeded user is always
+    // present here.
     if (initialUser !== undefined) return;
     let cancelled = false;
 

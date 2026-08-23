@@ -3,10 +3,10 @@
  *
  * Two endpoints:
  *
- *   - GET /api/me — the caller's identity + role + server counts. This is the
+ *   - GET /api/me: the caller's identity + role + server counts. This is the
  *     single chokepoint the api-key synthesizes a session through, so it is the
  *     fastest way to assert "a key is its owner" for both keys.
- *   - POST /api/account/delete — password-confirmed self-deletion. The gate
+ *   - POST /api/account/delete: password-confirmed self-deletion. The gate
  *     (0 owned servers, valid password) is exercised, but no account is ever
  *     actually deleted: the user key owns 0 servers and supplies a wrong
  *     password, which the Better Auth delete-user endpoint rejects as 400.

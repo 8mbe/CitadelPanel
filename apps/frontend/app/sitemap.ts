@@ -10,7 +10,7 @@ import { getSiteSettings } from "@/lib/server/site-settings";
  * the operator has published. Every other route requires a session, so listing
  * it would advertise URLs that answer with a redirect.
  *
- * When indexing is off the sitemap is empty rather than absent — an empty
+ * When indexing is off the sitemap is empty rather than absent. An empty
  * document is a clearer answer to a crawler that requests it than a 404, and it
  * agrees with the `Disallow: /` in `robots.txt`.
  *

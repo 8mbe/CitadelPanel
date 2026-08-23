@@ -64,7 +64,7 @@ import { detailToFile, type FormValues } from "@/lib/blueprint-io";
  * from (Docker image, ports, env schema, optional first-launch install script).
  *
  * Built-in blueprints are defined in code and re-seeded on boot, so they are
- * read-only here — an admin can Duplicate one to customise it, but not edit or
+ * read-only here. An admin can Duplicate one to customise it, but not edit or
  * delete it. Custom blueprints support the full edit/delete lifecycle; delete
  * is blocked while any server still references the blueprint.
  */

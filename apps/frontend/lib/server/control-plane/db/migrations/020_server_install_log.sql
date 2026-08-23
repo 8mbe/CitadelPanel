@@ -4,7 +4,7 @@
 -- open while the node pulled an image and ran the blueprint's install script,
 -- and any node call that answered slower than its timeout failed the whole
 -- create. It now runs as a background task and the row is the progress
--- report — which means the output has to live somewhere the next request can
+-- report, which means the output has to live somewhere the next request can
 -- read it, because the install container that produced it is removed as soon
 -- as the script exits.
 --

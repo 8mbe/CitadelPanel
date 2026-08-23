@@ -1,14 +1,14 @@
 # SFTP server (agent-side, per-(user,server) credentials)
 
 The agent runs a custom SFTP server (the `ssh2` npm package, on port `8022` by
-default) alongside its HTTP/WS server. Each server's owner — or a subuser with
-the `files` permission — can mint an SFTP credential from the panel's **Files**
+default) alongside its HTTP/WS server. Each server's owner, or a subuser with
+the `files` permission, can mint an SFTP credential from the panel's **Files**
 section and connect with any standard SFTP client (FileZilla, WinSCP, `sftp`,
 etc.). Sessions are chrooted to that server's data directory.
 
 ## How it works (panel-callback auth)
 
-The agent has no user model, so SFTP authentication is delegated to the panel —
+The agent has no user model, so SFTP authentication is delegated to the panel,
 the same posture as the [direct console](./direct-console.md). The difference:
 the console mints a short-lived, single-use token; SFTP uses a long-lived
 username/password that the panel stores hashed.
@@ -28,8 +28,8 @@ username/password that the panel stores hashed.
    server must not keep working), confirms the server lives on the calling
    node, and returns `{serverId, userId}`.
 4. The agent chroots the SFTP session to `serverDataPath(serverId)`. Every file
-   operation is resolved through `paths.ts` — the same containment boundary the
-   file-manager HTTP routes use — so `..` traversal and symlink escapes are
+   operation is resolved through `paths.ts`, the same containment boundary the
+   file-manager HTTP routes use, so `..` traversal and symlink escapes are
    caught by the existing checks.
 
 ## Configuration
@@ -38,29 +38,29 @@ username/password that the panel stores hashed.
 | --- | --- | --- |
 | `SFTP_PORT` | `8022` | TCP port for the SFTP server. `0` disables SFTP entirely. |
 | `SFTP_HOST_KEY_PATH` | `<data root>/../sftp_host_key` | Path to the RSA host key (PEM). Generated on first boot if missing; persisted so the fingerprint is stable across restarts. |
-| `PANEL_URL` | — | **Required** for SFTP auth. Without it, every SFTP login is rejected (the panel cannot be reached to validate the credential). Same requirement as the direct console. |
+| `PANEL_URL` | none | **Required** for SFTP auth. Without it, every SFTP login is rejected (the panel cannot be reached to validate the credential). Same requirement as the direct console. |
 
 ## Credential management
 
-- **Create**: `POST /api/servers/:id/sftp/credentials` — generates a new
+- **Create**: `POST /api/servers/:id/sftp/credentials`. Generates a new
   username/password. One credential per (user, server); calling this again
   rotates the password (upsert).
-- **Regenerate**: `POST /api/servers/:id/sftp/credentials/regenerate` —
-  rotates the password on an existing credential. The old password stops
-  working immediately.
-- **List**: `GET /api/servers/:id/sftp/credentials` — owners/admins see all
+- **Regenerate**: `POST /api/servers/:id/sftp/credentials/regenerate`. Rotates
+  the password on an existing credential. The old password stops working
+  immediately.
+- **List**: `GET /api/servers/:id/sftp/credentials`. Owners/admins see all
   credentials on the server; subusers see only their own. No passwords returned.
-- **Delete**: `DELETE /api/servers/:id/sftp/credentials/:credentialId` — the
+- **Delete**: `DELETE /api/servers/:id/sftp/credentials/:credentialId`. The
   revocation path. The agent's next auth callback for that username will 401.
-- **Connection details**: `GET /api/servers/:id/sftp/connection` — host, port,
-  and username (if the caller has a credential) for configuring an SFTP client.
+- **Connection details**: `GET /api/servers/:id/sftp/connection`. Returns host,
+  port, and username (if the caller has a credential) for an SFTP client.
 
 ## Security notes
 
 - The SFTP host key is generated on first boot and persisted. Clients should
   verify the fingerprint on first connect (TOFU) to prevent MITM. For
   production, put the SFTP port behind a TLS-terminating proxy or restrict it
-  to a private network — SFTP itself is encrypted (SSH), but the host key must
+  to a private network. SFTP itself is encrypted (SSH), but the host key must
   be verified.
 - Passwords are stored as scrypt `salt:hash` (Better Auth's scheme), never in
   plaintext. A lost password is regenerated, not recovered.
@@ -70,7 +70,7 @@ username/password that the panel stores hashed.
   a credential minted for a server on node X.
 - Revoking access (deleting the credential, removing the subuser, or revoking
   the `files` permission) takes effect on the **next SFTP connection**. An
-  already-open SFTP session is not severed — the agent is stateless and holds
+  already-open SFTP session is not severed. The agent is stateless and holds
   no handle back to the panel. This matches the direct-console's limitation.
 - Containment is enforced via `paths.ts`: `..` traversal is blocked lexically,
   and symlink escapes are caught via `realpath` on every read/list/delete. The

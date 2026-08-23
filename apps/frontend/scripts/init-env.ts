@@ -174,7 +174,7 @@ async function main(): Promise<void> {
     console.log(`\nCitadelPanel environment setup`);
     console.log(`Writing ${ENV_FILE}`);
     if (!existed) {
-      console.log("No .env file found — creating one now.\n");
+      console.log("No .env file found. Creating one now.\n");
     } else {
       console.log("Missing values will be prompted for; existing values are kept.\n");
     }

@@ -1,4 +1,5 @@
-# CitadelPanel Bun node backend — deploy this on every machine that runs game servers.
+# CitadelPanel Bun node backend. Deploy this on every machine that runs game
+# servers.
 #
 # The Bun backend owns this node's Docker daemon and server data. The Next.js
 # control plane reaches it with a bearer token and never touches Docker itself.
@@ -8,7 +9,7 @@
 # and the agent calls the panel back to validate it and audit each command. The
 # long-lived AGENT_TOKEN still guards every lifecycle route and the callbacks.
 #
-# SECURITY: AGENT_TOKEN is root-equivalent for this host — the agent drives the
+# SECURITY: AGENT_TOKEN is root-equivalent for this host. The agent drives the
 # Docker socket, and a container can be given any mount the agent allows. Treat
 # it like a root password:
 #   - keep the agent on a private network, or put TLS in front of it;
@@ -53,7 +54,7 @@ services:
       # For browser-direct console on a public node, put a TLS proxy in front
       # and expose that instead.
       - "8081:8081"
-      # SFTP — expose only where clients can reach it. Keep behind a firewall or
+      # SFTP. Expose only where clients can reach it. Keep behind a firewall or
       # TLS tunnel in production; SFTP auth is delegated to the panel but the
       # traffic itself is unencrypted without a host key + TLS proxy in front.
       - "${SFTP_PORT:-8022}:8022"
@@ -62,7 +63,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # The whole /var/lib/citadel tree. A host bind (not a named volume) so the
       # path the agent reports is the same path the daemon bind-mounts into game
-      # containers — and the parent rather than servers/ alone because the SFTP
+      # containers, and the parent rather than servers/ alone because the SFTP
       # host key and the backup staging directory are siblings of the data root.
       # The staging directory in particular is bind-mounted into the restic
       # container, so it has to exist on the host, not just in this container.

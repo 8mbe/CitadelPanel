@@ -1,10 +1,10 @@
 /**
- * AI console helper — the user-facing half of the AI assistant.
+ * AI console helper, the user-facing half of the AI assistant.
  *
  * `POST /api/servers/:id/ai-helper` takes only the user's free-text question
  * and assembles the full prompt server-side: recent console logs, the game
  * (blueprint name + key), the game version, and the non-secret environment. The
- * browser never supplies context and never sees the API key — the same
+ * browser never supplies context and never sees the API key, the same
  * "panel-composed, never browser-supplied" posture the database explorer takes
  * with SQL. A hostile client cannot redirect the model with injected context or
  * exfiltrate the key: there is nothing to exfiltrate, and the only client input
@@ -12,7 +12,7 @@
  *
  * The route gates on the `console` permission (a subuser with console access
  * can use it; one without cannot). The call is audited with only the lengths of
- * the question and the gathered logs — never their contents, which may include
+ * the question and the gathered logs, not their contents, which may include
  * server output the operator would rather not store in the audit trail.
  */
 
@@ -39,7 +39,7 @@ const LOG_TAIL = 200;
 /**
  * Gather the server-side context the model needs: the blueprint's human name
  * and key, the game version (if it is a non-secret env var), the non-secret
- * environment, and the recent console output. Logs are best-effort — a node
+ * environment, and the recent console output. Logs are best-effort. A node
  * being unreachable yields an empty tail rather than a failed helper call,
  * because the user is often asking about exactly that (a server that won't
  * start) and the env/blueprint context is still useful without live output.
@@ -79,7 +79,7 @@ async function gatherContext(serverId: string): Promise<{
     try {
       logs = await getServerLogs(server.node_id, serverId, LOG_TAIL);
     } catch {
-      // Node unreachable — proceed without logs. The user is often asking
+      // Node unreachable. Proceed without logs. The user is often asking
       // about a server that won't start, so env + blueprint context alone is
       // still useful, and the assistant can say it couldn't read live output.
     }
@@ -106,7 +106,7 @@ function buildSystemPrompt(ctx: Awaited<ReturnType<typeof gatherContext>>): stri
 
   const logsBlock = ctx.logs
     ? ctx.logs
-    : "(no recent console output — the server may be offline, or the node is unreachable)";
+    : "(no recent console output. The server may be offline, or the node is unreachable)";
 
   return [
     "You are a game-server operations assistant inside CitadelPanel, a game-server control panel.",
@@ -131,7 +131,7 @@ function buildSystemPrompt(ctx: Awaited<ReturnType<typeof gatherContext>>): stri
 }
 
 /**
- * POST /api/servers/:id/ai-helper — ask the assistant about this server.
+ * POST /api/servers/:id/ai-helper. Ask the assistant about this server.
  *
  * Body: `{ message: string }`. Returns `{ reply: string }`.
  */
@@ -171,7 +171,7 @@ export async function handleServerAiHelper(
     ],
   );
 
-  // Audit only the lengths — the question and logs may contain output the
+  // Audit only the lengths. The question and logs may contain output the
   // operator would rather not persist in the audit trail. Fire-and-forget.
   void recordAuditFromRequest(request, {
     userId: user.id,

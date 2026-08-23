@@ -5,8 +5,8 @@
  * configured timezone.
  *
  * Hand-rolled rather than pulled from npm because what the backup scheduler
- * needs is small and exactly specified — match a `Date`, describe an expression
- * in English, and compute the next run — while a cron library brings a parser
+ * needs is small and exactly specified: match a `Date`, describe an expression
+ * in English, and compute the next run. A cron library instead brings a parser
  * for @-shorthands, seconds fields, `L`/`W`/`#` extensions and its own timezone
  * handling, none of which the operator-facing field should accept. Keeping it
  * here also means the UI and the scheduler agree on what a schedule means,
@@ -14,8 +14,8 @@
  *
  * Shared between client and server on purpose: the settings form validates and
  * previews the next few runs as the operator types, and the scheduler decides
- * what is due — from one implementation, so a schedule can never display one
- * thing and do another.
+ * what is due, both from one implementation, so a schedule can never display
+ * one thing and do another.
  */
 
 /** A parsed field: the set of values it matches. */
@@ -277,7 +277,7 @@ function localParts(date: Date, timeZone: string): LocalParts {
  * The day-of-month / day-of-week rule follows POSIX crontab, which is not the
  * intersection people expect: when *both* fields are restricted the day matches
  * if *either* does. So `0 4 1 * mon` means "the 1st, and also every Monday", not
- * "Mondays that fall on the 1st". Matching real cron here is deliberate — an
+ * "Mondays that fall on the 1st". Matching real cron here is deliberate. An
  * operator's expression must do what its manpage says it does.
  */
 export function cronMatches(
@@ -326,7 +326,7 @@ function dateFieldsMatch(expression: CronExpression, parts: LocalParts): boolean
  * it jumps to the next hour. Only inside a matching day and hour does it step
  * minute by minute. That turns a `29 feb` search from ~800k timezone conversions
  * into a few thousand. Each jump is bounded by the remainder of a unit proven
- * empty, so no match can be skipped — a DST shift merely means the next
+ * empty, so no match can be skipped. A DST shift merely means the next
  * iteration re-decides.
  *
  * Four years is the bound: the only multi-year cycle in the fields is Feb 29, so
@@ -369,7 +369,7 @@ export function nextCronRun(
  * Describe an expression in English, for the settings form.
  *
  * Covers the shapes an operator actually types and falls back to echoing the
- * expression rather than producing a strained sentence for an exotic one — a
+ * expression rather than producing a strained sentence for an exotic one. A
  * wrong plain-English gloss is worse than none, because it invites trust.
  */
 export function describeCron(expression: CronExpression): string {

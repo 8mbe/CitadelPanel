@@ -55,7 +55,7 @@ export default function AdminNodesPage() {
   // Auto-heartbeat: once the list is loaded, probe every active node and record
   // a heartbeat for each that answers, then reload so the reachability badges
   // reflect reality without a manual "Test connection" per card. Drained nodes
-  // are not probed here (they are out of rotation) — open one to re-check it.
+  // are not probed here (they are out of rotation). Open one to re-check it.
   React.useEffect(() => {
     if (loading || nodes.length === 0) return;
     let cancelled = false;

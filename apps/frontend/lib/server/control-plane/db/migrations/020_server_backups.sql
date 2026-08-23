@@ -2,11 +2,11 @@
 --
 -- Two scopes, owned by different people (see docs/backups.md):
 --
---   server — a server's data DIRECTORY, taken by its owner, capped at a fixed
---            number of snapshots. Files only.
---   node   — SQL dumps of EVERY database provisioned on one node, taken by an
---            administrator. Reading every tenant's data at once needs the node's
---            MariaDB admin credential, so it is not an owner-triggered action.
+--   server: a server's data DIRECTORY, taken by its owner, capped at a fixed
+--           number of snapshots. Files only.
+--   node:   SQL dumps of EVERY database provisioned on one node, taken by an
+--           administrator. Reading every tenant's data at once needs the node's
+--           MariaDB admin credential, so it is not an owner-triggered action.
 --
 -- The tables below are shared by both scopes, because a run is a run: the
 -- lifecycle, the progress reporting and the log are identical, and only the
@@ -28,7 +28,7 @@
 -- `size_bytes` is the deduplicated size restic reports for the repository,
 -- refreshed after every backup (the index is already cached at that point, so it
 -- costs a metadata pass rather than a download). Summing this column across both
--- repo tables is how the admin page reports storage use — NULL means "not
+-- repo tables is how the admin page reports storage use. NULL means "not
 -- measured", which is deliberately distinct from 0.
 CREATE TABLE IF NOT EXISTS server_backup_repos (
   server_id UUID PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
@@ -57,15 +57,15 @@ CREATE TABLE IF NOT EXISTS node_backup_repos (
 --
 -- `status` is the panel's view, advanced by the reconciler in
 -- nodes/backupScheduler.ts as it polls the agent's job:
---   pending   — row written, the agent has not accepted the job yet
---   running   — the agent has a job id for it
---   succeeded — a snapshot exists (backup) or the data is back (restore)
---   failed    — see `error`
+--   pending:   row written, the agent has not accepted the job yet
+--   running:   the agent has a job id for it
+--   succeeded: a snapshot exists (backup) or the data is back (restore)
+--   failed:    see `error`
 --
 -- `snapshot_id` is restic's id and is the only handle a restore needs, so a
 -- successful backup always has one. `bytes_added` is what actually went to S3
--- after deduplication and compression — the number that maps to the operator's
--- bill — as distinct from `bytes_processed`, which is what was read from disk.
+-- after deduplication and compression, the number that maps to the operator's
+-- bill, as distinct from `bytes_processed`, which is what was read from disk.
 --
 -- `node_id` is NOT NULL for both scopes and is denormalised from `servers` for
 -- server runs on purpose: a snapshot lives in the repository some specific node
@@ -173,7 +173,7 @@ ALTER TABLE nodes ADD COLUMN IF NOT EXISTS database_backups_enabled BOOLEAN NOT 
 -- operator can multiply it by their fleet size and predict the bill. Zero means
 -- unlimited.
 --
--- `storage.quotaBytes` is an enforced ceiling on total backup storage — a backup
+-- `storage.quotaBytes` is an enforced ceiling on total backup storage. A backup
 -- is refused once the fleet is over it, rather than discovering the overage on an
 -- invoice. `storage.capacityBytes` is display-only: S3 has no capacity API, so
 -- the size of the operator's storage plan is something only they can tell us.
@@ -185,7 +185,7 @@ ALTER TABLE nodes ADD COLUMN IF NOT EXISTS database_backups_enabled BOOLEAN NOT 
 -- for exactly the operator this panel is built for.
 --
 -- `servers.exclude` is admin-controlled and applies to server FILE backups only.
--- Database dumps have nothing to exclude — the staging directory contains exactly
+-- Database dumps have nothing to exclude. The staging directory contains exactly
 -- the dumps the run just wrote.
 INSERT INTO panel_settings (key, value)
 VALUES (

@@ -1,8 +1,8 @@
 /**
  * Database explorer service: the panel-side half of the per-server DB browser.
  *
- * Every operation is *structured* — the browser posts "create this table with
- * these columns", "update this row" — and this service turns it into SQL via
+ * Every operation is *structured*. The browser posts "create this table with
+ * these columns" or "update this row", and this service turns it into SQL via
  * the pure builders in `dbExplorerSql.ts`, sends it to the node agent's
  * `/v1/servers/:id/database/query` endpoint, and parses the results. The
  * browser never sends SQL, and the statements run as the database's scoped
@@ -43,7 +43,7 @@ interface ExplorerDatabaseRow {
 /**
  * Load the (server, database) pair and decrypt the scoped user's password.
  *
- * The database must belong to the server — the composite check is the
+ * The database must belong to the server. The composite check is the
  * authorization boundary that stops one server's owner from querying another
  * server's database by id.
  */
@@ -66,7 +66,7 @@ async function loadExplorerDatabase(
  * Run one batch of composed SQL as the database's scoped user.
  *
  * SQL arrives as a thunk so builder validation (identifier shape, type rules)
- * happens inside this function — a `SqlValidationError` becomes a clean 400
+ * happens inside this function. A `SqlValidationError` becomes a clean 400
  * here, the single place where the pure module's error type meets the HTTP
  * layer.
  */
@@ -113,7 +113,7 @@ function cellAsNumber(value: string | null | undefined): number | null {
 /** One table in the database, as the sidebar lists it. */
 export interface DbTableSummary {
   name: string;
-  /** InnoDB's estimate from information_schema — exact enough for a browser. */
+  /** InnoDB's estimate from information_schema, exact enough for a browser. */
   rowsEstimate: number | null;
   sizeBytes: number | null;
   engine: string | null;
@@ -171,7 +171,7 @@ export interface DbTableSchema {
 
 /**
  * A table's structure. The primary key drives row identity for edit/delete and
- * the deterministic pagination order — `SHOW FULL COLUMNS` reports key
+ * the deterministic pagination order. `SHOW FULL COLUMNS` reports key
  * membership per column, and its row order matches the index column order.
  */
 export async function getExplorerTableSchema(
@@ -220,7 +220,7 @@ export interface DbRowsPage {
 
 /**
  * Read one page of rows, ordered by the primary key when the table has one
- * (keyless tables get the engine's natural order — and no row edit/delete in
+ * (keyless tables get the engine's natural order, and no row edit/delete in
  * the UI, since there is no stable row identity).
  *
  * The count and the page go out as two statements in one agent exec; the
@@ -337,7 +337,7 @@ export function parseColumnSpecInput(value: unknown, what: string): ColumnSpecIn
 /**
  * Parse a row-values object: column name → string or null. Names are vetted
  * identifiers; values are hex-encoded by the builders, so any string content
- * is safe — this only shapes the JSON.
+ * is safe. This only shapes the JSON.
  */
 export function parseRowValues(value: unknown, what: string): Record<string, string | null> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -400,8 +400,8 @@ export async function addExplorerColumn(
 
 /**
  * Edit a column. `CHANGE COLUMN` restates the whole definition (type,
- * nullability, default, auto-increment), so the form must prefill everything —
- * see the SQL builder for why an underfilled edit would silently strip attrs.
+ * nullability, default, auto-increment), so the form must prefill everything.
+ * See the SQL builder for why an underfilled edit would silently strip attrs.
  */
 export async function changeExplorerColumn(
   actor: ExplorerActor,
@@ -476,7 +476,7 @@ export async function deleteExplorerRow(
   await audit(actor, "server.database.explorer.delete_row", { table, pk: truncatePk(pk) });
 }
 
-/** Keep pk snapshots small in audit metadata — they identify, not replicate. */
+/** Keep pk snapshots small in audit metadata. They identify, not replicate. */
 function truncatePk(pk: Record<string, string | null>): Record<string, string | null> {
   return Object.fromEntries(
     Object.entries(pk).map(([column, value]) => [

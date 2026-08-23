@@ -1,8 +1,8 @@
 /**
  * Admin routes (plan.md sections 5, 9.2).
  *
- * Every handler is gated on `requireAdmin`, which checks the global role only —
- * subuser permissions can never reach these endpoints.
+ * Every handler is gated on `requireAdmin`, which checks the global role only.
+ * Subuser permissions can never reach these endpoints.
  */
 
 import { after } from "next/server";
@@ -81,7 +81,7 @@ export async function handleReviewSuspicious(
   return json({ activity: row });
 }
 
-/** GET /api/admin/suspicious-activity/:id — full evidence detail. */
+/** GET /api/admin/suspicious-activity/:id. Full evidence detail. */
 export async function handleGetSuspicious(
   request: Request,
   activityId: string,
@@ -95,7 +95,7 @@ export async function handleGetSuspicious(
   return json({ activity });
 }
 
-/** POST /api/admin/scan — trigger an out-of-band detection sweep. */
+/** POST /api/admin/scan. Triggers an out-of-band detection sweep. */
 export async function handleTriggerScan(request: Request): Promise<Response> {
   await requireAdmin(request);
   return json({ result: await runSweep() });
@@ -138,7 +138,7 @@ export async function handleUnsuspendServer(
 // --- Resource limits ----------------------------------------------------------
 
 /**
- * PATCH /api/admin/servers/:id — change a server's resource allocation.
+ * PATCH /api/admin/servers/:id. Changes a server's resource allocation.
  *
  * Resource limits are an ADMIN-ONLY concern (plan.md section 5): a user manages
  * their server but never sizes it. There is deliberately no owner-facing
@@ -204,8 +204,8 @@ export async function handleUpdateServerResources(
   const blueprint = await getBlueprintByKey(current.blueprint_key);
   if (!blueprint) throw badRequest("Server blueprint is not available");
 
-  // Same floor the creation path enforces — reported together so an admin
-  // fixes every problem in one pass instead of one error at a time.
+  // Same floor the creation path enforces, reported together so an admin fixes
+  // every problem in one pass instead of one error at a time.
   const problems: string[] = [];
   if (cpuLimit < blueprint.minimums.cpuLimit) {
     problems.push(`cpuLimit must be at least ${blueprint.minimums.cpuLimit}`);
@@ -251,7 +251,7 @@ export async function handleUpdateServerResources(
 // --- Users --------------------------------------------------------------------
 
 /**
- * POST /api/admin/servers — provision a server for a user.
+ * POST /api/admin/servers. Provisions a server for a user.
  *
  * This is the only way a server can come into existence: users cannot create
  * servers for themselves. The target owner, limits and optional target node
@@ -260,11 +260,11 @@ export async function handleUpdateServerResources(
  * and an `onBehalfOf` marker).
  *
  * Answers 202, not 201: the row exists and is valid, but the server does not
- * exist on its node yet. Building it — pulling images, running the blueprint's
- * install script — happens after this response, and its progress is the
- * returned server's status (`installing`) plus its install log. Waiting for it
- * here is what used to make a create fail on a slow node: any timeout in the
- * chain aborted a provision that was working fine.
+ * exist on its node yet. Pulling images and running the blueprint's install
+ * script happen after this response, and their progress is the returned
+ * server's status (`installing`) plus its install log. Waiting for it here is
+ * what used to make a create fail on a slow node: any timeout in the chain
+ * aborted a provision that was working fine.
  */
 export async function handleAdminCreateServer(request: Request): Promise<Response> {
   const admin = await requireAdmin(request);
@@ -272,7 +272,7 @@ export async function handleAdminCreateServer(request: Request): Promise<Respons
 
   const name = requireString(body, "name", { min: 1, max: 64 });
   // Better Auth user ids are opaque strings (nanoid-style), not UUIDs, so no
-  // format assumptions here — the account's existence is verified below.
+  // format assumptions here. The account's existence is verified below.
   if (body.ownerId === undefined || body.ownerId === null || body.ownerId === "") {
     throw badRequest('"ownerId" is required');
   }
@@ -288,10 +288,8 @@ export async function handleAdminCreateServer(request: Request): Promise<Respons
     max: 2_000_000,
   });
   const nodeId = optionalString(body, "nodeId");
-  const preferredPort =
-    body.preferredPort === undefined
-      ? undefined
-      : requireNumber(body, "preferredPort", { min: 1024, max: 65535 });
+  // No port input: the panel draws the server's ports at random from the target
+  // node's pool. See `allocateHostPort`.
 
   const envInput =
     typeof body.env === "object" && body.env !== null && !Array.isArray(body.env)
@@ -315,20 +313,19 @@ export async function handleAdminCreateServer(request: Request): Promise<Respons
     memoryLimitMb,
     diskLimitMb,
     env: envInput,
-    preferredPort,
     nodeId,
   });
 
   // The provisioning task is already running; this tells the Next runtime not
   // to treat the request's work as finished when the response goes out, so a
-  // long install is not torn down mid-pull. It never rejects — provisionServer
-  // records its own failures on the row.
+  // long install is not torn down mid-pull. It never rejects, because
+  // provisionServer records its own failures on the row.
   after(() => waitForProvisioning(server.id));
 
   return json({ server }, 202);
 }
 
-/** GET /api/admin/users — every account on the panel, with optional search. */
+/** GET /api/admin/users. Every account on the panel, with optional search. */
 export async function handleListUsers(request: Request): Promise<Response> {
   await requireAdmin(request);
 
@@ -353,11 +350,11 @@ export async function handleListUsers(request: Request): Promise<Response> {
 }
 
 /**
- * GET /api/admin/users/:id — a single account's profile plus the servers they
+ * GET /api/admin/users/:id. A single account's profile plus the servers they
  * own, for the admin user-detail page.
  *
  * Returns 404 (not "deleted") when the account is gone, so the detail page can
- * show its not-found state. Server rows are the owner's only — subuser access
+ * show its not-found state. Server rows are the owner's only. Subuser access
  * is intentionally excluded from this view to keep the page focused on what the
  * account *owns*.
  */
@@ -395,7 +392,7 @@ export async function handleGetUser(
 }
 
 /**
- * PATCH /api/admin/users/:id/role — promote or demote a user.
+ * PATCH /api/admin/users/:id/role. Promotes or demotes a user.
  *
  * Two guards, both deliberate:
  *  - An admin cannot change their own role (no accidental self-lockout).
@@ -453,10 +450,10 @@ export async function handleUpdateUserRole(
 // --- User ban / unban ---------------------------------------------------------
 
 /**
- * POST /api/admin/users/:id/ban — ban a user and suspend their servers.
+ * POST /api/admin/users/:id/ban. Bans a user and suspends their servers.
  *
  * Delegates the ban itself to Better Auth's admin plugin (`auth.api.banUser`),
- * which sets `banned` and revokes every session the user holds — so they are
+ * which sets `banned` and revokes every session the user holds, so they are
  * signed out everywhere and cannot sign back in. We then suspend every server
  * the user owns, so a banned account cannot keep running game servers.
  *
@@ -473,9 +470,9 @@ export async function handleBanUser(
 ): Promise<Response> {
   const admin = await requireAdmin(request);
 
-  // Better Auth user ids are opaque strings (nanoid-style), not UUIDs — match
-  // handleUpdateUserRole, which trusts the route param. Guard against an empty
-  // id so a malformed route cannot reach the lookup.
+  // Better Auth user ids are opaque strings (nanoid-style), not UUIDs, so this
+  // matches handleUpdateUserRole, which trusts the route param. Guard against
+  // an empty id so a malformed route cannot reach the lookup.
   const targetId = userId.trim();
   if (targetId.length === 0) throw badRequest('"userId" is required.');
 
@@ -498,7 +495,7 @@ export async function handleBanUser(
 
   // banUser sets banned + banReason + banExpires and revokes all sessions. The
   // admin plugin's middleware resolves the calling admin's session from the
-  // request headers, so forward them — without headers the call has no session
+  // request headers, so forward them. Without headers the call has no session
   // and is rejected as FORBIDDEN.
   await auth.api.banUser({
     headers: request.headers,
@@ -542,7 +539,7 @@ export async function handleBanUser(
 }
 
 /**
- * POST /api/admin/users/:id/unban — lift a ban.
+ * POST /api/admin/users/:id/unban. Lifts a ban.
  *
  * Clears the ban via `auth.api.unbanUser`. Servers are NOT automatically
  * unsuspended: suspension is a separate, individually-audited decision, and an
@@ -578,12 +575,12 @@ export async function handleUnbanUser(
 // --- Audit log ----------------------------------------------------------------
 
 /**
- * GET /api/admin/audit-logs — fleet-wide audit feed for the admin page.
+ * GET /api/admin/audit-logs. Fleet-wide audit feed for the admin page.
  *
  * The raw `audit_logs` rows carry opaque IDs: a `user_id` (the actor) and a
  * `target_id` whose table depends on `target_type`. Resolving those into names
  * client-side would mean an N+1 round-trip per row, so the join is done here in
- * two batched passes — one for actors, one per target type — and the enriched
+ * two batched passes, one for actors and one per target type, and the enriched
  * rows are returned in snake_case to match the existing contract.
  *
  * System actions (`user_id` is null) and deleted targets (the actor's user row
@@ -636,7 +633,7 @@ export async function handleListAuditLogs(request: Request): Promise<Response> {
 
   // target_id is stored as TEXT in audit_logs, but these tables key on UUID.
   // Pass the UUID type OID (2950) so the array is typed uuid[] and Postgres can
-  // compare uuid = uuid. The "user" lookup needs no cast — user.id is TEXT.
+  // compare uuid = uuid. The "user" lookup needs no cast, since user.id is TEXT.
   if (targetIdsByType.has("server")) {
     const serverRows = (await sql`
       SELECT id, name FROM servers WHERE id = ANY(${sql.array(targetIdsByType.get("server")!, 2950)})
@@ -691,7 +688,7 @@ export async function handleListAuditLogs(request: Request): Promise<Response> {
 // --- Admin server list ---------------------------------------------------------
 
 /**
- * GET /api/admin/servers — fleet-wide view for the admin dashboard.
+ * GET /api/admin/servers. Fleet-wide view for the admin dashboard.
  *
  * Extends the normal summary rows with owner context plus live CPU and memory
  * usage sampled from each node's agent (with graceful fallback when a node is
@@ -710,7 +707,7 @@ export async function handleListAdminServers(request: Request): Promise<Response
   const ownersById = new Map<string, { email: string; name: string | null }>();
 
   if (ownerIds.length > 0) {
-    // One query for every owner, rather than one per server — the fleet-wide
+    // One query for every owner, rather than one per server. The fleet-wide
     // list fans out across users, and a serial per-owner SELECT turned each
     // page load into a loop whose length was the number of distinct owners.
     const ownerRows = (await sql`
@@ -744,7 +741,7 @@ export async function handleListAdminServers(request: Request): Promise<Response
           });
         }
       } catch {
-        // Node unreachable — its servers simply report null usage below.
+        // Node unreachable, so its servers simply report null usage below.
       }
     }),
   );

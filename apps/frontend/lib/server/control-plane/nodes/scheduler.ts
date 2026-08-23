@@ -1,7 +1,7 @@
 /**
  * Capacity-aware node scheduler (plan.md section 7).
  *
- * Strategy: most-free-capacity-first bin packing. Simple and predictable — it
+ * Strategy: most-free-capacity-first bin packing. Simple and predictable. It
  * spreads load rather than tightly packing, which suits game servers where a
  * noisy neighbour hurts perceived quality more than node count does.
  *
@@ -12,7 +12,7 @@
 import { sql } from "../db/client";
 import { conflict } from "../lib/http";
 import { listActiveNodesWithSecrets, type NodeWithSecrets } from "./nodeRegistry";
-import { checkPortsFree, type PortProtocol } from "./nodePortsApi";
+import { checkPortNumbersFree } from "./nodePortsApi";
 import { expandNodePortPool } from "./portPool";
 
 /** Resources a prospective server is asking for. */
@@ -53,7 +53,7 @@ export interface NodeFreeCapacity extends NodeCapacity {
  *
  * A reservation is a percentage that must stay FREE for the host: with a 20%
  * reserve only 80% of the total is allocable. `allowOvercommit` bypasses the
- * reserve, restoring the full total — for nodes that intentionally
+ * reserve, restoring the full total. That is for nodes that intentionally
  * oversubscribe where limits are ceilings rather than reservations.
  *
  * Exported so the capacity UI can show the effective allocable total without
@@ -89,7 +89,7 @@ export function withFreeCapacity(capacity: NodeCapacity): NodeFreeCapacity {
     ...capacity,
     // Free headroom floored at 0: a node already over its allocable ceiling
     // (e.g. reserve raised after servers were placed) reports no free space,
-    // so the scheduler won't add to it — but existing servers keep running.
+    // so the scheduler won't add to it, but existing servers keep running.
     cpuFree: Math.max(0, cpuAllocable - capacity.cpuAllocated),
     memoryFreeMb: Math.max(0, memoryAllocable - capacity.memoryAllocatedMb),
     diskFreeMb: Math.max(0, diskAllocable - capacity.diskAllocatedMb),
@@ -207,7 +207,7 @@ export async function loadNodeCapacities(): Promise<NodeCapacity[]> {
  * it was carrying, and the node detail page needs to show that committed load,
  * not pretend the node is empty because it is out of rotation.
  *
- * Returns null only when the node row itself is missing — the route layer 404s
+ * Returns null only when the node row itself is missing. The route layer 404s
  * before that, so callers can treat the result as non-null after that check.
  */
 export async function loadNodeCapacity(
@@ -311,26 +311,51 @@ export async function scheduleServerOnNode(
 }
 
 /**
- * Allocate a free host port on a node.
+ * How many pool candidates one allocation offers the agent for verification.
  *
- * Candidate source: the node's reserved port pool for this protocol
- * (admin-managed). There is no default port range — every published host port
- * is drawn from a pool an admin explicitly reserved, so a node with no pool
- * configured cannot host servers until one is added.
+ * Small enough to stay a single fast round trip, large enough that a handful of
+ * host-occupied ports does not exhaust the batch.
+ */
+const PORT_VERIFY_BATCH = 8;
+
+/** Fisher-Yates on a copy: the caller's array is never reordered. */
+function shuffled<T>(items: T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j]!, copy[i]!];
+  }
+  return copy;
+}
+
+/**
+ * Allocate a free host port on a node. One number, claimed on TCP and UDP both.
  *
- * A preferred port is honored only if it is a valid candidate (a member of the
- * pool) and free.
+ * Candidate source: the node's reserved port pool (admin-managed). There is no
+ * default port range. Every published host port is drawn from a pool an admin
+ * explicitly reserved, so a node with no pool configured cannot host servers
+ * until one is added.
+ *
+ * **The choice is random.** Nobody picks a number: not the owner, not the admin
+ * provisioning the server. Walking the pool in ascending order made allocation
+ * predictable from the outside (the Nth server on a node got the Nth port) and
+ * packed every fleet against the bottom of the pool, so a freed port was
+ * immediately re-handed to the next server, inheriting whatever scanners and
+ * stale client entries the previous tenant had attracted. A random draw does
+ * neither.
+ *
+ * The one exception is `preferredPort`: a blueprint's own declared number
+ * (25565 for Minecraft Java) is tried first, because that is part of the game's
+ * definition rather than a user's pick, and players type it. It is honored only
+ * when it is in the pool and free; everything after it is random.
  *
  * Two freeness checks, layered:
  *   - `server_ports` (the panel's own bindings) filters out what CitadelPanel
- *     has already allocated. The UNIQUE(node_id, host_port, protocol) constraint
- *     is the real concurrency safety net — this scan is an optimisation.
- *   - The node agent confirms the port is actually bindable on the host right
- *     now, so a port held by another process or container is caught before the
- *     Docker bind at container-create fails.
- *
- * The agent is asked once per call, with a small candidate batch (the preferred
- * port plus a few fallbacks), to keep allocation to one round-trip per port.
+ *     has already allocated. The UNIQUE(node_id, host_port) constraint is the
+ *     real concurrency safety net. This scan is an optimisation.
+ *   - The node agent confirms the number is actually bindable on the host right
+ *     now, on both protocols, so a port held by another process or container is
+ *     caught before the Docker bind at container-create fails.
  *
  * TOCTOU: there is a window between the agent's "free" answer and the container
  * actually binding. The DB constraint catches panel-side races (one INSERT wins
@@ -339,14 +364,13 @@ export async function scheduleServerOnNode(
  */
 export async function allocateHostPort(
   nodeId: string,
-  protocol: PortProtocol,
   preferredPort?: number,
 ): Promise<number> {
-  // The pool is the only candidate source — no default range fallback.
-  const candidates = await expandNodePortPool(nodeId, protocol);
+  // The pool is the only candidate source. There is no default range fallback.
+  const candidates = await expandNodePortPool(nodeId);
   if (candidates.length === 0) {
     throw conflict(
-      `No ${protocol} port pool is configured on this node. ` +
+      "No port pool is configured on this node. " +
         "An admin must reserve ports before servers can be created.",
     );
   }
@@ -354,7 +378,7 @@ export async function allocateHostPort(
   const rows = (await sql`
     SELECT host_port
     FROM server_ports
-    WHERE node_id = ${nodeId} AND protocol = ${protocol}
+    WHERE node_id = ${nodeId}
   `) as { host_port: number }[];
 
   const taken = new Set(rows.map((row) => row.host_port));
@@ -362,13 +386,13 @@ export async function allocateHostPort(
 
   if (freeInDb.length === 0) {
     throw conflict(
-      `No free ${protocol} ports remain in this node's port pool (all are allocated).`,
+      "No free ports remain in this node's port pool (all are allocated).",
     );
   }
 
-  // Verify a small candidate batch against the host. Preferred port first (if
-  // it is a valid, DB-free candidate), then the next few fallbacks so a handful
-  // of host-occupied ports do not exhaust the batch.
+  // Verify a small candidate batch against the host: the blueprint's preferred
+  // number first when it is still a valid candidate, then a random sample of
+  // the rest.
   const toVerify: number[] = [];
   if (
     preferredPort !== undefined &&
@@ -377,16 +401,13 @@ export async function allocateHostPort(
   ) {
     toVerify.push(preferredPort);
   }
-  for (const port of freeInDb) {
+  for (const port of shuffled(freeInDb)) {
     if (port === preferredPort) continue;
-    if (toVerify.length >= 8) break;
+    if (toVerify.length >= PORT_VERIFY_BATCH) break;
     toVerify.push(port);
   }
 
-  const results = await checkPortsFree(
-    nodeId,
-    toVerify.map((port) => ({ hostPort: port, protocol })),
-  );
+  const results = await checkPortNumbersFree(nodeId, toVerify);
   // Preserve verification order when picking the first free port.
   const freeByAgent = new Set(
     results.filter((r) => r.free).map((r) => r.hostPort),
@@ -395,51 +416,9 @@ export async function allocateHostPort(
   if (chosen !== undefined) return chosen;
 
   throw conflict(
-    `No free ${protocol} ports could be confirmed on the node's host. ` +
-      "Checked ports were in use; widen the port pool or free host ports.",
+    "No free ports could be confirmed on the node's host. " +
+      "Checked ports were in use on TCP or UDP; widen the port pool or free host ports.",
   );
-}
-
-/**
- * Allocate one specific host port, or fail with the reason it is unavailable.
- *
- * Owner-added additional ports are identity mappings the owner chose by number
- * (a plugin config references that exact port), so silently substituting a
- * fallback — what {@link allocateHostPort} does — would be wrong. Every failure
- * mode gets its own readable 409: not in the node's pool, already allocated to
- * another server, or held on the host by another process.
- */
-export async function allocateSpecificHostPort(
-  nodeId: string,
-  protocol: PortProtocol,
-  port: number,
-): Promise<number> {
-  const pool = await expandNodePortPool(nodeId, protocol);
-  if (!pool.includes(port)) {
-    throw conflict(
-      `Port ${port}/${protocol} is not in this node's reserved port pool. ` +
-        "An admin must add it to the pool before it can be published.",
-    );
-  }
-
-  const rows = (await sql`
-    SELECT 1 FROM server_ports
-    WHERE node_id = ${nodeId} AND host_port = ${port} AND protocol = ${protocol}
-  `) as { 1: number }[];
-  if (rows.length > 0) {
-    throw conflict(
-      `Port ${port}/${protocol} is already allocated to a server on this node.`,
-    );
-  }
-
-  const [probe] = await checkPortsFree(nodeId, [{ hostPort: port, protocol }]);
-  if (!probe?.free) {
-    throw conflict(
-      `Port ${port}/${protocol} is in use on the node's host by another process.`,
-    );
-  }
-
-  return port;
 }
 
 /** Resolve the chosen node into a full node record with credentials. */

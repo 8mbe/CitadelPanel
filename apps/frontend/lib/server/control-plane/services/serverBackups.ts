@@ -1,5 +1,5 @@
 /**
- * Server file backups — the owner-facing half of the feature.
+ * Server file backups, the owner-facing half of the feature.
  *
  * A server backup is a restic snapshot of that server's data directory, and
  * **nothing else**. Its databases are not in it: they live on a MariaDB instance
@@ -9,7 +9,7 @@
  * lets an owner press "back up now" without the panel touching shared
  * infrastructure on everyone else's behalf.
  *
- * Retention is a plain count — `maxPerServer`, default 5 — enforced by the agent
+ * Retention is a plain count, `maxPerServer`, default 5, enforced by the agent
  * *before* it writes the new snapshot, so the limit is never briefly exceeded. The
  * agent reports which snapshots it deleted and the reconciler drops the matching
  * rows, which is what keeps this table and the bucket in step.
@@ -218,8 +218,8 @@ export interface StartServerRestoreInput {
  *
  * The server is stopped first and left stopped. Restoring under a running game
  * would have restic writing world files the server has open and cached in memory,
- * and the server would then overwrite half of them on its next save — so the stop
- * is not a courtesy, it is what makes the restore mean anything.
+ * and the server would then overwrite half of them on its next save. The stop is
+ * not a courtesy, it is what makes the restore mean anything.
  *
  * Leaving it stopped afterwards is also deliberate: the owner should look at the
  * restored server before players reconnect. The UI says so and offers a start
@@ -307,8 +307,8 @@ export async function startServerRestore(
 /**
  * Bring a server back up after a restore, on request.
  *
- * Separate from the restore so the owner decides when players reconnect — and so a
- * restore that only half-worked is not immediately handed back to a live game.
+ * Separate from the restore so the owner decides when players reconnect, and so
+ * a restore that only half-worked is not immediately handed back to a live game.
  */
 export async function startServerAfterRestore(
   serverId: string,
@@ -332,7 +332,7 @@ export async function startServerAfterRestore(
  * Delete a backup: drop its snapshot from S3, then its panel row.
  *
  * S3 first. If the panel row went first and the prune then failed, the snapshot
- * would be orphaned — paid for forever with nothing in the UI referencing it. A
+ * would be orphaned, paid for forever with nothing in the UI referencing it. A
  * snapshot the agent reports as already gone is success, so a retried delete
  * completes.
  */
@@ -403,8 +403,8 @@ export async function getServerBackupsEnabled(serverId: string): Promise<boolean
  * Snapshots actually present in a server's repository.
  *
  * The panel's rows are its own record; this is the repository's. Exposed so an
- * operator can see a snapshot the panel does not know about — after rebuilding a
- * panel from scratch, say — instead of having to take the table on faith.
+ * operator can see a snapshot the panel does not know about, for instance after
+ * rebuilding a panel from scratch, instead of having to take the table on faith.
  */
 export async function listServerRepositorySnapshots(
   serverId: string,

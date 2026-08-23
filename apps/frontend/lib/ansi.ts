@@ -3,15 +3,15 @@ import type { CSSProperties } from "react";
 /**
  * ANSI SGR (Select Graphic Rendition) parser.
  *
- * Converts a raw terminal string — which may carry ANSI escape sequences for
- * color and text styling — into an ordered list of plain-text runs, each tagged
+ * Converts a raw terminal string, which may carry ANSI escape sequences for
+ * color and text styling, into an ordered list of plain-text runs, each tagged
  * with the CSS style to apply. The parser yields structured data only, never
  * HTML, so rendering the runs as React children is XSS-safe by construction:
  *
  *  - Every text run is emitted as a React text child, so React escapes it
  *    (`<script>` in the output becomes visible text, not executed markup).
  *  - The only attribute ever set is a hardcoded `style` object whose values are
- *    derived solely from ANSI numeric parameters — there is no string
+ *    derived solely from ANSI numeric parameters. There is no string
  *    interpolation into HTML, no `dangerouslySetInnerHTML`, and no URL/href
  *    surface. Color values come from a fixed palette or `rgb(r, g, b)` of
  *    numeric parameters, so they cannot carry CSS or markup injection.
@@ -29,7 +29,7 @@ import type { CSSProperties } from "react";
  * characters (other than tab) and DEL are likewise stripped.
  */
 
-/** Dracula-derived 16-color palette — vibrant and readable on a near-black bg. */
+/** Dracula-derived 16-color palette, readable on a near-black bg. */
 const PALETTE: readonly string[] = [
   // 0–7 standard
   "#21222c", "#ff5555", "#50fa7b", "#f1fa8c",
@@ -107,14 +107,14 @@ function applySGR(state: SGRState, codes: number[]): void {
       case 2: state.dim = true; break;
       case 3: state.italic = true; break;
       case 4: state.underline = true; break;
-      case 5: case 6: break; // blink — ignored (no DOM representation)
+      case 5: case 6: break; // blink is ignored (no DOM representation)
       case 7: state.inverse = true; break;
       case 8: state.hidden = true; break;
       case 9: state.strikethrough = true; break;
       case 22: state.bold = false; state.dim = false; break;
       case 23: state.italic = false; break;
       case 24: state.underline = false; break;
-      case 25: break; // blink off — ignored
+      case 25: break; // blink off is ignored
       case 27: state.inverse = false; break;
       case 28: state.hidden = false; break;
       case 29: state.strikethrough = false; break;
@@ -183,9 +183,9 @@ export interface AnsiRun {
 
 /**
  * Parse a terminal string into styled text runs. All ANSI escape sequences are
- * consumed — SGR codes mutate the active style; everything else is discarded —
- * and control characters are stripped, so the returned runs contain only
- * printable text ready to render as escaped React children.
+ * consumed: SGR codes mutate the active style, everything else is discarded.
+ * Control characters are stripped, so the returned runs contain only printable
+ * text ready to render as escaped React children.
  */
 export function parseAnsi(input: string): AnsiRun[] {
   const runs: AnsiRun[] = [];

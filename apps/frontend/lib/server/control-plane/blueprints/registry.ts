@@ -109,7 +109,7 @@ const BLUEPRINT_COLUMNS = sql`
  *
  * Idempotent, and safe to run on every boot: `key` is unique, so an existing
  * row is updated in place and any `servers.blueprint_id` referencing it stays
- * valid. Only built-in rows are written here — admin-created blueprints
+ * valid. Only built-in rows are written here. Admin-created blueprints
  * (is_builtin = false) are never touched. Built-ins removed from code are
  * deliberately NOT deleted, because existing servers may still reference them.
  */
@@ -184,11 +184,12 @@ export async function syncBlueprintsToDatabase(): Promise<void> {
 /**
  * The whole blueprint table, held in memory.
  *
- * Blueprints are read constantly — resolving a server's image, its plugin
- * support, its minimums, the key shown next to its name — and written only when
- * an admin edits one or the built-ins are seeded at boot. Each of those reads
- * was its own SELECT, so a single server page load could spend several database
- * round trips re-fetching rows that had not changed since the process started.
+ * Blueprints are read constantly, to resolve a server's image, its plugin
+ * support, its minimums, and the key shown next to its name. They are written
+ * only when an admin edits one or the built-ins are seeded at boot. Each of
+ * those reads was its own SELECT, so a single server page load could spend
+ * several database round trips re-fetching rows that had not changed since the
+ * process started.
  *
  * The whole table is loaded at once rather than a row per key: there are a
  * handful of blueprints, one query answers every lookup shape below, and it

@@ -49,6 +49,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { UsageMeter } from "@/components/usage-meter";
 import {
   adminCreateNode,
   adminProbeNodeConnection,
@@ -65,7 +66,7 @@ import type { NodeAllocation, NodeView } from "@/lib/types";
  * A node can answer its health check and still be unable to host anything: no
  * Docker socket, or no writable data root. Both used to be discovered as a
  * failed server creation, so both are folded into one string the connection
- * test can show — worst first, since an agent that cannot reach Docker will not
+ * test can show, worst first, since an agent that cannot reach Docker will not
  * get as far as needing the data root.
  */
 function agentProblem(health: NodeHealthResult): string | undefined {
@@ -92,7 +93,7 @@ function agentProblem(health: NodeHealthResult): string | undefined {
  * Register-a-node dialog.
  *
  * Calls POST /api/admin/nodes for real. When the operator leaves the token
- * blank the backend generates one and returns it **once** — the dialog then
+ * blank the backend generates one and returns it **once**. The dialog then
  * shows that token with a copy button and does not let it be dismissed by
  * accident, because it can never be retrieved again.
  */
@@ -318,7 +319,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                   />
                   <FieldDescription>
                     Where the node agent is listening. Use https:// or keep it on
-                    a private network — the token below grants full control of
+                    a private network. The token below grants full control of
                     that machine.
                   </FieldDescription>
                 </Field>
@@ -332,8 +333,8 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                   />
                   <FieldDescription>
                     Public address browsers use for the direct console
-                    (wss://). Leave blank to derive it from the Agent URL —
-                    fine when that URL is already browser-reachable.
+                    (wss://). Leave blank to derive it from the Agent URL, which
+                    works when that URL is already browser-reachable.
                   </FieldDescription>
                 </Field>
                 <Field>
@@ -352,7 +353,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                   />
                   <FieldDescription>
                     The agent&apos;s AGENT_TOKEN. If left blank, one is generated
-                    and shown once — you then set it on the agent and restart it.
+                    and shown once. You then set it on the agent and restart it.
                   </FieldDescription>
                 </Field>
                 <Field>
@@ -424,8 +425,8 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                     Allow overcommit
                   </FieldLabel>
                   <FieldDescription>
-                    Ignore the reservation and allocate against the full total —
-                    for nodes that intentionally oversubscribe.
+                    Ignore the reservation and allocate against the full total.
+                    For nodes that intentionally oversubscribe.
                   </FieldDescription>
                 </Field>
 
@@ -438,8 +439,8 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                     <FieldDescription>
                       Run <code className="font-mono">bun run setup-db</code> on
                       the node first, then enter the credentials it prints. This
-                      is a one-time step — enables database provisioning for all
-                      servers on this node.
+                      is a one-time step. It enables database provisioning for
+                      all servers on this node.
                     </FieldDescription>
                   </div>
                   <Switch
@@ -538,7 +539,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                           </>
                         ) : null}
                         {/* Amber, not red: the connection details are correct
-                          and worth saving — it is the node that needs fixing
+                          and worth saving. It is the node that needs fixing
                           before it can host a server. */}
                         {probe.nodeProblem ? (
                           <>
@@ -572,7 +573,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                   variant="outline"
                   onClick={testConnection}
                   // The probe needs both a URL and a token. With no token, the
-                  // operator intends to generate one — which cannot be tested
+                  // operator intends to generate one, which cannot be tested
                   // until it is set on the agent, so disable rather than 401.
                   disabled={
                     probing || submitting || !apiUrl.trim() || !token.trim()
@@ -613,7 +614,7 @@ function GeneratedToken({ token }: { token: string }) {
       <div className="flex items-start gap-2 text-sm">
         <KeyRound className="mt-0.5 size-4 shrink-0 text-amber-500" />
         <span className="text-muted-foreground">
-          Copy this token now — it is stored encrypted and cannot be shown again.
+          Copy this token now. It is stored encrypted and cannot be shown again.
           Set it as <code className="text-foreground">AGENT_TOKEN</code> on the
           node and restart its agent.
         </span>
@@ -652,7 +653,7 @@ export function NodeCard({
     : 0;
 
   // Test-connection state. No toast library is wired up, so feedback is shown
-  // inline beneath the button — the same pattern the mail test button uses.
+  // inline beneath the button, the same pattern the mail test button uses.
   const [testing, setTesting] = React.useState(false);
   const [result, setResult] = React.useState<
     | {
@@ -712,7 +713,7 @@ export function NodeCard({
             </Link>
           </CardTitle>
           {/* Reachability is inferred from heartbeat freshness, not the drain
-            toggle — a drained node can still be reachable, and a reachable
+            toggle. A drained node can still be reachable, and a reachable
             node can be out of rotation. */}
           <Badge
             variant="outline"
@@ -766,6 +767,11 @@ export function NodeCard({
 
         <Separator />
 
+        {/*
+          Allocation, not live use: these bars say how much of the node is
+          already promised to servers, so a full one means nothing more can be
+          scheduled here. Same thresholds as everywhere else.
+        */}
         <div className="grid gap-2 text-xs">
           <div className="flex justify-between text-muted-foreground">
             <span>Memory allocated</span>
@@ -773,24 +779,14 @@ export function NodeCard({
               {formatMb(allocation?.memoryAllocatedMb ?? 0)} · {memPct}%
             </span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-primary"
-              style={{ width: `${memPct}%` }}
-            />
-          </div>
+          <UsageMeter value={memPct} label="Memory allocated" />
           <div className="flex justify-between text-muted-foreground">
             <span>Disk allocated</span>
             <span className="tabular-nums">
               {formatMb(allocation?.diskAllocatedMb ?? 0)} · {diskPct}%
             </span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-primary"
-              style={{ width: `${diskPct}%` }}
-            />
-          </div>
+          <UsageMeter value={diskPct} label="Disk allocated" />
         </div>
 
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">

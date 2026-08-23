@@ -3,13 +3,13 @@
  *
  * A backup of a 30 GB world takes minutes to hours. Doing that inside the
  * request that asked for it would mean a panel HTTP call held open for the whole
- * run — which fails on the first proxy idle timeout, cannot report progress, and
+ * run. That fails on the first proxy idle timeout, cannot report progress, and
  * loses everything if either side reconnects. So the route starts a job, returns
  * its id immediately, and the panel polls.
  *
  * State lives in memory on the agent, not on disk, and that is deliberate: the
  * agent is stateless by design (see `servers.ts`), and the panel is the system's
- * durable record — it has a `backup_runs` row before it ever calls here. An agent
+ * durable record, and it has a `backup_runs` row before it ever calls here. An agent
  * restart therefore loses in-flight job *progress*, not the knowledge that a
  * backup was running; the panel reconciles a job that vanished into a failed
  * backup with a clear reason.
@@ -18,7 +18,7 @@
  * sequence-numbered buffer, and the panel drains it incrementally with
  * `?afterSeq=`. Sequence numbers rather than timestamps because two lines
  * written in the same millisecond must still have a stable order, and because
- * they make the drain idempotent — a panel that retries a poll re-reads the same
+ * they make the drain idempotent. A panel that retries a poll re-reads the same
  * window instead of skipping lines.
  *
  * Jobs are keyed by an opaque **subject** string (`server:<uuid>` or
@@ -78,8 +78,8 @@ export interface JobResult {
   failedDatabases?: { name: string; error: string }[];
   /**
    * Snapshot ids deleted to keep the quota, so the panel can drop the matching
-   * rows. The panel cannot infer these — it would have to re-list the repository
-   * and diff — so the job that did the deleting reports them.
+   * rows. The panel cannot infer these, since it would have to re-list the
+   * repository and diff, so the job that did the deleting reports them.
    */
   forgotten?: string[];
   /**
@@ -134,7 +134,7 @@ const jobs = new Map<string, Job>();
  * How long a finished job's state is kept so the panel can read its outcome.
  *
  * The panel polls every few seconds, so an hour is orders of magnitude more than
- * it needs — the window exists so a panel that was restarted mid-backup can
+ * it needs. The window exists so a panel that was restarted mid-backup can
  * still find out how the job ended rather than reporting a false failure.
  */
 const FINISHED_TTL_MS = 60 * 60_000;
@@ -212,8 +212,8 @@ export function startJob(
 /**
  * Read a job's state, returning only log lines after `afterSeq`.
  *
- * Throws 404 for an unknown id, which the panel reads as "this job is gone" —
- * either it never existed or the agent restarted — and turns into a failed
+ * Throws 404 for an unknown id, which the panel reads as "this job is gone",
+ * meaning it never existed or the agent restarted. That turns into a failed
  * backup with that reason rather than polling forever.
  */
 export function readJob(jobId: string, afterSeq = 0): JobSnapshot {

@@ -30,7 +30,6 @@ import {
 } from "../blueprints/types";
 import {
   allocateHostPort,
-  allocateSpecificHostPort,
   scheduleServer,
   scheduleServerOnNode,
   type ResourceRequest,
@@ -47,10 +46,9 @@ import {
   stopServerContainer,
   provisionServerDatabase,
   dropServerDatabase,
+  portBindingsFor,
   type PortBinding,
 } from "../nodes/nodeServerApi";
-import { checkPortsFree, type PortProtocol } from "../nodes/nodePortsApi";
-import { expandNodePortPool } from "../nodes/portPool";
 import { assertNodeReadyToProvision } from "../nodes/nodeApi";
 import { getNodeWithSecrets } from "../nodes/nodeRegistry";
 import { recordAudit } from "./auditLog";
@@ -87,7 +85,7 @@ interface ServerRow {
   plugin_auto_update: boolean;
   created_at: Date;
   updated_at: Date;
-  /** Joined from `nodes.hostname` — the address players connect to. */
+  /** Joined from `nodes.hostname`: the address players connect to. */
   node_hostname?: string;
   /** Why the server was suspended, shown to the owner. Null when not suspended. */
   suspension_reason?: string | null;
@@ -115,9 +113,8 @@ export interface ServerSummary {
   memoryLimitMb: number;
   diskLimitMb: number;
   ports: {
-    /** The published port — identity mapping: host and container side are this number. */
+    /** The published port: identity-mapped host↔container, on TCP and UDP both. */
     port: number;
-    protocol: string;
     isPrimary: boolean;
     isAdditional: boolean;
     label: string | null;
@@ -130,7 +127,7 @@ export interface ServerSummary {
   /**
    * Plugin/mod support resolved against the server's env, when the blueprint
    * declares it: what the tab is called and which provider serves it. Only
-   * set on the detail read (`getServer`), never on list reads — list callers
+   * set on the detail read (`getServer`), never on list reads. List callers
    * don't need it and it costs a blueprint + env lookup.
    */
   pluginSupport?: {
@@ -152,7 +149,7 @@ async function loadPorts(serverId: string) {
  *
  * The list endpoints fan out over every server a caller can see, and resolving
  * ports per-server turned each list read into N+1 queries. Batching collapses
- * that to one round trip regardless of fleet size — the `IN (...)` list is the
+ * that to one round trip regardless of fleet size. The `IN (...)` list is the
  * server ids the caller already holds.
  *
  * Returns a Map keyed by server id so the caller can spread each row's ports
@@ -166,14 +163,13 @@ async function loadPortsForMany(
   if (serverIds.length === 0) return byServer;
 
   const rows = (await sql`
-    SELECT server_id, host_port, protocol, is_primary, is_additional, label
+    SELECT server_id, host_port, is_primary, is_additional, label
     FROM server_ports
     WHERE server_id = ANY(${sql.array(serverIds, 2950)})
     ORDER BY server_id, is_primary DESC, is_additional ASC, host_port ASC
   `) as {
     server_id: string;
     host_port: number;
-    protocol: string;
     is_primary: boolean;
     is_additional: boolean;
     label: string | null;
@@ -186,11 +182,10 @@ async function loadPortsForMany(
       byServer.set(row.server_id, list);
     }
     // host_port IS the port: bindings are identity mappings (host N → container
-    // N), so container_port — still stored for the table's primary key — is not
-    // part of the API surface.
+    // N), so container_port is not part of the API surface. It is still stored
+    // for the table's primary key.
     list.push({
       port: row.host_port,
-      protocol: row.protocol,
       isPrimary: row.is_primary,
       isAdditional: row.is_additional,
       label: row.label,
@@ -201,7 +196,7 @@ async function loadPortsForMany(
 
 /**
  * Build a summary from a row whose blueprint key and ports are already
- * resolved — the list path, which JOINs the key and batches the ports.
+ * resolved. That is the list path, which JOINs the key and batches the ports.
  */
 function toSummaryFromRow(
   row: ServerRow,
@@ -229,8 +224,8 @@ function toSummaryFromRow(
  * Build a summary from a bare row, resolving the blueprint key and ports.
  *
  * Used by the single-server reads ({@link getServer}, {@link loadServerRow}
- * callers) where the per-server cost is one key lookup and one port query —
- * not worth batching, and the key is not always JOINed in those paths. The
+ * callers) where the per-server cost is one key lookup and one port query, not
+ * worth batching, and the key is not always JOINed in those paths. The
  * list endpoints JOIN the key and batch the ports instead ({@link summariesFromRows}).
  */
 async function toSummary(row: ServerRow): Promise<ServerSummary> {
@@ -247,7 +242,7 @@ async function toSummary(row: ServerRow): Promise<ServerSummary> {
 /**
  * Count servers hosted on a node, for the node-deletion gate.
  *
- * Cheaper than {@link listServersForNode} (no ports, no owner lookups) — it
+ * Cheaper than {@link listServersForNode} (no ports, no owner lookups). It
  * exists only to answer "is this node safe to delete?".
  */
 export async function countServersOnNode(nodeId: string): Promise<number> {
@@ -381,8 +376,8 @@ export interface EnvWrite {
  *
  * Both properties matter, and neither was true of the two loops this replaced.
  *
- * *One statement*, because provisioning writes a blueprint's whole env at once —
- * a dozen or more variables — and a round trip each made that a visible part of
+ * *One statement*, because provisioning writes a blueprint's whole env at once,
+ * a dozen or more variables, and a round trip each made that a visible part of
  * how long creating a server took.
  *
  * *One place for encryption*, because the other writer (the owner's env form)
@@ -461,8 +456,6 @@ export interface CreateServerInput {
   memoryLimitMb: number;
   diskLimitMb: number;
   env?: Record<string, unknown>;
-  /** Requested host port for the primary game port; best-effort. */
-  preferredPort?: number;
   /**
    * Explicit target node. When omitted the scheduler picks the most suitable
    * node; when given, that node's free capacity is validated instead.
@@ -537,7 +530,7 @@ export function isProvisioning(status: ServerStatus): boolean {
  *
  * Deliberately in-process and deliberately not durable. A panel restart mid
  * install loses the task, which is why {@link failInterruptedProvisions} runs
- * at boot — a row stuck in `installing` with nobody working on it is worse than
+ * at boot. A row stuck in `installing` with nobody working on it is worse than
  * an honest `error`.
  */
 const inFlightProvisions = new Map<string, Promise<void>>();
@@ -565,7 +558,7 @@ const MAX_INSTALL_LOG_CHARS = 256_000;
  *
  * The append happens in SQL, not read-modify-write, so the install script's
  * captured output and the panel's own phase lines cannot clobber each other.
- * Failures are swallowed — a log line must never be the reason a provision
+ * Failures are swallowed. A log line must never be the reason a provision
  * fails, exactly like an audit write.
  */
 async function appendInstallLog(serverId: string, text: string): Promise<void> {
@@ -589,11 +582,12 @@ async function logPhase(serverId: string, message: string): Promise<void> {
  * Fail every server this panel left mid-provision.
  *
  * Provisioning lives in this process (see {@link inFlightProvisions}), so a
- * restart — a deploy, a crash, a dev-server reload — abandons whatever was in
- * flight. Nothing would ever move those rows again: they are not reconciled
- * (no container to ask about) and the owner is locked out of a server that
- * claims to be installing. Marking them `error` at boot is the recovery: an
- * admin can read how far the install got in the log and delete or re-create.
+ * restart abandons whatever was in flight, whether it is a deploy, a crash or
+ * a dev-server reload. Nothing would ever move those rows again: they are not
+ * reconciled (no container to ask about) and the owner is locked out of a
+ * server that claims to be installing. Marking them `error` at boot is the
+ * recovery: an admin can read how far the install got in the log and delete or
+ * re-create.
  *
  * Called from `instrumentation.ts`, before the panel serves its first request.
  */
@@ -608,7 +602,7 @@ export async function failInterruptedProvisions(): Promise<void> {
   for (const row of rows) {
     await logPhase(
       row.id,
-      "Provisioning was interrupted — the panel restarted while this server " +
+      "Provisioning was interrupted. The panel restarted while this server " +
         "was still being built. Reinstall it from its settings to build it " +
         "again, or delete it and create it fresh.",
     );
@@ -640,7 +634,7 @@ export interface InstallLogView {
  * anything durable to show: the row holds every line already recorded, and the
  * node holds the tail of a script that is running *right now*. The live tail is
  * only asked for (and only appended) while the row still says the server is
- * being provisioned — once the install has finished, its full output is in the
+ * being provisioned. Once the install has finished, its full output is in the
  * row and asking the node again would either duplicate those lines or, more
  * likely, answer with nothing at all.
  *
@@ -691,9 +685,9 @@ class ProvisionAbandoned extends Error {}
  *
  * A provision runs for minutes and an admin can delete the server during any of
  * them. Without this check the task would go on to create a container for a row
- * that no longer exists — the orphan this module's ordering principle exists to
- * avoid, and the worst kind, because nothing in the panel can see it to clean it
- * up. Checked before each step that creates something on the node.
+ * that no longer exists. That is the orphan this module's ordering principle
+ * exists to avoid, and the worst kind, because nothing in the panel can see it
+ * to clean it up. Checked before each step that creates something on the node.
  *
  * `deleteServer` writes `deleting` before it touches the node, so that status is
  * caught here too, not just an already-vanished row.
@@ -723,21 +717,21 @@ interface ProvisionPlan {
   // on the data directory rather than by anything the container spec carries.
   cpuLimit: number;
   memoryLimitMb: number;
-  preferredPort?: number;
 }
 
 /**
  * Build a server on its node: ports, env, install script, container.
  *
  * Runs detached from the request that asked for the server (see
- * {@link createServer}). That is not an optimisation — it is what makes a
+ * {@link createServer}). That is not an optimisation. It is what makes a
  * blueprint with an install step possible at all. Every step here talks to the
  * node, and the node's answers are slow in ways that have nothing to do with
  * whether the create was valid: a cold node pulls a few hundred megabytes of
  * image before the install container can start, and the install script itself
  * downloads a server jar. Holding an HTTP request open across all of that means
- * any timeout anywhere in the chain — the panel's own, a reverse proxy's, the
- * browser's — turns a working create into a 502 and a row stuck in `error`.
+ * any timeout anywhere in the chain turns a working create into a 502 and a row
+ * stuck in `error`, whether it is the panel's own, a reverse proxy's or the
+ * browser's.
  *
  * So the request reserves the row and returns; this runs afterwards and the row
  * is how it reports. Each phase is announced into the install log first, so an
@@ -761,34 +755,27 @@ async function provisionServer(
 
     for (const port of blueprint.defaultPorts) {
       const isPrimary = port === mainPort;
-      // Best-effort preference: the admin's explicit choice for the primary
-      // port, otherwise the blueprint's preferred number (e.g. 25565) when it
-      // happens to be in the node's pool and free.
-      const hostPort = await allocateHostPort(
-        nodeId,
-        port.protocol,
-        isPrimary ? plan.preferredPort ?? port.container : port.container,
-      );
+      // The blueprint's declared number (e.g. 25565) is a best-effort
+      // preference, honored when it is in the node's pool and free. Anything
+      // else is a random free pool port; nobody gets to pick one.
+      const hostPort = await allocateHostPort(nodeId, port.container);
 
       // Identity mapping: the same number is published on the host and bound
       // inside the container (host N → container N), so a port is one number,
       // not a pair.
       await sql`
         INSERT INTO server_ports (
-          server_id, node_id, host_port, container_port, protocol, is_primary
+          server_id, node_id, host_port, container_port, is_primary
         ) VALUES (
-          ${serverId}, ${nodeId}, ${hostPort}, ${hostPort},
-          ${port.protocol}, ${isPrimary}
+          ${serverId}, ${nodeId}, ${hostPort}, ${hostPort}, ${isPrimary}
         )
       `;
 
       if (isPrimary) primaryHostPort = hostPort;
 
-      bindings.push({
-        hostPort,
-        containerPort: hostPort,
-        protocol: port.protocol,
-      });
+      // One number, both protocols: the agent's spec is still per-protocol, so
+      // the claim is expanded here rather than stored twice.
+      bindings.push(...portBindingsFor(hostPort));
     }
 
     // The game must listen on the number that was actually published, so the
@@ -852,7 +839,7 @@ async function provisionServer(
     );
 
     // The agent creates the data directory on the node's own disk and derives
-    // the bind mount from it — the panel never names a host path.
+    // the bind mount from it. The panel never names a host path.
     const { containerId } = await createServerContainer(nodeId, serverId, {
       image: blueprint.dockerImage,
       containerDataPath: blueprint.dataPath,
@@ -875,7 +862,7 @@ async function provisionServer(
       WHERE id = ${serverId}
     `;
 
-    await logPhase(serverId, "Done — the server is ready to start.");
+    await logPhase(serverId, "Done. The server is ready to start.");
   } catch (error) {
     // A provision that stopped because its server was deleted did not fail.
     // Writing `error` here would resurrect a row mid-delete, or log a failure
@@ -899,12 +886,12 @@ async function provisionServer(
  * Create a server: reserve DB state, then provision on the node in the
  * background.
  *
- * Everything that can reject the request outright — an unknown blueprint,
- * resources below its minimums, bad env, a node with no capacity or an
- * unwritable data root — happens here, synchronously, so a bad create still
- * fails as a 4xx/5xx with nothing left behind. Once the row exists the caller
- * gets it back immediately in `creating`, and {@link provisionServer} takes
- * over; the row's status and install log are how it reports from there.
+ * Everything that can reject the request outright happens here, synchronously,
+ * so a bad create still fails as a 4xx/5xx with nothing left behind: an unknown
+ * blueprint, resources below its minimums, bad env, a node with no capacity or
+ * an unwritable data root. Once the row exists the caller gets it back
+ * immediately in `creating`, and {@link provisionServer} takes over; the row's
+ * status and install log are how it reports from there.
  *
  * On any provisioning failure the server is left in `error` (not deleted) so the
  * owner or an admin can inspect and retry rather than silently losing the record.
@@ -947,8 +934,8 @@ export async function createServer(
     : await scheduleServer(request);
 
   // The scheduler only knows what the database records: free capacity and the
-  // drain flag. Ask the node itself whether it can actually take a server —
-  // an agent that is down, or whose data root it cannot write to, fails every
+  // drain flag. Ask the node itself whether it can actually take a server. An
+  // agent that is down, or whose data root it cannot write to, fails every
   // provision at `mkdir`. Checking here means the admin gets one actionable
   // error instead of a half-created server left in `error`.
   await assertNodeReadyToProvision(node.nodeId);
@@ -973,7 +960,7 @@ export async function createServer(
   );
 
   // Audited on reservation, not on completion: the create is the admin's
-  // action, and it has happened — whether the node then builds the container
+  // action, and it has happened. Whether the node then builds the container
   // successfully is the provision's story, told by the status and install log.
   await recordAudit({
     userId: input.actorId ?? input.ownerId,
@@ -993,7 +980,7 @@ export async function createServer(
     },
   });
 
-  // Detached on purpose — see provisionServer. It records its own failures on
+  // Detached on purpose, see provisionServer. It records its own failures on
   // the row, so the promise never rejects and nothing here needs to await it;
   // the route hands it to `after()` so the runtime keeps it alive.
   const task = provisionServer(server.id, {
@@ -1003,7 +990,6 @@ export async function createServer(
     secretKeys: resolved.secretKeys,
     cpuLimit: input.cpuLimit,
     memoryLimitMb: input.memoryLimitMb,
-    preferredPort: input.preferredPort,
   }).finally(() => {
     inFlightProvisions.delete(server.id);
   });
@@ -1046,7 +1032,7 @@ function assertHasContainer(server: ServerRow): void {
  * Rebuild a container the node no longer has.
  *
  * Panel/node drift is a real state, not a corrupted one: a container can be
- * removed out of band — a manual `docker rm`, a prune, a rebuilt node — while
+ * removed out of band by a manual `docker rm`, a prune or a rebuilt node, while
  * the server row still points at its id. Every lifecycle call then comes back
  * as the agent's "no container exists on this node" 404, and nothing in the UI
  * can clear it, because the only path that creates a container is provisioning
@@ -1056,7 +1042,7 @@ function assertHasContainer(server: ServerRow): void {
  * the data directory belongs to the agent and outlives any container, so the
  * new container comes up on the world, config and logs the old one left.
  *
- * Returns false when the node does have the container after all — the 404 came
+ * Returns false when the node does have the container after all. The 404 came
  * from something else and the caller must re-throw it.
  */
 async function healMissingContainer(server: ServerRow): Promise<boolean> {
@@ -1113,8 +1099,8 @@ export async function startServer(
   await setStatus(serverId, "starting");
   try {
     // Plugins must be on disk before the game process boots, so the
-    // auto-updater runs inside the "starting" phase. Best-effort by contract —
-    // a catalog outage never blocks a start.
+    // auto-updater runs inside the "starting" phase. Best-effort by contract,
+    // so a catalog outage never blocks a start.
     await autoUpdateServerPlugins(serverId);
     await withMissingContainerRecovery(server, () =>
       startServerContainer(server.node_id, serverId),
@@ -1169,7 +1155,7 @@ export async function stopServer(
  * The escape hatch for a container stuck in a graceful stop or restart: no
  * grace period, no chance for the game to save. Audited distinctly from a
  * normal stop (`server.kill`) so the use of a destructive action is visible.
- * Does not require the server to be in any particular state — it is offered
+ * Does not require the server to be in any particular state. It is offered
  * precisely when a `stopping` transition has stalled.
  */
 export async function killServer(
@@ -1210,9 +1196,9 @@ export async function restartServer(
 
   // A restart is a stop with a start behind it, and the stop half is the part
   // that can hang. Recording `stopping` for the whole action is what makes the
-  // transition visible to everyone — a second tab, a page loaded mid-restart —
-  // rather than only to the client that clicked the button, which is what puts
-  // Kill within reach when the shutdown wedges.
+  // transition visible to everyone, including a second tab or a page loaded
+  // mid-restart, rather than only to the client that clicked the button, which
+  // is what puts Kill within reach when the shutdown wedges.
   await setStatus(serverId, "stopping");
   try {
     // A restart re-reads the plugins directory at boot, so the auto-updater
@@ -1302,12 +1288,12 @@ export async function unsuspendServer(
 /**
  * Delete a server.
  *
- * The world data directory is retained unless `deleteData` is explicitly true —
- * an accidental delete should be recoverable (plan.md section 11 step 8).
+ * The world data directory is retained unless `deleteData` is explicitly true,
+ * because an accidental delete should be recoverable (plan.md section 11 step 8).
  *
  * **The node's cleanup is not best-effort.** Dropping the panel record while the
  * container survives inverts this module's ordering principle: a container with
- * no row is an orphan nobody can see. Worse, it keeps running — a deleted server
+ * no row is an orphan nobody can see. Worse, it keeps running, a deleted server
  * that still serves players, still writes to disk, and still holds its published
  * host ports, which the panel is now free to hand to the next server on that
  * node. So a node that cannot confirm the removal aborts the delete: the record
@@ -1316,14 +1302,14 @@ export async function unsuspendServer(
  *
  * `force` is the escape hatch for the node that is never coming back
  * (decommissioned hardware, a lost host). It accepts the orphan knowingly, and
- * is admin-only for that reason — see `handleDeleteServer`. What was left behind
+ * is admin-only for that reason, see `handleDeleteServer`. What was left behind
  * is written into the audit entry, because after the row is gone that log is the
  * only record of what still needs cleaning up by hand.
  *
  * A row with no container is exempt from the gate: there is nothing on the node
  * that can run or hold a port, so an unreachable node must not strand a failed
- * provision as an undeletable row. Asking to delete the data is not exempt —
- * the files may well exist even when the container never did.
+ * provision as an undeletable row. Asking to delete the data is not exempt,
+ * because the files may well exist even when the container never did.
  */
 export async function deleteServer(
   serverId: string,
@@ -1355,8 +1341,8 @@ export async function deleteServer(
   const orphaned: { container?: string; databases?: string[] } = {};
 
   try {
-    // The agent removes the container, the per-server network and — only when
-    // asked — the data directory, all on the node that owns them.
+    // The agent removes the container, the per-server network and, only when
+    // asked, the data directory, all on the node that owns them.
     await deleteServerContainer(server.node_id, serverId, deleteData);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -1365,7 +1351,7 @@ export async function deleteServer(
       await setStatus(serverId, previousStatus);
       throw new HttpError(
         error instanceof HttpError ? error.status : 502,
-        `${reason} Nothing was deleted — the server's container and files are ` +
+        `${reason} Nothing was deleted. The server's container and files are ` +
           `still on the node. Retry once the node is reachable, or force the ` +
           `delete to drop the panel's record and leave them behind.`,
       );
@@ -1444,7 +1430,7 @@ export async function deleteServer(
  * Reconcile the stored status of a server with the node's actual container
  * state, so the dashboard does not show "running" for a crashed server.
  *
- * The decision itself lives in `statusReconcile.ts` — including why a graceful
+ * The decision itself lives in `statusReconcile.ts`, including why a graceful
  * stop is believed over a node that reports the container as still up. Here it
  * is only given the two inputs it needs: the observed state, and how long the
  * stored status has been in place (`updated_at`, which `setStatus` bumps).
@@ -1474,10 +1460,10 @@ export async function reconcileServerStatus(serverId: string): Promise<ServerSta
  * {@link getServer} plus a live status reconcile, off a single read of the row.
  *
  * This is the server detail endpoint, so it runs on every page load and every
- * poll behind one. Everything that follows from the row — the ports, the
- * plugin-support probe, and asking the node what the container is actually
- * doing — is independent of the others, so they all run at once; the whole
- * endpoint is two database round trips and one node round trip deep.
+ * poll behind one. The ports, the plugin-support probe, and asking the node
+ * what the container is actually doing all follow from the row, and each is
+ * independent of the others, so they all run at once; the whole endpoint is two
+ * database round trips and one node round trip deep.
  *
  * A node that cannot be reached must not cost the owner the page, so the
  * reconcile falls back to the stored status rather than propagating.
@@ -1508,9 +1494,9 @@ export async function getServerReconciled(
  * a container *around* the data directory, this one deletes the directory and
  * runs the blueprint's install step over the empty space. Worlds, configs,
  * plugin jars, and anything the owner uploaded are gone; there is no backup and
- * no undo. Everything the panel records about the server — its ports, env,
- * databases, subusers, SFTP credentials and links — survives, because none of it
- * lives in the data directory. That is the whole distinction between this and
+ * no undo. Everything the panel records about the server survives, because
+ * none of it lives in the data directory: its ports, env, databases, subusers,
+ * SFTP credentials and links. That is the whole distinction between this and
  * delete-and-create-again: the server keeps its identity and its address.
  *
  * Every reason to refuse is checked here, synchronously, so a rejected reinstall
@@ -1519,9 +1505,9 @@ export async function getServerReconciled(
  * wipe would leave the owner with neither their files nor a server.
  *
  * The rebuild itself is detached, for the same reason provisioning is (see
- * {@link provisionServer}) — an image pull and an install script are minutes of
- * work that no HTTP request should be holding open — and it reports the same
- * way, through the row's status and a freshly emptied install log.
+ * {@link provisionServer}). An image pull and an install script are minutes of
+ * work that no HTTP request should be holding open. It reports the same way,
+ * through the row's status and a freshly emptied install log.
  */
 export async function reinstallServer(
   serverId: string,
@@ -1555,7 +1541,7 @@ export async function reinstallServer(
   }
 
   // The rebuild republishes the ports already reserved for this server rather
-  // than allocating new ones — an address that moved under the players would
+  // than allocating new ones. An address that moved under the players would
   // make a reinstall a migration. A server with no ports never got far enough
   // through its first provision to have anything to rebuild onto.
   const ports = (await sql`
@@ -1595,7 +1581,7 @@ export async function reinstallServer(
     metadata: { blueprintKey: blueprint.key, nodeId: server.node_id },
   });
 
-  // Detached on purpose — see provisionServer. Shares `inFlightProvisions` with
+  // Detached on purpose, see provisionServer. Shares `inFlightProvisions` with
   // the create path so the two can never run against the same server at once.
   const task = rebuildServerFromBlueprint(serverId, blueprint).finally(() => {
     inFlightProvisions.delete(serverId);
@@ -1611,7 +1597,7 @@ export async function reinstallServer(
  * Ordered so that nothing is destroyed while the game may still be writing, and
  * so that a failure at any step leaves a row an operator can read rather than a
  * container pointing at files that are gone. Like {@link provisionServer} it
- * never rejects — the row's status and install log are how it reports.
+ * never rejects. The row's status and install log are how it reports.
  */
 async function rebuildServerFromBlueprint(
   serverId: string,
@@ -1621,7 +1607,7 @@ async function rebuildServerFromBlueprint(
     const server = await loadServerRow(serverId);
 
     // Stop before deleting, so the world is not half-written when it goes.
-    // Best-effort: a container that is already stopped — or already gone — is
+    // Best-effort: a container that is already stopped, or already gone, is
     // the state this is trying to reach.
     if (server.container_id) {
       await logPhase(serverId, "Stopping the server…");
@@ -1652,7 +1638,7 @@ async function rebuildServerFromBlueprint(
 
     // The installed-plugin rows described jars that have just been deleted.
     // Left behind, they would read as "missing" in the plugins tab and be
-    // re-downloaded by the pre-start auto-updater — a fresh install that
+    // re-downloaded by the pre-start auto-updater, a fresh install that
     // quietly restores the plugins it was asked to remove.
     await sql`DELETE FROM server_plugins WHERE server_id = ${serverId}`;
 
@@ -1697,7 +1683,7 @@ async function rebuildServerFromBlueprint(
 
     await logPhase(
       serverId,
-      "Done — the server has been reinstalled and is ready to start.",
+      "Done. The server has been reinstalled and is ready to start.",
     );
   } catch (error) {
     if (error instanceof ProvisionAbandoned) {
@@ -1721,7 +1707,7 @@ async function rebuildServerFromBlueprint(
  *
  * `server_env` stores secret values encrypted; the container needs the plaintext.
  * Used by {@link recreateServerContainer}, which must hand the agent the same env
- * the server originally booted with — minus the masking the display path applies.
+ * the server originally booted with, minus the masking the display path applies.
  */
 async function loadEnvForContainer(serverId: string): Promise<Record<string, string>> {
   const rows = (await sql`
@@ -1740,8 +1726,8 @@ async function loadEnvForContainer(serverId: string): Promise<Record<string, str
  * Rebuild a server's container against its current `server_ports` set.
  *
  * Docker's port bindings (`HostConfig.PortBindings`) are fixed at container
- * creation, so adding or removing a published port is not an in-place update —
- * the container must be recreated. The data volume is a bind mount owned by the
+ * creation, so adding or removing a published port is not an in-place update.
+ * The container must be recreated. The data volume is a bind mount owned by the
  * agent, so recreating is non-destructive: world data, config and logs survive.
  *
  * The recreated container keeps the server's image, env, resource limits and
@@ -1762,23 +1748,21 @@ async function recreateServerContainer(serverId: string): Promise<void> {
   // The full port set the recreated container must publish: blueprint defaults
   // plus any owner-added additional ports, all read from `server_ports`.
   const portRows = (await sql`
-    SELECT host_port, protocol, is_primary
+    SELECT host_port, is_primary
     FROM server_ports
     WHERE server_id = ${serverId}
     ORDER BY is_primary DESC, host_port ASC
-  `) as { host_port: number; protocol: string; is_primary: boolean }[];
+  `) as { host_port: number; is_primary: boolean }[];
 
   if (portRows.length === 0) {
     throw badRequest("Server has no ports to publish");
   }
 
   // Identity mapping by construction: the published number is the number the
-  // game binds inside the container.
-  const ports: PortBinding[] = portRows.map((row) => ({
-    hostPort: row.host_port,
-    containerPort: row.host_port,
-    protocol: row.protocol as PortProtocol,
-  }));
+  // game binds inside the container, on TCP and UDP both.
+  const ports: PortBinding[] = portRows.flatMap((row) =>
+    portBindingsFor(row.host_port),
+  );
 
   const env = await loadEnvForContainer(serverId);
 
@@ -1845,7 +1829,7 @@ async function recreateServerContainer(serverId: string): Promise<void> {
       command,
       user: blueprint.user,
       tty: blueprint.tty === true,
-      // Re-attach the DB network if the server has databases — the old
+      // Re-attach the DB network if the server has databases. The old
       // container's network attachments are lost when it is removed.
       extraNetworks: await extraNetworksForServer(serverId),
     });
@@ -1890,23 +1874,22 @@ export async function countAdditionalPorts(serverId: string): Promise<number> {
 export interface AddServerPortInput {
   serverId: string;
   actorId: string;
-  /** The port to publish (1-65535) — identity-mapped, host and container. */
-  port: number;
-  protocol: PortProtocol;
   /** Optional owner note shown in the ports card, e.g. "Metrics". */
   label?: string;
 }
 
 /**
- * Add an owner-configured additional port to a server.
+ * Add an additional port to a server. **The panel picks the number.**
  *
- * The port is an identity mapping — the same number is published on the host
- * and bound in the container — and must be available: a member of the node's
- * port pool for this protocol, unallocated in the panel, and free on the host
- * (verified through the agent). A port that fails any check is a readable 409;
- * no fallback is substituted because the owner chose that exact number.
+ * The owner asks for "one more port", not for a specific one: a number is drawn
+ * at random from the node's pool, then published as an identity mapping (host N
+ * → container N) on TCP and UDP both. Letting the owner name the number meant
+ * every failure mode was theirs to debug, for a number that has no meaning
+ * until it is allocated anyway: not in the pool, taken by another server, held
+ * by a host process. The allocated port comes back in the returned summary, and
+ * the owner points their plugin config at it.
  *
- * The container is then recreated so the new binding takes effect — Docker
+ * The container is then recreated so the new binding takes effect. Docker
  * cannot apply a new port binding to a running container.
  *
  * Enforces the panel-wide `maxAdditionalPortsPerServer` limit before
@@ -1917,14 +1900,6 @@ export async function addServerPort(
   input: AddServerPortInput,
 ): Promise<ServerSummary> {
   const server = await loadServerRow(input.serverId);
-
-  if (
-    !Number.isInteger(input.port) ||
-    input.port < 1 ||
-    input.port > 65535
-  ) {
-    throw badRequest("port must be an integer between 1 and 65535");
-  }
 
   const label =
     input.label !== undefined && input.label !== null
@@ -1941,32 +1916,19 @@ export async function addServerPort(
     );
   }
 
-  // A (port, protocol) pair must be unique per server — the table's PRIMARY KEY
-  // enforces it, but a pre-check gives a readable 409 instead of a raw
-  // constraint violation.
-  const existing = (await sql`
-    SELECT 1 FROM server_ports
-    WHERE server_id = ${input.serverId}
-      AND host_port = ${input.port}
-      AND protocol = ${input.protocol}
-  `) as { 1: number }[];
-  if (existing.length > 0) {
-    throw conflict(
-      `Port ${input.port}/${input.protocol} is already published on this server.`,
-    );
-  }
-
-  // The port must be reservable exactly as asked — see the function doc for why
-  // there is no fallback here, unlike at create.
-  await allocateSpecificHostPort(server.node_id, input.protocol, input.port);
+  // A random free number from the node's pool, verified bindable on both
+  // protocols. Allocation is what decides the number, so there is no
+  // already-published pre-check to run: a number this server already holds is
+  // in `server_ports` and therefore not a candidate.
+  const port = await allocateHostPort(server.node_id);
 
   await sql`
     INSERT INTO server_ports (
-      server_id, node_id, host_port, container_port, protocol,
+      server_id, node_id, host_port, container_port,
       is_primary, is_additional, label
     ) VALUES (
-      ${input.serverId}, ${server.node_id}, ${input.port}, ${input.port},
-      ${input.protocol}, FALSE, TRUE, ${label}
+      ${input.serverId}, ${server.node_id}, ${port}, ${port},
+      FALSE, TRUE, ${label}
     )
   `;
 
@@ -1977,11 +1939,7 @@ export async function addServerPort(
     action: "server.port.add",
     targetType: "server",
     targetId: input.serverId,
-    metadata: {
-      port: input.port,
-      protocol: input.protocol,
-      label,
-    },
+    metadata: { port, label },
   });
 
   return getServer(input.serverId);
@@ -1990,7 +1948,7 @@ export async function addServerPort(
 /**
  * Remove an owner-added additional port from a server.
  *
- * Blueprint ports (`is_additional = FALSE`) cannot be removed here — they are
+ * Blueprint ports (`is_additional = FALSE`) cannot be removed here. They are
  * part of the game's definition, not an owner assignment. The container is
  * recreated afterwards so the freed host binding is actually released.
  *
@@ -2001,7 +1959,6 @@ export async function addServerPort(
 export async function removeServerPort(
   serverId: string,
   port: number,
-  protocol: PortProtocol,
   actorId: string,
 ): Promise<ServerSummary> {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -2012,7 +1969,6 @@ export async function removeServerPort(
     DELETE FROM server_ports
     WHERE server_id = ${serverId}
       AND host_port = ${port}
-      AND protocol = ${protocol}
       AND is_additional = TRUE
     RETURNING host_port, is_primary
   `) as { host_port: number; is_primary: boolean }[];
@@ -2044,10 +2000,7 @@ export async function removeServerPort(
     action: "server.port.remove",
     targetType: "server",
     targetId: serverId,
-    metadata: {
-      port,
-      protocol,
-    },
+    metadata: { port },
   });
 
   return getServer(serverId);
@@ -2059,8 +2012,8 @@ export async function removeServerPort(
  * A database provisioned for a server, as the API returns it.
  *
  * The password is included **only** at creation time (and on a reset). The list
- * endpoint returns `null` for `password` — the stored value is encrypted and
- * never decrypted for display. The owner is told to copy it when it is shown.
+ * endpoint returns `null` for `password`, because the stored value is encrypted
+ * and never decrypted for display. The owner is told to copy it when it is shown.
  */
 export interface ServerDatabaseSummary {
   id: string;
@@ -2068,7 +2021,7 @@ export interface ServerDatabaseSummary {
   user: string;
   host: string;
   port: number;
-  /** Plaintext password — only present at creation/reset, null on list. */
+  /** Plaintext password, only present at creation/reset, null on list. */
   password: string | null;
   createdAt: Date;
 }
@@ -2081,7 +2034,7 @@ export async function listServerDatabases(
 }
 
 /** Load a server's provisioned databases, with passwords decrypted for the DB
- *  name/user/host (never for display — password stays encrypted in the row). */
+ *  name/user/host (never for display, it stays encrypted in the row). */
 async function loadDatabases(
   serverId: string,
 ): Promise<ServerDatabaseSummary[]> {
@@ -2100,7 +2053,7 @@ async function loadDatabases(
     created_at: Date;
   }[];
 
-  // The password is never decrypted for the list view — only at creation.
+  // The password is never decrypted for the list view, only at creation.
   return rows.map((row) => ({
     id: row.id,
     name: row.db_name,
@@ -2126,7 +2079,7 @@ export async function countServerDatabases(serverId: string): Promise<number> {
  *
  * The name is `db_<short-server-id>_<6 random hex chars>` and the user is the
  * matching `u_` form. The random suffix is what lets one server own multiple
- * databases — a name derived from the server id alone would collide on the
+ * databases. A name derived from the server id alone would collide on the
  * `(node_id, db_name)` unique constraint on the second database.
  *
  * The suffix (2^24 possibilities) is checked against existing names on this
@@ -2165,7 +2118,7 @@ async function generateDbIdentifiers(
  * attach logic and treats an already-present network as a no-op.
  *
  * Server links each contribute their pairwise network, so a recreate restores
- * the link's connectivity — see `serverLinks.ts`.
+ * the link's connectivity. See `serverLinks.ts`.
  */
 async function extraNetworksForServer(serverId: string): Promise<string[]> {
   const networks: string[] = [];
@@ -2212,7 +2165,7 @@ export async function addServerDatabase(
   }
 
   // Load the node's DB admin credentials. A node without them configured cannot
-  // provision databases — the operator needs to run setup-db and re-register.
+  // provision databases. The operator needs to run setup-db and re-register.
   const node = await getNodeWithSecrets(server.node_id);
   if (!node) throw notFound("Node not found");
   if (!node.db.host || !node.db.user || !node.db.password) {
@@ -2227,7 +2180,7 @@ export async function addServerDatabase(
   const dbPassword = generateStrongPassword(32);
 
   // Generate a unique DB name + user for this database. The random suffix is
-  // what lets a server own multiple databases — a name derived from the server
+  // what lets a server own multiple databases. A name derived from the server
   // id alone would collide on the (node_id, db_name) unique constraint.
   const { dbName, dbUser } = await generateDbIdentifiers(
     input.serverId,

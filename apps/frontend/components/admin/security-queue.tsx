@@ -45,7 +45,7 @@ import type { SuspiciousActivityView } from "@/lib/types";
  * The resource-abuse review queue.
  *
  * The panel flags and records; a human decides. Each flag is evidence for an
- * admin, never an automatic verdict — reviewing it (or dismissing it) is a
+ * admin, never an automatic verdict. Reviewing it (or dismissing it) is a
  * separate action from any enforcement (suspend), which lives on the server.
  */
 export function SecurityQueue() {
@@ -105,7 +105,7 @@ export function SecurityQueue() {
           <p className="text-sm text-muted-foreground">
             Resource-abuse detection: {openCount} flagged{" "}
             {openCount === 1 ? "event" : "events"} to review. Scores are evidence
-            for a human decision, not proof — nothing is suspended automatically.
+            for a human decision, not proof. Nothing is suspended automatically.
           </p>
         </div>
         <div className="flex items-center gap-1 rounded-lg border p-0.5">
@@ -245,7 +245,7 @@ function EvidenceDialog({
             </div>
             <DialogDescription>
               {selected.serverName ?? selected.serverId}
-              {" — "}
+              {" · "}
               {selected.ownerEmail ?? "unknown owner"} ·{" "}
               {formatRelative(selected.detectedAt)}
             </DialogDescription>

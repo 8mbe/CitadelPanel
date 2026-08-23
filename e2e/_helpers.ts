@@ -38,7 +38,7 @@ export const config: E2EConfig = {
   adminEmail: process.env.E2E_ADMIN_EMAIL ?? "",
 };
 
-/** True when both keys are present — gates the authenticated tests. */
+/** True when both keys are present. Gates the authenticated tests. */
 export const configured = Boolean(config.userKey && config.adminKey);
 
 /** A test that only runs when both E2E keys are configured. */
@@ -54,7 +54,7 @@ export function expectStatus(res: ApiResult, expected: number): ApiResult {
   return res;
 }
 
-/** A UUID known to not exist on the panel — used for "not found" assertions. */
+/** A UUID known to not exist on the panel, used for "not found" assertions. */
 export const UNKNOWN_UUID = "00000000-0000-0000-0000-000000000000";
 
 export type HeaderMode = "bearer" | "x-api-key";
@@ -68,7 +68,7 @@ export interface ApiResult {
 /**
  * Issue a request against the panel. `key` selects a credential; `header`
  * chooses which convention to present it under (the panel aliases
- * `Authorization: Bearer` onto `x-api-key` — see auth/middleware.ts).
+ * `Authorization: Bearer` onto `x-api-key`, see auth/middleware.ts).
  */
 export async function api(
   path: string,
@@ -144,12 +144,12 @@ function loadDotEnv(path: string): void {
 // The suite resolves real row ids (server, node, blueprint, users) from the
 // panel at start-up so it never hardcodes UUIDs that drift when the dev DB is
 // reset. All the happy-path read tests run against the admin's own server and
-// node — the user key, which has no relationship to that server, is used to
+// node. The user key, which has no relationship to that server, is used to
 // assert the 404 "no access" path that the auth middleware returns to prevent
 // information leakage (see auth/middleware.ts).
 
 export interface Fixtures {
-  /** A real server the admin owns — the admin key reaches every route on it. */
+  /** A real server the admin owns. The admin key reaches every route on it. */
   serverId: string;
   /** The node that server lives on. */
   serverNodeId: string;
@@ -170,7 +170,7 @@ let _fixtures: Fixtures | null = null;
 /**
  * Pull live ids from the panel so the suite doesn't hardcode UUIDs that drift
  * when the dev DB is reset. Cached after the first call. Throws if the panel
- * lacks a node/server/blueprint/non-admin user — i.e. the dev environment was
+ * lacks a node/server/blueprint/non-admin user, i.e. the dev environment was
  * never seeded.
  */
 export async function loadFixtures(): Promise<Fixtures> {

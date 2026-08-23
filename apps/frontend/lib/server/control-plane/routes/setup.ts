@@ -15,7 +15,7 @@
  * The remaining exposure is a race between deploying the panel and completing
  * setup: whoever reaches it first becomes admin. That is inherent to any
  * no-default-credential bootstrap, and it is why `/api/setup/status` reports
- * `needsSetup` — an operator can see at a glance that the window is still open.
+ * `needsSetup`. An operator can see at a glance that the window is still open.
  */
 
 import { requireAdmin } from "../auth/middleware";
@@ -90,7 +90,7 @@ import {
 } from "@/lib/site-theme";
 
 /**
- * GET /api/setup/status — public.
+ * GET /api/setup/status. Public.
  *
  * Unauthenticated on purpose: the login page and the wizard both need to know
  * whether setup is pending before anyone can possibly hold a session. It reports
@@ -151,7 +151,7 @@ async function countNodes(): Promise<number> {
 }
 
 /**
- * POST /api/setup/admin — claim the first admin account. Unauthenticated, once.
+ * POST /api/setup/admin. Claims the first admin account. Unauthenticated, once.
  *
  * Account creation is delegated to Better Auth rather than inserting a row: it
  * owns password hashing and session issuance, and a hand-rolled bootstrap user
@@ -160,7 +160,7 @@ async function countNodes(): Promise<number> {
  * wizard is signed in for the remaining steps.
  *
  * The role is set here explicitly instead of relying on FIRST_USER_BECOMES_ADMIN,
- * which an operator may have turned off — the account this endpoint creates is
+ * which an operator may have turned off. The account this endpoint creates is
  * an admin by definition.
  */
 export async function handleSetupCreateAdmin(request: Request): Promise<Response> {
@@ -168,7 +168,7 @@ export async function handleSetupCreateAdmin(request: Request): Promise<Response
   // common refusal does not depend on Better Auth's error shape.
   if ((await countAdmins()) > 0) {
     throw conflict(
-      "An administrator account already exists. Sign in instead — first-time setup is closed.",
+      "An administrator account already exists. Sign in instead. First-time setup is closed.",
     );
   }
 
@@ -221,7 +221,7 @@ export async function handleSetupCreateAdmin(request: Request): Promise<Response
     `;
     if (current[0]?.role !== "admin") {
       throw conflict(
-        "An administrator account was just created by someone else. Your account was created as a regular user — ask that administrator for access.",
+        "An administrator account was just created by someone else. Your account was created as a regular user. Ask that administrator for access.",
       );
     }
   }
@@ -251,7 +251,7 @@ export async function handleSetupCreateAdmin(request: Request): Promise<Response
 }
 
 /**
- * PATCH /api/setup/settings — timezone and captcha. Admin only.
+ * PATCH /api/setup/settings. Timezone and captcha. Admin only.
  *
  * Shared by the wizard and the admin settings page: there is no second code path
  * that writes these, so validation cannot drift between "during setup" and
@@ -679,7 +679,7 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
 
     // Cron is validated here rather than in the service layer so the operator gets
     // the parser's own message about the field they typed, and so an unparseable
-    // expression can never be stored — the scheduler would then silently never fire.
+    // expression can never be stored. The scheduler would then silently never fire.
     const readSchedule = (group: Record<string, unknown>, label: string): string | undefined => {
       if (group.schedule === undefined) return undefined;
       const raw = optionalString(group, "schedule", { max: 256 }) ?? "";
@@ -814,7 +814,7 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
     userId: admin.id,
     action: "settings.update",
     targetType: "settings",
-    // Field names only — never a captcha, mail, or AI API key.
+    // Field names only, never a captcha, mail, or AI API key.
     metadata: { changed },
   });
 
@@ -822,7 +822,7 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
 }
 
 /**
- * GET /api/admin/settings — current settings for the admin settings page.
+ * GET /api/admin/settings. Returns current settings for the admin settings page.
  *
  * The secret key is reported as a boolean, not a value: it is stored encrypted
  * precisely so it cannot be read back, and an admin session is not a reason to
@@ -838,7 +838,7 @@ export async function handleGetSettings(request: Request): Promise<Response> {
  * The admin form's view of every settings group.
  *
  * Shared by the GET and the PATCH response so a saved form always re-renders
- * from the same shape it loaded from — there is no second projection that could
+ * from the same shape it loaded from. There is no second projection that could
  * drop a field only on one of the two paths.
  */
 async function adminSettingsView() {
@@ -872,11 +872,11 @@ async function getAdminCaptchaView() {
 }
 
 /**
- * POST /api/admin/settings/test-email — send a test message to a given address.
+ * POST /api/admin/settings/test-email. Sends a test message to a given address.
  *
  * Lets an admin confirm their SMTP/Resend config actually delivers before
  * relying on it for verification and password-reset emails. The address is
- * validated here; the send itself never throws — `sendMail` logs and swallows
+ * validated here; the send itself never throws. `sendMail` logs and swallows
  * transport errors, returning false instead, so a misconfigured server yields a
  * readable "did not send" result rather than a 500.
  */
@@ -911,7 +911,7 @@ export async function handleTestEmail(request: Request): Promise<Response> {
 }
 
 /**
- * POST /api/setup/complete — close the setup window. Admin only.
+ * POST /api/setup/complete. Closes the setup window. Admin only.
  *
  * Idempotent: re-running it on a completed install returns the existing
  * timestamp rather than refusing, so a double-submit from the wizard's last step
@@ -941,7 +941,7 @@ export async function handleSetupComplete(request: Request): Promise<Response> {
 }
 
 /**
- * GET /api/settings/public — public.
+ * GET /api/settings/public. Unauthenticated.
  *
  * What an unauthenticated page legitimately needs: the captcha site key so the
  * login form can render its widget, and the timezone so timestamps read
@@ -962,8 +962,8 @@ export async function handlePublicSettings(): Promise<Response> {
     // Surfaced so the console can show (or hide) the AI helper button without
     // a separate round-trip per server page. Only the boolean; no URL/key/model.
     ai: await getPublicAiSettings(),
-    // The site name and tagline the sign-in page renders. Public by definition —
-    // it is the text in the page title.
+    // The site name and tagline the sign-in page renders. Public by definition,
+    // since it is the text in the page title.
     branding: await getBranding(),
     // Lets the sign-in page hide the sign-up tab. The gate itself is the Better
     // Auth before-hook; this only avoids offering a form that would be refused.
@@ -989,7 +989,7 @@ export async function handlePublicSettings(): Promise<Response> {
  * (the most natural flow: type a URL + key, fetch models, pick one, test, then
  * save). When a field is absent the stored value is used instead, so the
  * buttons also work against an already-saved config. The decrypted API key
- * lives only inside this request — it is never returned to the browser.
+ * lives only inside this request. It is never returned to the browser.
  *
  * Returns null when there is no usable config (no URL or no key from either
  * source); callers surface their own readable error.
@@ -1020,7 +1020,7 @@ async function resolveAiConfigFromBody(
 }
 
 /**
- * POST /api/admin/settings/ai/models — list models from the provider.
+ * POST /api/admin/settings/ai/models. Lists models from the provider.
  *
  * Accepts `{ apiUrl?, apiKey? }` so an admin can probe a provider before saving
  * it; falls back to the stored config when either is omitted. The model list is
@@ -1043,7 +1043,7 @@ export async function handleFetchAiModels(request: Request): Promise<Response> {
 }
 
 /**
- * POST /api/admin/settings/ai/test — send a trivial ping and wait for the reply.
+ * POST /api/admin/settings/ai/test. Sends a trivial ping and waits for the reply.
  *
  * Accepts `{ apiUrl?, apiKey?, model? }` so an admin can test a provider before
  * saving. Returns the assistant's reply so the operator can confirm the round
@@ -1072,7 +1072,7 @@ export async function handleTestAi(request: Request): Promise<Response> {
         content:
           "You are a connectivity test. Reply with a single short sentence confirming you received this message.",
       },
-      { role: "user", content: "Hello — is this model reachable?" },
+      { role: "user", content: "Hello, is this model reachable?" },
     ],
   );
 

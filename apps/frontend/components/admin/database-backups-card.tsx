@@ -95,9 +95,9 @@ function isActive(run: ServerBackup | null): boolean {
  * Database backups: the administrator-owned scope.
  *
  * Two cards, because they answer different questions. The schedule is
- * configuration — when should this happen, and how much history to keep. The
- * per-node list is operational — what is the state of each node right now, and let
- * me act on it.
+ * configuration: when should this happen, and how much history to keep. The
+ * per-node list is operational: what is the state of each node right now, and
+ * let me act on it.
  *
  * Deliberately separate from the server-backup schedule above it. Dumping every
  * database on a node uses that node's root-equivalent MariaDB credential, so it is
@@ -143,7 +143,7 @@ function DatabaseScheduleCard({
   const [previewError, setPreviewError] = React.useState<string | null>(null);
 
   // Computed server-side so it uses the panel's timezone and the same parser the
-  // scheduler does — a schedule can never preview one thing and then do another.
+  // scheduler does. A schedule can never preview one thing and then do another.
   // Debounced so typing does not fire a request per keystroke, but not on first
   // render: the stored schedule needs no debouncing, and waiting for one left
   // the card blank for the delay every time the page opened.
@@ -221,7 +221,7 @@ function DatabaseScheduleCard({
           />
           <FieldDescription>
             Leave empty to only back up databases when you press the button below.
-            Consider a different hour from the server schedule — both read the same
+            Consider a different hour from the server schedule. Both read the same
             disks.
           </FieldDescription>
         </Field>
@@ -272,8 +272,8 @@ function DatabaseScheduleCard({
             onChange={(e) => setMaxPerNode(e.target.value)}
           />
           <FieldDescription>
-            Once a node has this many, a new backup removes its oldest first — so the
-            count never exceeds the limit. 0 means unlimited.
+            Once a node has this many, a new backup removes its oldest first, so
+            the count never exceeds the limit. 0 means unlimited.
           </FieldDescription>
         </Field>
 
@@ -339,7 +339,7 @@ function ActiveRunPanel({
           return;
         }
       } catch {
-        // A dropped poll is not worth surfacing — the next one either succeeds or
+        // A dropped poll is not worth surfacing. The next one either succeeds or
         // the run resolves. The reconciler is the source of truth.
       }
       if (!cancelled) timer = setTimeout(poll, POLL_MS);
@@ -586,14 +586,14 @@ function NodeRow({
             </span>
           ) : node.databaseCount === 0 ? (
             // Says why the button below is dead. A node can have a working
-            // database server and still have nothing to dump — every database
+            // database server and still have nothing to dump. Every database
             // here belongs to a server, so deleting the last server that had one
             // leaves this state. An empty snapshot is worse than none, so the
             // agent refuses it; without this line the button just looked broken.
             <span className="text-xs text-muted-foreground">
               No databases have been created on this node yet, so there is nothing to
-              back up. A database belongs to a server — one appears here once a server
-              owner adds one.
+              back up. A database belongs to a server, so one appears here once a
+              server owner adds one.
             </span>
           ) : (
             <span className="text-xs text-muted-foreground">
@@ -601,7 +601,7 @@ function NodeRow({
                 <>
                   Last {node.lastRun.kind === "restore" ? "restore" : "backup"}{" "}
                   {formatRelative(node.lastRun.createdAt)}
-                  {node.lastRun.status === "failed" && " — failed"}
+                  {node.lastRun.status === "failed" && ", failed"}
                 </>
               ) : (
                 "Never backed up."
@@ -687,7 +687,7 @@ function NodeRow({
  * The per-node operational list.
  *
  * Polls while any node has a run in flight, so a backup started here shows progress
- * without the operator refreshing. Idle otherwise — there is nothing to watch.
+ * without the operator refreshing. Idle otherwise, since there is nothing to watch.
  */
 function NodeDatabaseBackupsCard({ configured }: { configured: boolean }) {
   const [data, setData] = React.useState<DatabaseBackupsView | null>(null);
@@ -828,7 +828,7 @@ function NodeDatabaseBackupsCard({ configured }: { configured: boolean }) {
               the dump taken{" "}
               {restoreTarget && new Date(restoreTarget.run.createdAt).toLocaleString()}.
               That affects every tenant with a database on this node, and anything
-              written since then is lost. Servers are not stopped — restart the
+              written since then is lost. Servers are not stopped. Restart the
               affected ones afterwards so they stop serving stale rows.
             </DialogDescription>
           </DialogHeader>
@@ -859,8 +859,8 @@ function NodeDatabaseBackupsCard({ configured }: { configured: boolean }) {
             <DialogDescription>
               The snapshot is removed from S3 and its space reclaimed. This is the only
               copy of that point in time for{" "}
-              <span className="font-medium">{deleteTarget?.node.nodeName}</span> — it
-              cannot be undone.
+              <span className="font-medium">{deleteTarget?.node.nodeName}</span>, and
+              it cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
