@@ -18,6 +18,11 @@ export const MODRINTH_PROVIDER_SPEC: BlueprintPluginsSpec["provider"] = {
   id: "modrinth",
   baseUrl: "https://api.modrinth.com",
   downloadHosts: ["cdn.modrinth.com"],
+  // The site (not the API) plus the shape of a project page, so the plugins
+  // tab can offer "open on Modrinth". Modrinth canonicalises the type segment
+  // itself, so a plugin project reached as /mod/... simply redirects.
+  siteUrl: "https://modrinth.com",
+  projectPath: "/{projectType}/{slug}",
   facets: [
     { source: "projectType", prefix: "project_type:" },
     { source: "loaders", prefix: "categories:" },

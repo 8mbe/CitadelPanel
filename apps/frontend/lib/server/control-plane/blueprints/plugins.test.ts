@@ -262,6 +262,85 @@ describe("parsePluginSupport", () => {
     }
   });
 
+  test("the project-page link is validated like any other host", () => {
+    const parsed = parsePluginSupport(support, envSchema, allowAll);
+    expect(parsed.provider.siteUrl).toBe("https://modrinth.com");
+    expect(parsed.provider.projectPath).toBe("/{projectType}/{slug}");
+
+    expect(() =>
+      parsePluginSupport(
+        {
+          ...support,
+          provider: { ...MODRINTH_PROVIDER_SPEC, siteUrl: "http://modrinth.com" },
+        },
+        envSchema,
+        allowAll,
+      ),
+    ).toThrow(/siteUrl/);
+
+    expect(() =>
+      parsePluginSupport(
+        {
+          ...support,
+          provider: { ...MODRINTH_PROVIDER_SPEC, siteUrl: "https://localhost" },
+        },
+        envSchema,
+        blockLoopback,
+      ),
+    ).toThrow(/siteUrl/);
+  });
+
+  test("project-page templates may only use page variables", () => {
+    expect(() =>
+      parsePluginSupport(
+        {
+          ...support,
+          provider: {
+            ...MODRINTH_PROVIDER_SPEC,
+            projectPath: "/mod/{versionId}",
+          },
+        },
+        envSchema,
+        allowAll,
+      ),
+    ).toThrow(/unknown template variable/);
+  });
+
+  test("a site without a page path (or the reverse) is rejected", () => {
+    const withoutPath = { ...MODRINTH_PROVIDER_SPEC } as Record<string, unknown>;
+    delete withoutPath.projectPath;
+    expect(() =>
+      parsePluginSupport(
+        { ...support, provider: withoutPath as never },
+        envSchema,
+        allowAll,
+      ),
+    ).toThrow(/go together/);
+
+    const withoutSite = { ...MODRINTH_PROVIDER_SPEC } as Record<string, unknown>;
+    delete withoutSite.siteUrl;
+    expect(() =>
+      parsePluginSupport(
+        { ...support, provider: withoutSite as never },
+        envSchema,
+        allowAll,
+      ),
+    ).toThrow(/go together/);
+  });
+
+  test("a provider with no site at all is still valid (no link, no error)", () => {
+    const bare = { ...MODRINTH_PROVIDER_SPEC } as Record<string, unknown>;
+    delete bare.siteUrl;
+    delete bare.projectPath;
+    const parsed = parsePluginSupport(
+      { ...support, provider: bare as never },
+      envSchema,
+      allowAll,
+    );
+    expect(parsed.provider.siteUrl).toBeUndefined();
+    expect(parsed.provider.projectPath).toBeUndefined();
+  });
+
   test("nothing to resolve is an error, not a silent no-op", () => {
     expect(() =>
       parsePluginSupport(

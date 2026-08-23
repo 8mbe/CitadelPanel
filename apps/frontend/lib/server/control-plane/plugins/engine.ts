@@ -21,6 +21,10 @@
  * Nothing a catalog returns reaches a command line, a container or anything
  * executable — the only side effect downstream is an inert `.jar` file write
  * through the agent's contained `files/pull`.
+ *
+ * The pure half — dot-path reads, field coercion and the project-page URL —
+ * lives in `mapping.ts`, which has no env or network dependency and is unit
+ * tested directly.
  */
 
 import type {
@@ -30,6 +34,19 @@ import type {
 } from "../blueprints/plugins";
 import { badRequest } from "../lib/http";
 import { isBlockedHost } from "../lib/ssrf";
+import {
+  asChannel,
+  asGameVersionList,
+  asNumber,
+  asString,
+  asStringList,
+  interpolate,
+  isRecord,
+  pick,
+  providerProjectUrl,
+} from "./mapping";
+
+export { providerProjectUrl } from "./mapping";
 
 // --- Normalized results --------------------------------------------------------
 
@@ -45,6 +62,8 @@ export interface ProviderSearchResult {
   categories: string[];
   /** Game versions the project supports (trimmed). */
   gameVersions: string[];
+  /** The catalog's page for this project, when the spec declares a site. */
+  projectUrl?: string;
 }
 
 export interface ProviderVersionFile {
@@ -83,27 +102,6 @@ const REQUEST_TIMEOUT_MS = 8_000;
 /** Metadata responses are lists of strings and numbers; 1 MB is generous. */
 const MAX_RESPONSE_BYTES = 1_000_000;
 const MAX_SEARCH_LIMIT = 20;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return (
-    typeof value === "object" && value !== null && !Array.isArray(value)
-  );
-}
-
-/** Read a dot-path ("a.b") out of a JSON value; missing keys read as undefined. */
-function pick(source: unknown, path: string | undefined): unknown {
-  if (!path) return undefined;
-  return path.split(".").reduce<unknown>(
-    (acc, key) => (isRecord(acc) ? acc[key] : undefined),
-    source,
-  );
-}
-
-/** Substitute `{var}` templates. Unknown names are left empty by construction:
- *  validation only admits the fixed vocabulary, and `vars` always defines it. */
-function interpolate(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{([A-Za-z]+)\}/g, (_, name: string) => vars[name] ?? "");
-}
 
 /**
  * The values every template may reference. `loaders`/`gameVersions` are JSON
@@ -211,38 +209,6 @@ async function fetchEndpoint(
   }
 }
 
-// --- Coercion of mapped fields ---------------------------------------------------
-
-function asString(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function asNumber(value: unknown): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function asStringList(value: unknown, cap: number): string[] {
-  return Array.isArray(value)
-    ? value.filter((v): v is string => typeof v === "string").slice(0, cap)
-    : [];
-}
-
-/**
- * Game-version lists must arrive whole: compatibility checks use
- * `includes(currentVersion)`, and catalogs return these lists in arbitrary
- * (Modrinth's search: oldest-first) order, so a truncation can cut off
- * exactly the version a current server runs. 200 is a sanity bound against
- * pathological payloads, not a meaningful limit.
- */
-function asGameVersionList(value: unknown): string[] {
-  return asStringList(value, 200);
-}
-
-function asChannel(value: unknown): "release" | "beta" | "alpha" {
-  return value === "beta" || value === "alpha" ? value : "release";
-}
-
 // --- Endpoint operations ---------------------------------------------------------
 
 /** Search the catalog. Results missing id or title are dropped, not shown. */
@@ -279,9 +245,15 @@ export async function engineSearch(
 
     const slug = fields.slug ? asString(pick(hit, fields.slug)) : "";
     const iconUrl = fields.iconUrl ? asString(pick(hit, fields.iconUrl)) : "";
+    const projectUrl = providerProjectUrl(spec, {
+      projectId,
+      slug,
+      projectType: support.projectType,
+    });
     results.push({
       projectId,
       ...(slug ? { slug } : {}),
+      ...(projectUrl ? { projectUrl } : {}),
       title,
       description: fields.description ? asString(pick(hit, fields.description)) : "",
       author: fields.author ? asString(pick(hit, fields.author)) : "",

@@ -22,7 +22,9 @@ Everything lives in the blueprint's `plugins` section, as pure JSON data:
 - **Provider fetch spec** — how to talk to the catalog: the https API origin,
   endpoint path/query **templates** (`{query}`, `{projectId}`, `{loaders}`,
   `{facets}`, …), response field mappings as dot-paths, facet composition
-  rules, and the pinned `downloadHosts`. The Modrinth declaration lives in
+  rules, the pinned `downloadHosts`, and optionally the catalog's site origin +
+  project-page path (for the "open the project page" link). The Modrinth
+  declaration lives in
   `apps/frontend/lib/modrinth-preset.ts` and is shared by the built-in
   minecraft-java blueprint and the blueprint form's "Modrinth preset" button.
 
@@ -112,6 +114,52 @@ never lexicographically ("1.8.8" is *older* than "1.21.1"; see
 arbitrary order (Modrinth's search is oldest-first), so the newest is computed,
 not indexed.
 
+That ordering is also why the supported-version list is the **one** mapped
+array the engine never caps (`asGameVersionList` in `plugins/mapping.ts`).
+Every other mapped list gets a display cap; capping this one truncates the
+*end* of an oldest-first list — the current versions — and compatibility is
+decided by `includes(gameVersion)`. A 200-entry cap did exactly that: Simple
+Voice Chat lists 259 supported game versions with the current one at index
+249, so the tab badged it "Not for 26.2" while its version picker showed every
+release supporting 26.2. Response size (`MAX_RESPONSE_BYTES`) is the bound
+that matters here, not element count.
+
+Note also what the badge can and cannot tell you: when the provider spec has a
+`gameVersion` facet (Modrinth does), search results are already filtered by
+the server's version server-side, so a badge on a search row means the
+catalog's *project-level* list disagrees with its own filter — usually a
+mapping bug, as above. The badge stays for providers with no such facet, where
+it is the only compatibility signal.
+
+## Opening the catalog's own page
+
+Note the seeding lag this shares with every other spec field: blueprints are
+read from the `blueprints` table at run time, and built-ins are written there
+by `syncBlueprintsToDatabase` at process boot. Editing `modrinth-preset.ts`
+therefore changes nothing for a *running* panel — the new spec (and the link)
+appears after a restart, which an upgrade does anyway.
+
+A fetch spec may declare `siteUrl` (the catalog's human-facing origin, e.g.
+`https://modrinth.com` — distinct from `baseUrl`, its API) plus a
+`projectPath` template (`/{projectType}/{slug}`). When both are present, the
+plugins tab shows an external-link button on search hits, on installed rows
+and in the version picker's header; when either is missing, no link appears
+and nothing else changes.
+
+The panel composes that URL (`providerProjectUrl`) rather than letting the
+browser assemble one from spec fields — it is the only provider URL a user's
+browser ever sees, so it goes through the same discipline as everything else
+here: the origin is validated https and blocklist-checked at write time *and*
+again at compose time (the spec lives in a database row), the template
+vocabulary is its own small set (`projectId`, `slug`, `projectType` — no API
+variables), and interpolated values are percent-encoded so a hostile slug
+cannot add path segments or query material. The slug is preferred but the
+project id works as a fallback (Modrinth redirects `/mod/<id>` to the
+canonical page), so plugins installed before a slug was recorded still link
+somewhere useful. Links open in a new tab with `rel="noopener noreferrer"`,
+which also keeps the panel URL (it carries a server id) out of the catalog's
+referrer logs.
+
 ## Auto-update before start
 
 When `servers.plugin_auto_update` is on (default), `startServer` and
@@ -152,6 +200,7 @@ can invoke, so keep it declarative and host-pinned.
 | --- | --- |
 | Schema, validation, resolution | `apps/frontend/lib/server/control-plane/blueprints/plugins.ts` |
 | Fetch engine | `apps/frontend/lib/server/control-plane/plugins/engine.ts` |
+| Response mapping + project-page URL (pure, unit-tested) | `apps/frontend/lib/server/control-plane/plugins/mapping.ts` |
 | Modrinth declaration (preset) | `apps/frontend/lib/modrinth-preset.ts` |
 | Lifecycle + auto-update | `apps/frontend/lib/server/control-plane/services/pluginManager.ts` |
 | Routes | `apps/frontend/lib/server/control-plane/routes/plugins.ts` |

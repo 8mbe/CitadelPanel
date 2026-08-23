@@ -21,6 +21,11 @@
  * URL at install time), a fixed set of endpoints (search/project/versions/
  * version, GET only), and size caps. Files themselves land as inert `.jar`
  * writes through the node agent's contained, size-capped `files/pull`.
+ *
+ * The one URL the browser ever sees is the optional project-page link
+ * (`siteUrl` + `projectPath`): still declared data, still validated as a
+ * public https origin here, and still composed by the panel — a blueprint
+ * cannot hand the UI an arbitrary href.
  */
 
 import type { Blueprint, BlueprintEnvField } from "./types";
@@ -36,6 +41,14 @@ const TEMPLATE_VARIABLES = [
   "gameVersions",
   "facets",
 ] as const;
+
+/**
+ * What a project-page URL template (`projectPath`) may reference. Separate
+ * from `TEMPLATE_VARIABLES` on purpose: this composes a link for a human to
+ * click on the catalog's *site*, not a request the panel makes to its API, so
+ * it has its own (smaller) vocabulary.
+ */
+const PROJECT_PAGE_VARIABLES = ["projectId", "slug", "projectType"] as const;
 
 /** Where a search facet group draws its values from. */
 export type FacetSource = "projectType" | "loaders" | "gameVersion";
@@ -121,6 +134,18 @@ export interface PluginFetchSpec {
   baseUrl: string;
   /** The only hosts version files may download from. */
   downloadHosts: string[];
+  /**
+   * The catalog's human-facing site origin (e.g. "https://modrinth.com"),
+   * https only — distinct from `baseUrl`, which is its API. Set together with
+   * `projectPath` to give the plugins tab an "open the project page" link;
+   * omit both and the tab simply shows no link.
+   */
+  siteUrl?: string;
+  /**
+   * Path template to a project's page on `siteUrl`, e.g.
+   * "/{projectType}/{slug}". Interpolated from `PROJECT_PAGE_VARIABLES` only.
+   */
+  projectPath?: string;
   search: SearchEndpointSpec;
   project?: ProjectEndpointSpec;
   versions: VersionEndpointSpec;
@@ -368,6 +393,50 @@ function parseFetchSpec(
     }
   }
 
+  // --- site + project page (optional, both or neither) ---
+  let siteUrl: string | undefined;
+  let projectPath: string | undefined;
+  if (value.siteUrl !== undefined || value.projectPath !== undefined) {
+    if (value.siteUrl === undefined || value.projectPath === undefined) {
+      errors.push(
+        'plugins.provider: "siteUrl" and "projectPath" go together (an origin with no path has no page to open, and a path needs a site)',
+      );
+    }
+    if (value.siteUrl !== undefined) {
+      const site = parseHttpsOrigin(
+        value.siteUrl,
+        "plugins.provider.siteUrl",
+        isBlockedHost,
+        errors,
+      );
+      if (site) siteUrl = value.siteUrl as string;
+    }
+    if (value.projectPath !== undefined) {
+      if (
+        typeof value.projectPath !== "string" ||
+        !ENDPOINT_PATH.test(value.projectPath)
+      ) {
+        errors.push(
+          'plugins.provider.projectPath: must start with "/" (e.g. "/{projectType}/{slug}")',
+        );
+      } else {
+        const unknown = [...value.projectPath.matchAll(/\{([A-Za-z]+)\}/g)]
+          .map((m) => m[1])
+          .filter(
+            (name) =>
+              !(PROJECT_PAGE_VARIABLES as readonly string[]).includes(name),
+          );
+        if (unknown.length > 0) {
+          errors.push(
+            `plugins.provider.projectPath: unknown template variable "{${unknown[0]}}" (available: ${PROJECT_PAGE_VARIABLES.map((v) => `{${v}}`).join(", ")})`,
+          );
+        } else {
+          projectPath = value.projectPath;
+        }
+      }
+    }
+  }
+
   const parseEndpointPath = (raw: unknown, where: string): string | null => {
     if (typeof raw !== "string" || !ENDPOINT_PATH.test(raw)) {
       errors.push(`${where}: "path" must start with "/" (templates like {projectId} allowed)`);
@@ -488,6 +557,7 @@ function parseFetchSpec(
       ? (value.downloadHosts as unknown[])
       : []
     ).filter((h): h is string => typeof h === "string"),
+    ...(siteUrl && projectPath ? { siteUrl, projectPath } : {}),
     search: {
       path: searchPath ?? "",
       ...(searchQuery ? { query: searchQuery } : {}),

@@ -234,6 +234,8 @@ export interface InstalledPluginView {
   updatedAt: string;
   /** Reconciled against the directory listing: enabled | disabled | missing. */
   status: "enabled" | "disabled" | "missing";
+  /** The catalog's page for this project; null when the provider has no site. */
+  projectUrl: string | null;
 }
 
 export interface ServerPluginList {
@@ -263,6 +265,8 @@ export interface PluginSearchResult {
   downloads: number;
   categories: string[];
   gameVersions: string[];
+  /** The catalog's page for this project, when the provider declares a site. */
+  projectUrl?: string;
 }
 
 /** A catalog version offered for install. */
@@ -326,6 +330,8 @@ export interface BlueprintPluginProviderSpec {
   id: string;
   baseUrl: string;
   downloadHosts: string[];
+  siteUrl?: string;
+  projectPath?: string;
   facets?: { source: "projectType" | "loaders" | "gameVersion"; prefix: string }[];
   search: {
     path: string;

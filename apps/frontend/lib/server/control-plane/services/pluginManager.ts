@@ -28,6 +28,7 @@ import {
   engineGetVersion,
   engineListVersions,
   pickVersionFile,
+  providerProjectUrl,
   type ProviderVersion,
 } from "../plugins/engine";
 import {
@@ -81,6 +82,8 @@ export interface InstalledPluginView {
   updatedAt: string;
   /** Reconciled against the directory listing: enabled | disabled | missing. */
   status: "enabled" | "disabled" | "missing";
+  /** The catalog's page for this project; null when the provider has no site. */
+  projectUrl: string | null;
 }
 
 export interface ServerPluginList {
@@ -193,7 +196,11 @@ export async function getServerPluginSupportSummary(
   };
 }
 
-function toView(row: PluginRow, status: InstalledPluginView["status"]): InstalledPluginView {
+function toView(
+  row: PluginRow,
+  status: InstalledPluginView["status"],
+  support: ResolvedPluginSupport,
+): InstalledPluginView {
   return {
     id: row.id,
     projectId: row.project_id,
@@ -209,6 +216,12 @@ function toView(row: PluginRow, status: InstalledPluginView["status"]): Installe
     installedAt: row.installed_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     status,
+    projectUrl:
+      providerProjectUrl(support.provider, {
+        projectId: row.project_id,
+        slug: row.project_slug,
+        projectType: support.projectType,
+      }) ?? null,
   };
 }
 
@@ -532,7 +545,7 @@ export async function listServerPlugins(
       : row.enabled
         ? "enabled"
         : "disabled";
-    return toView(row, status);
+    return toView(row, status, support);
   });
 
   return {

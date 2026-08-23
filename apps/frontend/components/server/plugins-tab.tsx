@@ -3,7 +3,15 @@
 import * as React from "react";
 import Link from "next/link";
 
-import { Download, History, Puzzle, Search, Settings, Trash2 } from "lucide-react";
+import {
+  Download,
+  ExternalLink,
+  History,
+  Puzzle,
+  Search,
+  Settings,
+  Trash2,
+} from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -89,7 +97,7 @@ function VersionsDialog({
   onInstalled,
 }: {
   serverId: string;
-  project: { projectId: string; title: string };
+  project: { projectId: string; title: string; projectUrl?: string };
   installedVersionId?: string;
   gameVersion?: string;
   open: boolean;
@@ -138,7 +146,16 @@ function VersionsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{project.title}</DialogTitle>
+          <DialogTitle className="flex items-center gap-1">
+            <span className="truncate">{project.title}</span>
+            {project.projectUrl && (
+              <ProjectPageLink
+                url={project.projectUrl}
+                title={project.title}
+                className="shrink-0"
+              />
+            )}
+          </DialogTitle>
           <DialogDescription>
             Pick a version to install. The newest is first; game-version
             compatibility is shown per version.
@@ -219,7 +236,39 @@ function VersionsDialog({
   );
 }
 
-/** One catalog search hit. Clicking opens the version picker. */
+/**
+ * The catalog's own page for a project, in a new tab. `noreferrer` keeps the
+ * panel's URL (which can carry a server id) out of the catalog's logs.
+ */
+function ProjectPageLink({
+  url,
+  title,
+  className,
+}: {
+  url: string;
+  title: string;
+  className?: string;
+}) {
+  return (
+    <Button
+      render={<a href={url} target="_blank" rel="noopener noreferrer" />}
+      nativeButton={false}
+      variant="ghost"
+      size="icon-sm"
+      className={className}
+      aria-label={`Open the ${title} page in a new tab`}
+    >
+      <ExternalLink />
+    </Button>
+  );
+}
+
+/**
+ * One catalog search hit. Clicking the row opens the version picker; the
+ * trailing link opens the project's own page. Two controls means the row is a
+ * div wrapping a button, not a button (an anchor inside a button is invalid
+ * markup and the nested click never behaves).
+ */
 function SearchResultRow({
   result,
   installed,
@@ -239,33 +288,38 @@ function SearchResultRow({
   // oldest-first), so the newest must be computed, not indexed.
   const newest = newestGameVersion(result.gameVersions);
   return (
-    <button
-      type="button"
-      onClick={onPick}
-      className="flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-muted/50"
-    >
-      <Avatar className="size-8 rounded-md">
-        {result.iconUrl ? (
-          <AvatarImage src={result.iconUrl} alt="" />
-        ) : null}
-        <AvatarFallback className="rounded-md text-xs">
-          {initials(result.title)}
-        </AvatarFallback>
-      </Avatar>
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-sm font-medium">{result.title}</span>
-          {installed && <Badge variant="secondary">Installed</Badge>}
-          {incompatible && (
-            <Badge variant="outline">Not for {gameVersion}</Badge>
-          )}
+    <div className="flex items-center gap-1 rounded-lg border pr-1 transition-colors hover:bg-muted/50">
+      <button
+        type="button"
+        onClick={onPick}
+        className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2 text-left"
+      >
+        <Avatar className="size-8 rounded-md">
+          {result.iconUrl ? (
+            <AvatarImage src={result.iconUrl} alt="" />
+          ) : null}
+          <AvatarFallback className="rounded-md text-xs">
+            {initials(result.title)}
+          </AvatarFallback>
+        </Avatar>
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-medium">{result.title}</span>
+            {installed && <Badge variant="secondary">Installed</Badge>}
+            {incompatible && (
+              <Badge variant="outline">Not for {gameVersion}</Badge>
+            )}
+          </div>
+          <span className="truncate text-xs text-muted-foreground">
+            {result.author} · {compact.format(result.downloads)} downloads
+            {newest ? ` · up to ${newest}` : ""}
+          </span>
         </div>
-        <span className="truncate text-xs text-muted-foreground">
-          {result.author} · {compact.format(result.downloads)} downloads
-          {newest ? ` · up to ${newest}` : ""}
-        </span>
-      </div>
-    </button>
+      </button>
+      {result.projectUrl && (
+        <ProjectPageLink url={result.projectUrl} title={result.title} />
+      )}
+    </div>
   );
 }
 
@@ -301,6 +355,7 @@ export function PluginsTab({ serverId }: { serverId: string }) {
   const [versionPicker, setVersionPicker] = React.useState<{
     projectId: string;
     title: string;
+    projectUrl?: string;
   } | null>(null);
   // Removal goes through a confirm dialog: the jar always goes, the plugin's
   // config/data folder only when the (default-on) checkbox says so.
@@ -522,6 +577,9 @@ export function PluginsTab({ serverId }: { serverId: string }) {
                     setVersionPicker({
                       projectId: result.projectId,
                       title: result.title,
+                      ...(result.projectUrl
+                        ? { projectUrl: result.projectUrl }
+                        : {}),
                     })
                   }
                 />
@@ -583,6 +641,12 @@ export function PluginsTab({ serverId }: { serverId: string }) {
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
+                    {plugin.projectUrl && (
+                      <ProjectPageLink
+                        url={plugin.projectUrl}
+                        title={plugin.title}
+                      />
+                    )}
                     <Button
                       type="button"
                       variant="ghost"
@@ -602,6 +666,9 @@ export function PluginsTab({ serverId }: { serverId: string }) {
                         setVersionPicker({
                           projectId: plugin.projectId,
                           title: plugin.title,
+                          ...(plugin.projectUrl
+                            ? { projectUrl: plugin.projectUrl }
+                            : {}),
                         })
                       }
                     >
