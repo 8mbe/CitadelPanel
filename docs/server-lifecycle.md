@@ -21,6 +21,47 @@ is the correction. It asks the agent for the container's real state and maps
 it back onto the stored status. Suspended servers are never reconciled away;
 that state is an administrative decision, not an observation of the node.
 
+### Something has to go and look
+
+The correction only helps if something runs it. For a long time the only caller
+was the server detail endpoint, which meant a stale status was fixed one server
+at a time, and only for a server somebody happened to open. The dashboard reads
+the row directly, so it showed whatever the panel last believed.
+
+A restart is where that fails hardest. Containers are created with
+`RestartPolicy: "no"` (`hardening.ts`) on purpose: the panel decides what runs,
+not the Docker daemon. So a node that reboots comes back with every container
+stopped and every row still saying `running`, and the panel had no way to
+notice. Restarting the panel itself did not help either, because nothing looked
+at boot.
+
+`services/statusSweeper.ts` is what looks. It runs one pass at boot and then
+every 30 seconds, groups the fleet by node, asks each node what its containers
+are actually doing, and writes back only the rows that disagree. The decision
+stays in `statusReconcile.ts`, shared with the detail endpoint, so the sweeper
+and an open server page can never reach opposite conclusions and fight over a
+row.
+
+Three details are load-bearing:
+
+- **One request per node, not per server.** `POST /v1/states` answers for a
+  whole node from a single container list, with no stats sample and no disk
+  walk. Sweep cost is the number of nodes; write cost is the number of servers
+  that actually drifted, which on a healthy panel is zero.
+- **Each write is guarded by the status it saw** (`WHERE status = <observed>`).
+  An observation is a few hundred milliseconds old by the time it is written,
+  and an owner may have pressed Start in that window. That action knows more
+  than the sweep does, so a row that moved on is left alone until the next pass.
+- **An unreachable node corrects nothing.** A node that cannot be reached is not
+  evidence that its containers stopped, so its servers keep the status they
+  have. Same reasoning as `getServerReconciled` falling back to the stored
+  status.
+
+The boot pass is deliberately not awaited before the panel serves its first
+request. It talks to every node, and a node that is down would hold startup open
+for its whole timeout; correcting the record a moment after boot is the point,
+delaying boot to do it is not.
+
 ## Provisioning happens after the response, not during it
 
 Creating a server is two different jobs with two different failure modes, and

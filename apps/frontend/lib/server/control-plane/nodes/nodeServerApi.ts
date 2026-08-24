@@ -296,6 +296,31 @@ export async function sampleNodeServers(
   return result.samples;
 }
 
+/**
+ * Ask one node what many of its containers are actually doing, in one request.
+ *
+ * The cheap counterpart to {@link sampleNodeServers}: no stats, no disk walk,
+ * one Docker list call on the node. Used by the status sweeper, which asks
+ * about every server on every node on a timer, so it must not cost a request
+ * (or a daemon call) per server. The timeout is short by default because the
+ * sweeper runs unattended and a dead node is a normal thing to skip.
+ *
+ * Every requested id is answered; a server the node has no container for comes
+ * back as `missing`.
+ */
+export async function getNodeServerStates(
+  nodeId: string,
+  serverIds: string[],
+  timeoutMs = 15_000,
+): Promise<Record<string, ContainerState>> {
+  const result = await nodeRequest<{ states: Record<string, ContainerState> }>(
+    nodeId,
+    "/v1/states",
+    { method: "POST", body: { serverIds }, timeoutMs },
+  );
+  return result.states;
+}
+
 // --- Server links --------------------------------------------------------------
 
 /**

@@ -91,6 +91,7 @@ import {
   getServerInstallLogs,
   getServerLogs,
   getServerState,
+  getServerStates,
   getServerStats,
   installServer,
   killServerContainer,
@@ -412,6 +413,30 @@ const server = Bun.serve<ConsoleSocket, never>({
         );
 
         return json({ samples: await sampleServers(serverIds) });
+      }),
+    },
+
+    // --- Batch container state ------------------------------------------------
+    /**
+     * The container state of many servers in one request.
+     *
+     * The panel's status sweeper runs over the whole fleet to correct rows it
+     * recorded but can no longer vouch for (a node that rebooted brings no
+     * container back up), so this is deliberately the cheap half of `/v1/stats`:
+     * no stats sample, no disk walk, one list call for the node.
+     */
+    "/v1/states": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+        if (!Array.isArray(body.serverIds)) {
+          throw badRequest('"serverIds" must be an array.');
+        }
+
+        const serverIds = body.serverIds.map((id) =>
+          requireServerId(typeof id === "string" ? id : undefined),
+        );
+
+        return json({ states: await getServerStates(serverIds) });
       }),
     },
 

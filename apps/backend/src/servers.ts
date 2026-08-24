@@ -351,6 +351,45 @@ export async function getServerState(serverId: string): Promise<ContainerState> 
 }
 
 /**
+ * The container state of several servers, in one pass over the daemon's list.
+ *
+ * The panel sweeps every server on every node to correct statuses it recorded
+ * but can no longer vouch for: containers do not come back on their own after a
+ * reboot (`RestartPolicy: "no"`, see `hardening.ts`), so a node that restarted
+ * leaves a whole fleet of rows claiming to be running. Doing that as one
+ * request per server, each with its own `listContainers` filter, would make the
+ * sweep cost scale with fleet size twice over. One unfiltered list answers for
+ * the whole node.
+ *
+ * A server with no container here is reported as `missing` rather than omitted:
+ * "the node has never heard of it" is exactly the answer the caller needs, and
+ * silence would be indistinguishable from a dropped entry.
+ */
+export async function getServerStates(
+  serverIds: string[],
+): Promise<Record<string, ContainerState>> {
+  const containers = await docker.listContainers({ all: true });
+
+  const stateByName = new Map<string, ContainerState>();
+  for (const container of containers) {
+    for (const name of container.Names ?? []) {
+      // `/name` is how the daemon reports it.
+      stateByName.set(
+        name.startsWith("/") ? name.slice(1) : name,
+        container.State as ContainerState,
+      );
+    }
+  }
+
+  const states: Record<string, ContainerState> = {};
+  for (const serverId of serverIds) {
+    states[serverId] =
+      stateByName.get(serverContainerName(serverId)) ?? "missing";
+  }
+  return states;
+}
+
+/**
  * Put two linked servers' containers on their pairwise network, so each can
  * reach the other by container name (`citadel-<id12>`) over Docker's embedded
  * DNS.

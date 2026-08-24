@@ -92,3 +92,54 @@ export function reconcileStatus(
 
   return observed;
 }
+
+/** One row as a sweep sees it: what the panel recorded, and when. */
+export interface ReconcilableServer {
+  id: string;
+  status: ServerStatus;
+  /** The row's `updated_at`, which `setStatus` bumps on every transition. */
+  updatedAt: Date;
+}
+
+/** A status the node disagrees with, and what it should become. */
+export interface StatusCorrection {
+  id: string;
+  from: ServerStatus;
+  to: ServerStatus;
+}
+
+/**
+ * The corrections a batch of observations implies, for the fleet sweeper.
+ *
+ * The same rule as {@link reconcileStatus}, applied to many rows at once and
+ * reduced to only the rows that actually change, so the sweeper's write cost is
+ * the number of servers that drifted rather than the size of the fleet. On a
+ * healthy panel that is zero.
+ *
+ * A server the node returned no observation for is left alone. An unanswered
+ * id means the sweep learned nothing about it, which is not the same as
+ * learning that its container is gone.
+ */
+export function statusCorrections(
+  servers: ReconcilableServer[],
+  states: Record<string, ContainerState | undefined>,
+  now = Date.now(),
+): StatusCorrection[] {
+  const corrections: StatusCorrection[] = [];
+
+  for (const server of servers) {
+    const state = states[server.id];
+    if (!state) continue;
+
+    const resolved = reconcileStatus(
+      server.status,
+      state,
+      now - server.updatedAt.getTime(),
+    );
+    if (resolved !== server.status) {
+      corrections.push({ id: server.id, from: server.status, to: resolved });
+    }
+  }
+
+  return corrections;
+}
