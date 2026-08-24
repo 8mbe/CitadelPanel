@@ -209,7 +209,7 @@ async function sampleAndScoreNode(
     result.nodesScanned += 1;
   } catch (error) {
     result.nodesUnreachable += 1;
-    console.error(`[watcher] cannot reach agent on node ${node.name}:`, error);
+    console.error(`[watcher] could not sample node ${node.name}:`, error);
     return;
   }
 

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   reconcileStatus,
+  statusCorrections,
   statusFromContainerState,
   TRANSITION_TRUSTED_FOR_MS,
 } from "./statusReconcile";
@@ -70,5 +71,59 @@ describe("reconcileStatus", () => {
   test("a settled status is never held open by the window", () => {
     expect(reconcileStatus("running", "running", FRESH)).toBe("running");
     expect(reconcileStatus("error", "running", FRESH)).toBe("running");
+  });
+});
+
+describe("statusCorrections", () => {
+  const NOW = 1_700_000_000_000;
+  const settled = (id: string, status: Parameters<typeof reconcileStatus>[0]) => ({
+    id,
+    status,
+    updatedAt: new Date(NOW - STALE),
+  });
+
+  // The reason the sweeper exists: containers carry no restart policy, so a
+  // node that rebooted answers "exited" for every server whose row says
+  // "running".
+  test("a node that came back with nothing running corrects every row", () => {
+    const corrections = statusCorrections(
+      [settled("a", "running"), settled("b", "running")],
+      { a: "exited", b: "exited" },
+      NOW,
+    );
+
+    expect(corrections).toEqual([
+      { id: "a", from: "running", to: "stopped" },
+      { id: "b", from: "running", to: "stopped" },
+    ]);
+  });
+
+  test("rows the node agrees with produce no write at all", () => {
+    expect(
+      statusCorrections(
+        [settled("a", "running"), settled("b", "stopped")],
+        { a: "running", b: "exited" },
+        NOW,
+      ),
+    ).toEqual([]);
+  });
+
+  // An unanswered id means the sweep learned nothing about that server, which
+  // is not the same as learning its container is gone.
+  test("a server the node said nothing about is left alone", () => {
+    expect(statusCorrections([settled("a", "running")], {}, NOW)).toEqual([]);
+  });
+
+  test("suspension and in-flight transitions survive a batch sweep", () => {
+    const corrections = statusCorrections(
+      [
+        settled("suspended", "suspended"),
+        { id: "stopping", status: "stopping", updatedAt: new Date(NOW - FRESH) },
+      ],
+      { suspended: "running", stopping: "running" },
+      NOW,
+    );
+
+    expect(corrections).toEqual([]);
   });
 });
