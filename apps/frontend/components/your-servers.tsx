@@ -9,10 +9,13 @@ import {
   HardDrive,
   MemoryStick,
   Play,
+  Plus,
+  ServerCog,
   Timer,
   TriangleAlert,
 } from "lucide-react";
 
+import { useSession } from "@/components/session-provider";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +36,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { UsageMeter } from "@/components/usage-meter";
 import { ApiError, getServersStatsBatch, listServers } from "@/lib/api";
 import { formatMbPair, formatUptime } from "@/lib/format";
@@ -227,35 +231,43 @@ function TileSkeleton() {
 /**
  * The "Your servers" list. Loads the caller's visible servers from the backend.
  * Self-service creation does not exist: provisioning is an admin action, so the
- * empty state points the user at their administrator.
+ * empty state points an ordinary user at their administrator.
+ *
+ * An admin seeing the same screen is a different situation entirely: they are
+ * the administrator, and this is the first thing they land on after finishing
+ * setup. Telling them to contact themselves is how a fresh install dead-ends,
+ * so their empty state is the one that offers the action instead.
  */
 export function YourServers() {
+  const session = useSession();
+  const isAdmin = session.user?.role === "admin";
   const [servers, setServers] = React.useState<ServerView[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
-  React.useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const apiServers = await listServers();
-        if (!cancelled) setServers(apiServers);
-      } catch (err) {
-        if (!cancelled) {
-          setError(
-            err instanceof ApiError
-              ? err.message
-              : "Could not load your servers.",
-          );
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+  const load = React.useCallback(async () => {
+    try {
+      setServers(await listServers());
+      setError(null);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Could not load your servers.",
+      );
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  const retry = () => {
+    setLoading(true);
+    void load();
+  };
+
+  React.useEffect(() => {
+    (async () => {
+      await load();
+    })();
+  }, [load]);
 
   // Poll live resource samples for running servers so the tiles' CPU, memory,
   // and disk meters reflect current usage rather than the zeros the list
@@ -335,6 +347,12 @@ export function YourServers() {
             <EmptyTitle>Couldn&apos;t load your servers</EmptyTitle>
             <EmptyDescription>{error}</EmptyDescription>
           </EmptyHeader>
+          <EmptyContent>
+            <Button variant="outline" onClick={retry} disabled={loading}>
+              {loading && <Spinner />}
+              Try again
+            </Button>
+          </EmptyContent>
         </Empty>
       ) : loading ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -350,15 +368,36 @@ export function YourServers() {
             </EmptyMedia>
             <EmptyTitle>No servers yet</EmptyTitle>
             <EmptyDescription>
-              Servers are provisioned by an administrator. Your server will
-              appear here as soon as one has been created for your account.
+              {isAdmin
+                ? "Nothing has been provisioned on this panel. A server needs a node with a reserved port range to run on; both are set up in the admin area."
+                : "Servers are provisioned by an administrator. Your server will appear here as soon as one has been created for your account."}
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <p className="text-xs text-muted-foreground">
-              Need a server? Contact the panel administrator with the game you
-              want to run and the resources you expect to need.
-            </p>
+            {isAdmin ? (
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  render={<Link href="/admin/servers" />}
+                  nativeButton={false}
+                >
+                  <Plus data-icon="inline-start" />
+                  Create a server
+                </Button>
+                <Button
+                  variant="outline"
+                  render={<Link href="/admin/nodes" />}
+                  nativeButton={false}
+                >
+                  <ServerCog data-icon="inline-start" />
+                  Manage nodes
+                </Button>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Need a server? Contact the panel administrator with the game you
+                want to run and the resources you expect to need.
+              </p>
+            )}
           </EmptyContent>
         </Empty>
       ) : (

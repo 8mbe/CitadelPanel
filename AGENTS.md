@@ -59,7 +59,10 @@ Follow the existing visual language exactly. Match the surrounding code. Do not 
 
 Existing docs:
 
-- `docs/first-time-setup.md`: the setup wizard and setup-gate latch.
+- `docs/first-time-setup.md`: the six-step setup wizard and the setup-gate
+  latch. Which settings groups are worth interrupting an operator for and which
+  are deferred to the final screen, why the node step reserves a port range
+  before it lets you leave, and why the wizard ends by building a real server.
 - `docs/docker.md`: the two images and the two compose files. Which third of
   `bun run setup` runs where (host, container boot, browser), why the build
   context is the repo root, and why `/var/lib/citadel` is bind-mounted whole.

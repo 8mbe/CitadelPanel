@@ -111,7 +111,10 @@ pool stays a clean disjoint set. See `nodes/portPool.ts` and
 `nodes/scheduler.ts`.
 
 There is no default range: a node with no pool cannot host servers until an
-admin reserves one.
+admin reserves one. Because that failure only shows up at the first
+provisioning attempt, the setup wizard reserves the first range immediately
+after registering a node rather than leaving it to be discovered later. See
+[first-time-setup.md](first-time-setup.md).
 
 ## Adding and removing ports as the owner
 
