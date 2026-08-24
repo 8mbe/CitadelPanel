@@ -119,6 +119,38 @@ function buildUrl(
 }
 
 /**
+ * Turn a failed `fetch` to an agent into the error an operator can act on.
+ *
+ * A refused connection and a request that ran out of time are different faults
+ * with different fixes, and calling both "unreachable" sends the reader hunting
+ * a network problem for an agent that is up and answering everything else. A
+ * timeout names the route and the budget it blew instead, because the useful
+ * question is which handler is stuck, not whether the node exists.
+ */
+function agentCallFailed(
+  node: NodeWithSecrets,
+  path: string,
+  options: NodeRequestOptions,
+  error: unknown,
+): HttpError {
+  const timedOut =
+    error instanceof Error &&
+    (error.name === "TimeoutError" || error.name === "AbortError");
+
+  if (timedOut) {
+    const budget = options.timeoutMs ?? env.nodeApiTimeoutMs;
+    return new HttpError(
+      502,
+      `Node "${node.name}" did not answer ${options.method ?? "GET"} ${path} ` +
+        `within ${budget}ms (the agent may be reachable but stuck on this route)`,
+    );
+  }
+
+  const reason = error instanceof Error ? error.message : String(error);
+  return new HttpError(502, `Node "${node.name}" is unreachable: ${reason}`);
+}
+
+/**
  * Call a node's agent for an already-loaded node.
  *
  * Failure modes are mapped deliberately:
@@ -152,11 +184,7 @@ export async function nodeRequestFor<T>(
       signal: AbortSignal.timeout(options.timeoutMs ?? env.nodeApiTimeoutMs),
     });
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new HttpError(
-      502,
-      `Node "${node.name}" is unreachable: ${reason}`,
-    );
+    throw agentCallFailed(node, path, options, error);
   }
 
   if (!response.ok) {
@@ -241,8 +269,7 @@ export async function nodeRequestRaw(
     }
     response = await fetch(url, init);
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new HttpError(502, `Node "${node.name}" is unreachable: ${reason}`);
+    throw agentCallFailed(node, path, options, error);
   }
 
   if (!response.ok) {

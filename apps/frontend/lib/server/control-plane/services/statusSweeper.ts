@@ -136,7 +136,7 @@ async function sweepNode(
     // stopped, so its servers keep the status they have.
     result.nodesUnreachable += 1;
     console.error(
-      `[status-sweeper] cannot reach agent on node ${nodeName}:`,
+      `[status-sweeper] could not read states from node ${nodeName}:`,
       error instanceof Error ? error.message : error,
     );
     return;
