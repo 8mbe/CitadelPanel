@@ -31,8 +31,6 @@ services:
       # Repo root: the workspace lockfile is what pins the install.
       context: .
       dockerfile: apps/backend/Dockerfile
-    # Or, once published:
-    # image: ghcr.io/your-org/citadel-agent:latest
     restart: unless-stopped
     environment:
       NODE_TOKEN: ${AGENT_TOKEN:?AGENT_TOKEN is required}
