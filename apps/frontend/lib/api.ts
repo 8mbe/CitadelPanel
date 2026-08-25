@@ -2175,11 +2175,17 @@ export interface AdminServerSummary extends ApiServerSummary {
   memoryUsageMb: number | null;
 }
 
-/** GET /api/admin/servers. Every server on the panel (admin only). */
-export function adminListServers(): Promise<AdminServerSummary[]> {
-  return request<{ servers: AdminServerSummary[] }>("/api/admin/servers").then(
-    (data) => data.servers,
-  );
+/**
+ * GET /api/admin/servers. Every server on the panel (admin only).
+ *
+ * `q` searches server names and owner names/emails server-side; omit it for
+ * the whole fleet.
+ */
+export function adminListServers(q?: string): Promise<AdminServerSummary[]> {
+  const query = q && q.trim().length > 0 ? `?q=${encodeURIComponent(q.trim())}` : "";
+  return request<{ servers: AdminServerSummary[] }>(
+    `/api/admin/servers${query}`,
+  ).then((data) => data.servers);
 }
 
 // --- Admin enforcement -------------------------------------------------------

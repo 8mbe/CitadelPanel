@@ -7,6 +7,7 @@ import {
   Ban,
   CircleCheck,
   Pencil,
+  Search,
   Trash2,
   TriangleAlert,
 } from "lucide-react";
@@ -41,6 +42,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -71,11 +73,20 @@ import type { ServerStatus } from "@/lib/types";
  * The listing comes from the backend and carries owner email plus a live CPU /
  * memory sample per server (null when the node is unreachable). Each row has a
  * management menu: edit resource limits, suspend/unsuspend, or delete.
+ *
+ * The search box matches a server's name or its owner's name/email, and is
+ * resolved server-side: an admin looking for one customer's server should not
+ * have to know which of the two they are typing. It is debounced because every
+ * listing samples live usage from each node the matches live on.
  */
 export default function AdminServersPage() {
   const [servers, setServers] = React.useState<AdminServerSummary[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [query, setQuery] = React.useState("");
+  // The query the rows on screen were fetched for. Comparing it to what is
+  // typed derives "searching" without a setState in the effect body.
+  const [loadedQuery, setLoadedQuery] = React.useState("");
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [editTarget, setEditTarget] = React.useState<AdminServerSummary | null>(null);
   const [suspendTarget, setSuspendTarget] =
@@ -84,11 +95,15 @@ export default function AdminServersPage() {
     null,
   );
 
+  const trimmed = query.trim();
+
   React.useEffect(() => {
     let cancelled = false;
-    (async () => {
+    // Debounced: a listing costs one usage sample per node the matches sit on,
+    // so it should not fire on every keystroke.
+    const handle = setTimeout(async () => {
       try {
-        const result = await adminListServers();
+        const result = await adminListServers(trimmed || undefined);
         if (cancelled) return;
         setServers(result);
         setError(null);
@@ -96,15 +111,23 @@ export default function AdminServersPage() {
         if (cancelled) return;
         setError(err instanceof ApiError ? err.message : "Failed to load servers.");
       } finally {
-        if (!cancelled) setLoading(false);
+        // Marks the attempt finished, success or not, so a failed search does
+        // not leave the header stuck on "Searching…".
+        if (!cancelled) {
+          setLoading(false);
+          setLoadedQuery(trimmed);
+        }
       }
-    })();
+    }, 250);
+
     return () => {
       cancelled = true;
+      clearTimeout(handle);
     };
-  }, [refreshKey]);
+  }, [trimmed, refreshKey]);
 
   const refresh = () => setRefreshKey((k) => k + 1);
+  const searching = !loading && trimmed !== loadedQuery;
   const running = servers.filter((s) => s.status === "running").length;
 
   return (
@@ -117,10 +140,26 @@ export default function AdminServersPage() {
           <p className="text-sm text-muted-foreground">
             {loading
               ? "Loading servers…"
-              : `Every server on the panel. ${running} of ${servers.length} running. Users cannot create servers themselves, so provision one for them here.`}
+              : searching
+                ? "Searching…"
+                : trimmed
+                  ? `${servers.length} ${servers.length === 1 ? "server" : "servers"} match “${trimmed}”. ${running} running.`
+                  : `Every server on the panel. ${running} of ${servers.length} running. Users cannot create servers themselves, so provision one for them here.`}
           </p>
         </div>
-        <CreateServerDialog onCreated={refresh} />
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search server or owner…"
+              className="pl-8"
+              aria-label="Search servers by name, owner name or owner email"
+            />
+          </div>
+          <CreateServerDialog onCreated={refresh} />
+        </div>
       </div>
 
       {error ? (
@@ -175,8 +214,9 @@ export default function AdminServersPage() {
                       colSpan={6}
                       className="h-32 text-center text-sm text-muted-foreground"
                     >
-                      No servers yet. Provision the first one with the button
-                      above.
+                      {trimmed
+                        ? "No servers match your search."
+                        : "No servers yet. Provision the first one with the button above."}
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -190,8 +230,21 @@ export default function AdminServersPage() {
                           </span>
                         </div>
                       </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {server.ownerEmail}
+                      <TableCell>
+                        {/* Name above email, because the search matches either
+                            one and a name-match should be visible in the row. */}
+                        {server.ownerName ? (
+                          <div className="flex flex-col">
+                            <span>{server.ownerName}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {server.ownerEmail}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">
+                            {server.ownerEmail}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={server.status as ServerStatus} />

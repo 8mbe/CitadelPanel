@@ -116,6 +116,15 @@ fleet list groups servers by node so each node's agent is asked exactly once
 loop is the failure mode this codebase keeps rediscovering. See the history of
 `summariesFromRows`.
 
+The same list's search (`GET /api/admin/servers?q=`) is filtered in SQL, in
+`listAllServers`, rather than in the page. The rows are cheap; the sampling that
+follows them is not, so narrowing the set before the fan-out means a search also
+narrows how many node agents get asked. For the same reason the admin page
+debounces the query by 250ms instead of refetching per keystroke: the users
+directory can afford a request per character because it is one query, and this
+page cannot because it is one query plus a round trip to every node still in
+the result.
+
 Batching also means one statement per *write* of a set. `writeEnvValues` upserts
 a whole env block through one `UNNEST`, because provisioning writes a
 blueprint's entire environment at once. It is also the single place that decides

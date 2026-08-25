@@ -703,11 +703,18 @@ export async function handleListAuditLogs(request: Request): Promise<Response> {
  * Sampling is batched **per node** rather than per server: one request per node
  * regardless of how many servers it hosts, so this page does not slow down
  * linearly as the fleet grows.
+ *
+ * `?q=` narrows the fleet by server name or owner name/email (see
+ * {@link listAllServers}). The filter is applied in SQL before any sampling, so
+ * a search also shrinks the set of nodes this endpoint has to talk to.
  */
 export async function handleListAdminServers(request: Request): Promise<Response> {
   await requireAdmin(request);
 
-  const servers = await listAllServers();
+  const url = new URL(request.url);
+  const q = url.searchParams.get("q")?.trim() ?? "";
+
+  const servers = await listAllServers(q);
 
   const ownerIds = [...new Set(servers.map((server) => server.ownerId))];
   const ownersById = new Map<string, { email: string; name: string | null }>();

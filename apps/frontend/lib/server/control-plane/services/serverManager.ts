@@ -298,12 +298,32 @@ export async function listAccessibleServers(userId: string): Promise<ServerSumma
   return summariesFromRows(rows);
 }
 
-export async function listAllServers(): Promise<ServerSummary[]> {
+/**
+ * Every server on the panel, optionally narrowed by a free-text search.
+ *
+ * The search matches the server's own name *or* its owner's name/email, which
+ * is why the owner row is JOINed here rather than left to the caller's batched
+ * owner lookup: an admin hunting for "someone@example.com" is looking for that
+ * account's servers, not for a server called that. Filtering in SQL (instead of
+ * in the page) also keeps the admin listing's per-node usage sampling
+ * proportional to the matches, not to the whole fleet.
+ */
+export async function listAllServers(search?: string): Promise<ServerSummary[]> {
+  const q = search?.trim() ?? "";
+  const pattern = q.length > 0 ? `%${q}%` : null;
   const rows = (await sql`
     SELECT s.*, n.hostname AS node_hostname, b.key AS blueprint_key
     FROM servers s
     JOIN nodes n ON n.id = s.node_id
     JOIN blueprints b ON b.id = s.blueprint_id
+    JOIN "user" u ON u.id = s.owner_id
+    ${
+      pattern !== null
+        ? sql`WHERE s.name ILIKE ${pattern}
+                 OR u.email ILIKE ${pattern}
+                 OR u.name ILIKE ${pattern}`
+        : sql``
+    }
     ORDER BY s.created_at DESC
   `) as ServerRow[];
   return summariesFromRows(rows);
