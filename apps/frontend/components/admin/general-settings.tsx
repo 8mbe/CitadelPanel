@@ -22,7 +22,6 @@ import {
   type AdminSettings,
   type AdminSettingsUpdate,
   type AnalyticsProvider,
-  type MailProvider,
 } from "@/lib/api";
 import { ThemeCard } from "@/components/admin/theme-card";
 import {
@@ -30,6 +29,13 @@ import {
   toCaptchaPayload,
   type CaptchaFormValue,
 } from "@/components/captcha-settings-form";
+import {
+  MailSettingsForm,
+  mailFromSettings,
+  mailIssues,
+  toMailPayload,
+  type MailFormValue,
+} from "@/components/mail-settings-form";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -470,19 +476,6 @@ function CaptchaCard({
 
 // --- Mail ---------------------------------------------------------------------
 
-interface MailFormValue {
-  enabled: boolean;
-  provider: MailProvider | null;
-  fromName: string;
-  fromEmail: string;
-  smtpHost: string;
-  smtpPort: string;
-  smtpUser: string;
-  smtpPassword: string;
-  smtpSecure: boolean;
-  resendApiKey: string;
-}
-
 function MailCard({
   settings,
   patch,
@@ -491,18 +484,9 @@ function MailCard({
   patch: (update: AdminSettingsUpdate) => Promise<AdminSettings>;
 }) {
   const m = settings.mail;
-  const [value, setValue] = React.useState<MailFormValue>({
-    enabled: m.enabled,
-    provider: m.provider,
-    fromName: m.fromName ?? "",
-    fromEmail: m.fromEmail ?? "",
-    smtpHost: m.smtpHost ?? "",
-    smtpPort: m.smtpPort?.toString() ?? "",
-    smtpUser: m.smtpUser ?? "",
-    smtpPassword: "",
-    smtpSecure: m.smtpSecure,
-    resendApiKey: "",
-  });
+  const [value, setValue] = React.useState<MailFormValue>(() =>
+    mailFromSettings(m),
+  );
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [saved, setSaved] = React.useState(false);
@@ -512,8 +496,7 @@ function MailCard({
   const [testing, setTesting] = React.useState(false);
   const [testResult, setTestResult] = React.useState<string | null>(null);
 
-  const set = <K extends keyof MailFormValue>(key: K, v: MailFormValue[K]) =>
-    setValue((prev) => ({ ...prev, [key]: v }));
+  const issues = mailIssues(value, m.hasSmtpPassword, m.hasResendApiKey);
 
   const save = async () => {
     setLoading(true);
@@ -521,19 +504,7 @@ function MailCard({
     setSaved(false);
     try {
       await patch({
-        mail: {
-          enabled: value.enabled,
-          provider: value.provider,
-          fromName: value.fromName.trim() || null,
-          fromEmail: value.fromEmail.trim() || null,
-          smtpHost: value.smtpHost.trim() || null,
-          smtpPort: value.smtpPort === "" ? null : Number(value.smtpPort),
-          smtpUser: value.smtpUser.trim() || null,
-          // Empty field ⇒ keep stored (omit) when one exists, else clear.
-          smtpPassword: value.smtpPassword === "" ? undefined : value.smtpPassword,
-          smtpSecure: value.smtpSecure,
-          resendApiKey: value.resendApiKey === "" ? undefined : value.resendApiKey,
-        },
+        mail: toMailPayload(value, m.hasSmtpPassword, m.hasResendApiKey),
       });
       setSaved(true);
     } catch (err) {
@@ -575,155 +546,30 @@ function MailCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <FieldGroup>
-          <Field orientation="horizontal">
-            <div className="flex flex-1 flex-col gap-0.5">
-              <FieldLabel htmlFor="mail-enabled">Enable email</FieldLabel>
-              <FieldDescription>
-                When off, the panel runs without email: signup works, password
-                reset is unavailable, and email changes apply immediately.
-              </FieldDescription>
-            </div>
-            <Switch
-              id="mail-enabled"
-              checked={value.enabled}
-              onCheckedChange={(c) => set("enabled", c)}
-            />
-          </Field>
-
-          {value.enabled && (
-            <>
-              <Field>
-                <FieldLabel htmlFor="mail-provider">Provider</FieldLabel>
-                <Select
-                  value={value.provider ?? ""}
-                  onValueChange={(v) => set("provider", v as MailProvider)}
-                >
-                  <SelectTrigger id="mail-provider" className="w-full">
-                    <SelectValue placeholder="Choose a provider" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="smtp">SMTP</SelectItem>
-                    <SelectItem value="resend">Resend (HTTP API)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-
-              <Field>
-                <FieldLabel htmlFor="mail-from-name">From name</FieldLabel>
-                <Input
-                  id="mail-from-name"
-                  value={value.fromName}
-                  onChange={(e) => set("fromName", e.target.value)}
-                  placeholder="CitadelPanel"
-                  maxLength={128}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="mail-from-email">From email</FieldLabel>
-                <Input
-                  id="mail-from-email"
-                  type="email"
-                  value={value.fromEmail}
-                  onChange={(e) => set("fromEmail", e.target.value)}
-                  placeholder="panel@example.com"
-                  maxLength={255}
-                />
-              </Field>
-
-              {value.provider === "smtp" && (
-                <>
-                  <Field>
-                    <FieldLabel htmlFor="mail-smtp-host">SMTP host</FieldLabel>
-                    <Input
-                      id="mail-smtp-host"
-                      value={value.smtpHost}
-                      onChange={(e) => set("smtpHost", e.target.value)}
-                      placeholder="smtp.example.com"
-                      maxLength={255}
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="mail-smtp-port">SMTP port</FieldLabel>
-                    <Input
-                      id="mail-smtp-port"
-                      type="number"
-                      value={value.smtpPort}
-                      onChange={(e) => set("smtpPort", e.target.value)}
-                      placeholder="587"
-                    />
-                    <FieldDescription>
-                      465 with TLS below; 587/25 uses STARTTLS.
-                    </FieldDescription>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="mail-smtp-user">SMTP username</FieldLabel>
-                    <Input
-                      id="mail-smtp-user"
-                      value={value.smtpUser}
-                      onChange={(e) => set("smtpUser", e.target.value)}
-                      placeholder="Leave blank if your server needs no auth"
-                      autoComplete="off"
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="mail-smtp-password">SMTP password</FieldLabel>
-                    <Input
-                      id="mail-smtp-password"
-                      type="password"
-                      value={value.smtpPassword}
-                      onChange={(e) => set("smtpPassword", e.target.value)}
-                      placeholder={
-                        m.hasSmtpPassword
-                          ? "Stored, leave blank to keep unchanged"
-                          : "Server password"
-                      }
-                      autoComplete="off"
-                    />
-                  </Field>
-                  <Field orientation="horizontal">
-                    <div className="flex flex-1 flex-col gap-0.5">
-                      <FieldLabel htmlFor="mail-smtp-secure">Use TLS</FieldLabel>
-                      <FieldDescription>
-                        Implicit TLS on port 465; off for STARTTLS on 587/25.
-                      </FieldDescription>
-                    </div>
-                    <Switch
-                      id="mail-smtp-secure"
-                      checked={value.smtpSecure}
-                      onCheckedChange={(c) => set("smtpSecure", c)}
-                    />
-                  </Field>
-                </>
-              )}
-
-              {value.provider === "resend" && (
-                <Field>
-                  <FieldLabel htmlFor="mail-resend-key">Resend API key</FieldLabel>
-                  <Input
-                    id="mail-resend-key"
-                    type="password"
-                    value={value.resendApiKey}
-                    onChange={(e) => set("resendApiKey", e.target.value)}
-                    placeholder={
-                      m.hasResendApiKey
-                        ? "Stored, leave blank to keep unchanged"
-                        : "re_xxxxxxxxxxxx"
-                    }
-                    autoComplete="off"
-                  />
-                </Field>
-              )}
-            </>
-          )}
-        </FieldGroup>
+        <MailSettingsForm
+          value={value}
+          onChange={setValue}
+          hasStoredSmtpPassword={m.hasSmtpPassword}
+          hasStoredResendKey={m.hasResendApiKey}
+          idPrefix="admin-mail"
+        />
 
         {error && <p className="text-sm text-destructive">{error}</p>}
         {saved && !error && (
           <p className="text-sm text-emerald-600 dark:text-emerald-400">Saved.</p>
         )}
+        {issues.length > 0 && (
+          <ul className="flex flex-col gap-0.5 text-sm text-muted-foreground">
+            {issues.map((issue) => (
+              <li key={issue} className="flex items-start gap-1.5">
+                <Info className="mt-0.5 size-3.5 shrink-0" />
+                {issue}
+              </li>
+            ))}
+          </ul>
+        )}
         <div>
-          <Button onClick={save} disabled={loading}>
+          <Button onClick={save} disabled={loading || issues.length > 0}>
             {loading && <Spinner />}
             Save email
           </Button>

@@ -468,6 +468,20 @@ export interface CreateServerInput {
    * behalf.
    */
   actorId?: string;
+  /**
+   * Start the server as soon as it is built, instead of leaving it `stopped`.
+   *
+   * Opt-in, and off for ordinary provisioning: an admin building servers for
+   * other people should not have them all boot and start consuming CPU the
+   * moment they exist. The setup wizard sets it, because a wizard that ends on
+   * a built-but-stopped container leaves the operator one manual step short of
+   * knowing whether any of this works, and the start is the part that actually
+   * exercises the image and the port binding.
+   *
+   * It lives here rather than in the browser so the start survives the operator
+   * closing the tab mid-build, which the wizard explicitly invites them to do.
+   */
+  startWhenBuilt?: boolean;
 }
 
 /**
@@ -717,6 +731,10 @@ interface ProvisionPlan {
   // on the data directory rather than by anything the container spec carries.
   cpuLimit: number;
   memoryLimitMb: number;
+  /** See `CreateServerInput.startWhenBuilt`. */
+  startWhenBuilt?: boolean;
+  /** Who the automatic start is audited against. Only read when starting. */
+  startedBy: string;
 }
 
 /**
@@ -863,6 +881,36 @@ async function provisionServer(
     `;
 
     await logPhase(serverId, "Done. The server is ready to start.");
+
+    if (plan.startWhenBuilt) {
+      // Its own catch, so a start failure never reaches the build's error
+      // handler below: everything above is what makes the server exist, and a
+      // container that is built but refuses to boot is a different problem from
+      // one that never got built. A failed start therefore writes its own log
+      // line rather than being reported as a failed build, and leaves the
+      // container on the node to be inspected and started by hand.
+      //
+      // Routed through `startServer` rather than straight at the container so
+      // the first start is the same start as every other one: it runs the
+      // plugin auto-updater before the game process boots, and it records the
+      // `server.start` audit entry. Starting the container directly would skip
+      // both, and a start nobody can find in the audit log is exactly the kind
+      // of privileged action that must not be invisible.
+      await logPhase(serverId, "Starting the server…");
+      try {
+        await startServer(serverId, plan.startedBy);
+        await logPhase(
+          serverId,
+          "Started. The game process may take another moment to accept " +
+            "connections.",
+        );
+      } catch (error) {
+        // `startServer` has already put the row in `error`.
+        const reason = error instanceof Error ? error.message : String(error);
+        await logPhase(serverId, `The server was built but did not start: ${reason}`);
+        console.error(`[serverManager] first start failed for ${serverId}:`, error);
+      }
+    }
   } catch (error) {
     // A provision that stopped because its server was deleted did not fail.
     // Writing `error` here would resurrect a row mid-delete, or log a failure
@@ -990,6 +1038,8 @@ export async function createServer(
     secretKeys: resolved.secretKeys,
     cpuLimit: input.cpuLimit,
     memoryLimitMb: input.memoryLimitMb,
+    startWhenBuilt: input.startWhenBuilt === true,
+    startedBy: input.actorId ?? input.ownerId,
   }).finally(() => {
     inFlightProvisions.delete(server.id);
   });

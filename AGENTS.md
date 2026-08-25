@@ -59,7 +59,10 @@ Follow the existing visual language exactly. Match the surrounding code. Do not 
 
 Existing docs:
 
-- `docs/first-time-setup.md`: the setup wizard and setup-gate latch.
+- `docs/first-time-setup.md`: the six-step setup wizard and the setup-gate
+  latch. Which settings groups are worth interrupting an operator for and which
+  are deferred to the final screen, why the node step reserves a port range
+  before it lets you leave, and why the wizard ends by building a real server.
 - `docs/docker.md`: the two images and the two compose files. Which third of
   `bun run setup` runs where (host, container boot, browser), why the build
   context is the repo root, and why `/var/lib/citadel` is bind-mounted whole.
@@ -75,8 +78,10 @@ Existing docs:
 - `docs/server-lifecycle.md`: provisioning, the power actions and the stored
   status. Why status is a record and the node is the truth, why a server is
   built *after* the create request answers (and what the `installing` gate and
-  the admin-only install log are for), and how a container that vanished from
-  its node is rebuilt on the next start instead of 404ing forever.
+  the admin-only install log are for), why `startWhenBuilt` starts the first
+  server from the provision task rather than the browser, and how a container
+  that vanished from its node is rebuilt on the next start instead of 404ing
+  forever.
 - `docs/ports.md`: published ports as identity mappings (host N → container
   N) claimed on TCP and UDP together. Per-node port pools, why allocation is
   random and nobody picks a number, the `SERVER_PORT` env sync, and the owner's

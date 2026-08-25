@@ -183,11 +183,16 @@ export interface CaptchaSettingsInput {
   minScore?: number;
 }
 
-/** PATCH /api/setup/settings. Sets timezone and/or captcha. Requires admin. */
-export function updateSetupSettings(payload: {
-  timezone?: string;
-  captcha?: CaptchaSettingsInput;
-}): Promise<{ timezone: string }> {
+/**
+ * PATCH /api/setup/settings. Applies any subset of the panel settings.
+ *
+ * The same handler backs `PATCH /api/admin/settings`, so the wizard can write
+ * every group the admin pages can. It is a separate wrapper only because the
+ * two paths are mounted separately; the payload shape is identical.
+ */
+export function updateSetupSettings(
+  payload: AdminSettingsUpdate,
+): Promise<{ timezone: string }> {
   return request("/api/setup/settings", {
     method: "PATCH",
     body: JSON.stringify(payload),
@@ -255,7 +260,12 @@ export function adminCreateNode(payload: {
   dbAdminPassword?: string;
 }): Promise<{
   node: ApiNode;
-  health: { reachable: boolean; error?: string };
+  /**
+   * The registration probe. Full health rather than a bare reachability flag:
+   * an agent can answer while its data root is read-only or its Docker socket
+   * is missing, and the caller has to be able to say which.
+   */
+  health: NodeHealthResult;
   /** Present only when the backend generated the token. Shown once. */
   token?: string;
   warning?: string;
@@ -310,6 +320,14 @@ export interface CreateServerPayload {
   diskLimitMb: number;
   /** Optional explicit node; the scheduler picks one when omitted. */
   nodeId?: string;
+  /**
+   * Start the server once it is built, rather than leaving it stopped.
+   *
+   * Set by the setup wizard so the operator's first server is running by the
+   * time they reach the panel. The start happens on the server, after the
+   * build, so it still happens if the browser has moved on.
+   */
+  startWhenBuilt?: boolean;
 }
 
 /** POST /api/admin/servers. Provisions a server for a user (admin only). */
