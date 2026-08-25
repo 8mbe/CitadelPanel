@@ -1,9 +1,17 @@
 "use client";
 
 import * as React from "react";
-import { Ban, Search, Shield, ShieldCheck, User as UserIcon } from "lucide-react";
+import {
+  Ban,
+  Search,
+  Shield,
+  ShieldCheck,
+  User as UserIcon,
+  UserPlus,
+} from "lucide-react";
 import Link from "next/link";
 
+import { AddUserDialog } from "@/components/admin/add-user-dialog";
 import { useSession } from "@/components/session-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -71,6 +79,7 @@ export default function AdminUsersPage() {
   const [query, setQuery] = React.useState("");
   // Bumped after any mutation to reload the (possibly filtered) list.
   const [refreshKey, setRefreshKey] = React.useState(0);
+  const [addOpen, setAddOpen] = React.useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -124,15 +133,21 @@ export default function AdminUsersPage() {
                   : `${users.length} accounts on the panel. ${admins} with administrator privileges, ${banned} banned.`}
           </p>
         </div>
-        <div className="relative w-full md:w-64">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search email or name…"
-            className="pl-8"
-            aria-label="Search users"
-          />
+        <div className="flex gap-2">
+          <div className="relative w-full md:w-64">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search email or name…"
+              className="pl-8"
+              aria-label="Search users"
+            />
+          </div>
+          <Button onClick={() => setAddOpen(true)}>
+            <UserPlus />
+            Add user
+          </Button>
         </div>
       </div>
 
@@ -254,6 +269,16 @@ export default function AdminUsersPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <AddUserDialog
+        open={addOpen}
+        onOpenChange={(open) => {
+          setAddOpen(open);
+          // Closing is when the new account joins the list, whether the admin
+          // dismissed the credentials panel or cancelled outright.
+          if (!open) reload();
+        }}
+      />
     </>
   );
 }

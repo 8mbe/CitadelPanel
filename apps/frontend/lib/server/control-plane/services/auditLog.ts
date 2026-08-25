@@ -78,6 +78,7 @@ export type AuditAction =
   | "blueprint.plugins.update"
   | "suspicious.review"
   | "suspicious.flag"
+  | "user.create"
   | "user.role.update"
   | "user.ban"
   | "user.unban"

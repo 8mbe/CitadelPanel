@@ -113,6 +113,11 @@ Existing docs:
   constant), the registration toggle, SEO/`robots.txt`/`sitemap.xml` with
   indexing off by default, the Plausible/GA analytics toggle, and the error
   pages.
+- `docs/user-invites.md`: admin-created accounts ("Add user"). Why the invite
+  route bypasses the registration gate rather than special-casing it, why the
+  password is optional and the length floor is re-enforced here, why an invited
+  account starts email-verified, and why the invitation email never carries the
+  password.
 - `docs/backups.md`: restic snapshots to S3. The two scopes (owner-triggered
   server *files*, admin-triggered per-node *databases*) and why the credential
   forces that split, why restic in a throwaway container, the FIFO snapshot

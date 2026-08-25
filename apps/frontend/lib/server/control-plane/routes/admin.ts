@@ -8,7 +8,7 @@
 import { after } from "next/server";
 
 import { requireAdmin } from "../auth/middleware";
-import { auth, isRole } from "../auth/betterAuth";
+import { auth, isRole, MIN_PASSWORD_LENGTH } from "../auth/betterAuth";
 import {
   badRequest,
   conflict,
@@ -22,6 +22,10 @@ import {
   requireUuidParam,
 } from "../lib/http";
 import { sql } from "../db/client";
+import { env } from "../config/env";
+import { generateStrongPassword } from "../lib/crypto";
+import { sendMail } from "../services/mail";
+import { getBranding } from "../services/settings";
 import {
   countUnreviewed,
   getSuspiciousActivity,
@@ -353,6 +357,158 @@ export async function handleListUsers(request: Request): Promise<Response> {
   `) as Record<string, unknown>[];
 
   return json({ users: rows });
+}
+
+/**
+ * POST /api/admin/users. Creates an account for someone else (the invite flow).
+ *
+ * The panel needs this because registration can be closed: an invite-only
+ * install has no other way for a new operator or customer to get an account,
+ * and telling them to "sign up" is exactly what the closed-registration gate
+ * refuses. Creation here deliberately bypasses that gate rather than
+ * special-casing it, because an admin typing someone's details *is* the
+ * invitation the gate exists to require.
+ *
+ * Account creation is delegated to Better Auth's admin plugin
+ * (`auth.api.createUser`) for the same reason the setup wizard delegates to
+ * `signUpEmail`: it owns password hashing and the `credential` account link, and
+ * a hand-inserted row would be the one account in the system whose credentials
+ * were handled differently. Unlike `signUpEmail` it issues no session, so
+ * creating an account never touches the admin's own cookie.
+ *
+ * Two deliberate decisions:
+ *
+ *  - **The password is optional.** An admin who has no secure channel to invent
+ *    one on gets a generated 24-character password back in the response, shown
+ *    once (`generateStrongPassword`, the same generator used for provisioned
+ *    database users). When they do supply one it is validated against
+ *    `MIN_PASSWORD_LENGTH` here, because the admin plugin hashes whatever it is
+ *    given without consulting `emailAndPassword.minPasswordLength`. A supplied
+ *    password is never echoed back; the admin already has it.
+ *  - **The account starts email-verified.** An admin typing the address is the
+ *    vouching that verification exists to provide, and the panel has no
+ *    unauthenticated "resend verification" route: if the operator has turned on
+ *    "require a verified email to sign in", an unverified invited account would
+ *    be locked out with no way to fix it from the outside.
+ *
+ * The invitation email is best-effort and its outcome is reported rather than
+ * assumed: `sendMail` returns false both when mail is unconfigured and when the
+ * provider fails, so the response says whether the person was actually told,
+ * and the admin knows to pass the credentials along by hand when it says no.
+ * The email never carries the password. It is sent inline (not deferred) so the
+ * dialog can state the outcome instead of guessing at it.
+ */
+export async function handleAdminCreateUser(request: Request): Promise<Response> {
+  const admin = await requireAdmin(request);
+
+  const body = await parseJsonBody(request);
+  const email = requireString(body, "email", { max: 255 }).trim().toLowerCase();
+  const name = requireString(body, "name", { max: 128 }).trim();
+
+  if (!email.includes("@") || /\s/.test(email)) {
+    throw badRequest('"email" must be a valid email address');
+  }
+  if (name.length === 0) {
+    throw badRequest('"name" must not be blank');
+  }
+
+  // Absent, null or blank all mean "generate one for me", so the browser can
+  // send an untouched form field without having to omit the key.
+  if (
+    body.password !== undefined &&
+    body.password !== null &&
+    typeof body.password !== "string"
+  ) {
+    throw badRequest('"password" must be a string');
+  }
+  const supplied = typeof body.password === "string" ? body.password : "";
+  const generated = supplied.length === 0;
+  const password = generated ? generateStrongPassword(24) : supplied;
+
+  if (!generated && password.length < MIN_PASSWORD_LENGTH) {
+    throw badRequest(
+      `"password" must be at least ${MIN_PASSWORD_LENGTH} characters, or omitted to have one generated`,
+    );
+  }
+  if (password.length > 512) {
+    throw badRequest('"password" must be at most 512 characters');
+  }
+
+  let created: { user: { id: string; email: string; name: string } };
+  try {
+    created = await auth.api.createUser({
+      // The admin's own session, so the plugin's `user: ["create"]` permission
+      // check resolves. `requireAdmin` has already authorised the call; this is
+      // the plugin re-deriving the same session, exactly as banUser does.
+      headers: request.headers,
+      body: { email, name, password },
+    });
+  } catch (error) {
+    // Better Auth reports a duplicate email or a malformed address as an
+    // APIError; surface its message rather than a generic 500.
+    const message =
+      error instanceof Error ? error.message : "Could not create the account.";
+    throw badRequest(message);
+  }
+
+  const userId = created.user.id;
+
+  // Mark the address verified (see the doc comment). Done as an explicit write
+  // rather than by passing `emailVerified` through the plugin's `data` field,
+  // because an account that silently stayed unverified is a lockout under the
+  // verified-sign-in policy, and this way the outcome does not depend on how
+  // the plugin forwards extra fields to the insert.
+  await sql`UPDATE "user" SET "emailVerified" = TRUE WHERE id = ${userId}`;
+
+  const emailSent = await sendInvitationEmail({ email, name });
+
+  await recordAuditFromRequest(request, {
+    userId: admin.id,
+    action: "user.create",
+    targetType: "user",
+    targetId: userId,
+    metadata: { email, passwordGenerated: generated, invitationEmailSent: emailSent },
+  });
+
+  return json(
+    {
+      user: { id: userId, email, name, role: "user" },
+      // Only ever the generated one. A password the admin chose is not worth
+      // sending back over the wire for them to read.
+      password: generated ? password : null,
+      emailSent,
+    },
+    201,
+  );
+}
+
+/**
+ * Tell someone an account was made for them. Returns whether it was actually
+ * sent (false when mail is unconfigured or the provider failed).
+ *
+ * Deliberately does not contain the password: the invitation travels over
+ * whatever email path the operator configured, while the credential goes
+ * through the admin, so a single intercepted mailbox is not a working login.
+ * The sign-in URL is the panel's own, from `FRONTEND_URL`, the same origin
+ * Better Auth signs its links with.
+ */
+async function sendInvitationEmail({
+  email,
+  name,
+}: {
+  email: string;
+  name: string;
+}): Promise<boolean> {
+  const { siteName } = await getBranding();
+  const signInUrl = `${env.frontendUrl}/login`;
+  const greeting = name ? `Hi ${name},` : "Hi,";
+
+  return sendMail({
+    to: email,
+    subject: `You have been invited to ${siteName}`,
+    text: `${greeting}\n\nAn administrator has created an account for you on ${siteName}.\n\nSign in at ${signInUrl} using this email address (${email}). The administrator who invited you has your password; ask them for it if you have not received it, and change it from your account settings once you are in.\n\nIf you were not expecting this, you can ignore this message.`,
+    html: `<p>${greeting}</p><p>An administrator has created an account for you on <strong>${siteName}</strong>.</p><p>Sign in at <a href="${signInUrl}">${signInUrl}</a> using this email address (${email}). The administrator who invited you has your password; ask them for it if you have not received it, and change it from your account settings once you are in.</p><p style="color:#666">If you were not expecting this, you can ignore this message.</p>`,
+  });
 }
 
 /**

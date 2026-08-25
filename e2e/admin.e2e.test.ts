@@ -58,6 +58,72 @@ describe("GET /api/admin/users/:id", () => {
   });
 });
 
+/**
+ * The invite surface. A successful create is NOT exercised, for the same reason
+ * the ban/promote paths are not: it leaves a permanent account behind on the dev
+ * panel and there is no admin endpoint to remove one. The gates and validation
+ * are what this covers; the happy path is covered by the dialog in the UI.
+ */
+describe("POST /api/admin/users", () => {
+  e2e("with a user key is 403", async () => {
+    const res = await api("/api/admin/users", {
+      method: "POST",
+      key: config.userKey,
+      body: { name: "Nope", email: "nope@example.com" },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  e2e("with no key is 401", async () => {
+    const res = await api("/api/admin/users", {
+      method: "POST",
+      key: null,
+      body: { name: "Nope", email: "nope@example.com" },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  e2e("with an admin key + a malformed email is 400", async () => {
+    const res = await api("/api/admin/users", {
+      method: "POST",
+      key: config.adminKey,
+      body: { name: "Ada", email: "not-an-email" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  e2e("with an admin key + no name is 400", async () => {
+    const res = await api("/api/admin/users", {
+      method: "POST",
+      key: config.adminKey,
+      body: { email: "ada@example.com" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  e2e("with an admin key + a password under the 12-char floor is 400", async () => {
+    const res = await api("/api/admin/users", {
+      method: "POST",
+      key: config.adminKey,
+      body: { name: "Ada", email: "ada@example.com", password: "short" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  e2e("with an admin key + an email that already exists is 400", async () => {
+    // The calling admin's own address is guaranteed to be taken.
+    const me = await api("/api/me", { key: config.adminKey });
+    const email = (me.body as { user?: { email?: string } }).user?.email;
+    expect(typeof email).toBe("string");
+    const res = await api("/api/admin/users", {
+      method: "POST",
+      key: config.adminKey,
+      body: { name: "Duplicate", email },
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe("PATCH /api/admin/users/:id/role", () => {
   e2e("with an admin key + an invalid role is 400", async () => {
     const { userUserId } = await loadFixtures();

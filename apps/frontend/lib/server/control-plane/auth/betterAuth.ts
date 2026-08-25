@@ -26,6 +26,16 @@ import {
   getMailSettings,
 } from "../services/settings";
 
+/**
+ * Minimum password length, enforced by Better Auth on every self-service
+ * credential flow (sign-up, reset, change).
+ *
+ * Exported because the admin plugin's `createUser` hashes whatever password it
+ * is given without consulting this option, so the invite route
+ * (POST /api/admin/users) has to apply the same floor itself.
+ */
+export const MIN_PASSWORD_LENGTH = 12;
+
 /** The only two global roles that exist (plan.md section 5). */
 export const ROLES = ["user", "admin"] as const;
 export type Role = (typeof ROLES)[number];
@@ -464,7 +474,7 @@ export const auth = betterAuth({
 
   emailAndPassword: {
     enabled: true,
-    minPasswordLength: 12,
+    minPasswordLength: MIN_PASSWORD_LENGTH,
     // `requireEmailVerification` is deliberately FALSE here: it is a static
     // flag Better Auth reads at request time from this config object, so it
     // cannot be toggled at runtime. The runtime "require verified email to
