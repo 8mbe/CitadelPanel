@@ -40,6 +40,30 @@ username/password that the panel stores hashed.
 | `SFTP_HOST_KEY_PATH` | `<data root>/../sftp_host_key` | Path to the RSA host key (PEM). Generated on first boot if missing; persisted so the fingerprint is stable across restarts. |
 | `PANEL_URL` | none | **Required** for SFTP auth. Without it, every SFTP login is rejected (the panel cannot be reached to validate the credential). Same requirement as the direct console. |
 
+### Binding the port is allowed to fail
+
+The SFTP listener is the one part of the agent that binds a second port, and
+`ssh2` reports a bind failure the node way: an `error` event on the `Server`,
+never a throw out of `listen`, which is asynchronous. So a `try`/`catch` around
+`listen` catches nothing, and with no `error` listener the event becomes an
+uncaught exception that kills the whole process, taking the HTTP API and the
+console WebSocket down with a port conflict that only concerns SFTP. `server.ts`
+therefore attaches the `error` listener *before* `listen` and logs the success
+line from `listen`'s callback, so the agent degrades to "no SFTP" instead of
+"no node", and never claims a listener that never bound.
+
+In development the conflict is usually the agent against itself. `bun --hot`
+re-evaluates the entry module inside the same process; the runtime hands the
+`Bun.serve` socket to the new evaluation, but the `ssh2` listener is a plain
+node server that nothing reclaims, so the previous evaluation is still holding
+`SFTP_PORT` and the new one gets `EADDRINUSE` while `ss -ltnp` shows the port
+owned by nobody but this very process. The listener is parked on `globalThis`
+(a module-level variable does not survive a reload) and closed before the next
+bind. Closing releases the listening socket immediately; the wait for accepted
+connections to drain is capped, so an attached SFTP client cannot stall a
+reload, and live sessions finish on the old code rather than being cut
+mid-transfer.
+
 ## Credential management
 
 - **Create**: `POST /api/servers/:id/sftp/credentials`. Generates a new

@@ -58,6 +58,7 @@ import {
 } from "./backup/wire";
 import { removeOrphanedToolContainers } from "./backup/toolContainer";
 import { createSftpServer } from "./sftp";
+import type { Server as SshServer } from "ssh2";
 import {
   copyPath,
   createDirectory,
@@ -1480,6 +1481,41 @@ await removeOrphanedToolContainers();
 // still starts but every auth attempt is rejected (the panel cannot be reached
 // to validate the credential), and we log that clearly so an operator knows
 // why connections fail.
+
+/**
+ * Where the SFTP listener is parked so a `bun --hot` reload can find the one the
+ * previous evaluation left running. A module-level `let` cannot do this job: a
+ * reload gives the new module a fresh scope, so the reference has to outlive the
+ * module itself. Inert under `bun run`, where this module is evaluated once.
+ */
+const sftpHotReloadSlot = ((
+  globalThis as typeof globalThis & {
+    __citadelSftpSlot?: { server?: SshServer };
+  }
+).__citadelSftpSlot ??= {});
+
+/**
+ * Release the port held by the listener from a previous evaluation of this
+ * module, if any. `close()` stops the listening socket (freeing the port) and
+ * only calls back once every accepted connection has ended, so a client that is
+ * still attached would otherwise stall the reload: the wait is capped and the
+ * bind attempt gets the final say. Live sessions are left to finish on the old
+ * code rather than being cut mid-transfer.
+ */
+async function closePreviousSftpServer(): Promise<void> {
+  const previous = sftpHotReloadSlot.server;
+  if (!previous) return;
+  sftpHotReloadSlot.server = undefined;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, 500);
+    timer.unref?.();
+    previous.close(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
 if (config.sftpPort > 0) {
   if (!config.panelUrl) {
     console.warn(
@@ -1488,9 +1524,40 @@ if (config.sftpPort > 0) {
     );
   }
   try {
+    // `bun --hot` re-evaluates this module inside the *same* process. The
+    // runtime reclaims the `Bun.serve` socket across a reload, but the ssh2
+    // listener is a plain node server that nothing reclaims: the previous
+    // evaluation is still holding the port, so the new one collides with
+    // itself and reports EADDRINUSE while no other program has the port.
+    // Closing the listener the last evaluation parked on `globalThis` is what
+    // makes a reload survivable.
+    await closePreviousSftpServer();
+
     const sftpServer = await createSftpServer();
-    sftpServer.listen(config.sftpPort, "0.0.0.0");
-    console.log(`[agent] SFTP server listening on 0.0.0.0:${config.sftpPort}`);
+
+    // ssh2 reports a bind failure as an `error` event on the Server, never as a
+    // throw out of `listen` (which is asynchronous). With no listener attached
+    // that event is an uncaught exception, and it takes the whole agent down
+    // with it: HTTP, WebSocket console and all. Attaching it before `listen` is
+    // what keeps the worst case "SFTP is down" instead of "the node is down".
+    sftpServer.on("error", (error: NodeJS.ErrnoException) => {
+      const code = error.code ? ` (${error.code})` : "";
+      console.error(`[agent] SFTP server error${code}:`, error.message);
+      if (error.code === "EADDRINUSE") {
+        console.error(
+          `[agent] Port ${config.sftpPort} is already bound. If no other program has it, ` +
+            "a previous agent process (or a hot reload) is still holding it. " +
+            "SFTP is unavailable until the port frees up; the rest of the agent is unaffected.",
+        );
+      }
+    });
+
+    // The success line belongs in the listen callback: logged unconditionally it
+    // claims a listener that may never have bound.
+    sftpServer.listen(config.sftpPort, "0.0.0.0", () => {
+      console.log(`[agent] SFTP server listening on 0.0.0.0:${config.sftpPort}`);
+    });
+    sftpHotReloadSlot.server = sftpServer;
   } catch (error) {
     // A failure to start the SFTP server (host-key generation, port in use)
     // must not take down the HTTP/WS agent. Lifecycle routes still work.
