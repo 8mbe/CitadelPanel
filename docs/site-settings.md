@@ -79,7 +79,7 @@ relies on the same exemption, so there is no second code path to keep in sync.
 already applied, which is what the sign-in page renders from.
 
 With registration closed, accounts arrive through the admin instead: see
-`docs/user-invites.md` for the "Add user" flow, which is a separate
+`docs/user-accounts.md` for the "Add user" flow, which is a separate
 admin-gated endpoint rather than an exemption inside this gate.
 
 ## SEO: indexing is off by default

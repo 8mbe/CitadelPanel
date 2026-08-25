@@ -1817,6 +1817,17 @@ export interface AdminUserDetail {
   servers: ApiServerSummary[];
 }
 
+/**
+ * DELETE /api/admin/users/:id. Deletes an account permanently.
+ *
+ * Only allowed for an account that is currently banned and owns no servers;
+ * the route explains which gate failed, so surface its message rather than a
+ * generic one. Irreversible.
+ */
+export async function adminDeleteUser(userId: string): Promise<void> {
+  await request(`/api/admin/users/${userId}`, { method: "DELETE" });
+}
+
 /** GET /api/admin/users/:id. A single account's profile plus owned servers. */
 export async function adminGetUser(userId: string): Promise<AdminUserDetail> {
   const data = await request<{

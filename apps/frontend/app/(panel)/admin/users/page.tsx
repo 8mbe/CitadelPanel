@@ -6,12 +6,14 @@ import {
   Search,
   Shield,
   ShieldCheck,
+  Trash2,
   User as UserIcon,
   UserPlus,
 } from "lucide-react";
 import Link from "next/link";
 
 import { AddUserDialog } from "@/components/admin/add-user-dialog";
+import { DeleteUserDialog } from "@/components/admin/delete-user-dialog";
 import { useSession } from "@/components/session-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -259,7 +261,7 @@ export default function AdminUsersPage() {
                         user={user}
                         isSelf={user.id === me.id}
                         onRoleChange={handleRoleChange}
-                        onBanned={reload}
+                        onChanged={reload}
                       />
                     </TableCell>
                   </TableRow>
@@ -287,14 +289,27 @@ function UserActions({
   user,
   isSelf,
   onRoleChange,
-  onBanned,
+  onChanged,
 }: {
   user: ApiUser;
   isSelf: boolean;
   onRoleChange: (userId: string, role: "admin" | "user") => void | Promise<void>;
-  onBanned: () => void | Promise<void>;
+  /** Reload the list: a ban, unban or deletion changes rows we do not patch. */
+  onChanged: () => void | Promise<void>;
 }) {
   const [banOpen, setBanOpen] = React.useState(false);
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
+
+  // Deletion is gated server-side on the same two facts; repeated here only to
+  // say *why* the item is unavailable, which a disabled row otherwise leaves
+  // the admin guessing at.
+  const blocker = isSelf
+    ? "Use your account settings"
+    : !user.banned
+      ? "Ban the account first"
+      : user.serverCount > 0
+        ? `Owns ${user.serverCount} server${user.serverCount === 1 ? "" : "s"}`
+        : null;
 
   return (
     <>
@@ -327,7 +342,7 @@ function UserActions({
           )}
           <DropdownMenuSeparator />
           {user.banned ? (
-            <UnbanItem userId={user.id} onDone={onBanned} />
+            <UnbanItem userId={user.id} onDone={onChanged} />
           ) : (
             <DropdownMenuItem
               disabled={isSelf}
@@ -337,6 +352,20 @@ function UserActions({
               Ban user…
             </DropdownMenuItem>
           )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            variant="destructive"
+            disabled={blocker !== null}
+            onClick={() => setDeleteOpen(true)}
+          >
+            <Trash2 />
+            <span className="flex flex-col">
+              Delete account…
+              {blocker && (
+                <span className="text-xs text-muted-foreground">{blocker}</span>
+              )}
+            </span>
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -344,7 +373,14 @@ function UserActions({
         user={user}
         open={banOpen}
         onOpenChange={setBanOpen}
-        onDone={onBanned}
+        onDone={onChanged}
+      />
+
+      <DeleteUserDialog
+        user={user}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        onDeleted={onChanged}
       />
     </>
   );

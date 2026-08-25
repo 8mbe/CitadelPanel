@@ -380,6 +380,51 @@ describe("POST /api/admin/scan (trigger a detection sweep)", () => {
   });
 });
 
+/**
+ * Account deletion. The happy path is not exercised for the obvious reason:
+ * it is irreversible and the suite runs against a live dev panel. What the
+ * gates refuse is what matters here.
+ */
+describe("DELETE /api/admin/users/:id", () => {
+  e2e("with a user key is 403", async () => {
+    const { userUserId } = await loadFixtures();
+    const res = await api(`/api/admin/users/${userUserId}`, {
+      method: "DELETE",
+      key: config.userKey,
+    });
+    expect(res.status).toBe(403);
+  });
+
+  e2e("with an admin key targeting the admin's OWN id is 409", async () => {
+    const { adminUserId } = await loadFixtures();
+    const res = await api(`/api/admin/users/${adminUserId}`, {
+      method: "DELETE",
+      key: config.adminKey,
+    });
+    expect(res.status).toBe(409);
+  });
+
+  e2e("with an admin key + an unbanned account is 409", async () => {
+    // The fixture user is a normal active account, so the ban gate is what
+    // refuses this, not the server or link gates.
+    const { userUserId } = await loadFixtures();
+    const res = await api(`/api/admin/users/${userUserId}`, {
+      method: "DELETE",
+      key: config.adminKey,
+    });
+    expectStatus(res, 409);
+    expect(String((res.body as { error?: string }).error)).toContain("Ban");
+  });
+
+  e2e("with an unknown id is 404", async () => {
+    const res = await api(`/api/admin/users/${UNKNOWN_UUID}`, {
+      method: "DELETE",
+      key: config.adminKey,
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
 // --- Audit log ---------------------------------------------------------------
 
 describe("GET /api/admin/audit-logs", () => {

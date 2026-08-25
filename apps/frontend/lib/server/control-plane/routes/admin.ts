@@ -734,6 +734,150 @@ export async function handleUnbanUser(
   return json({ banned: false, userId: targetId });
 }
 
+// --- User deletion -----------------------------------------------------------
+
+/**
+ * DELETE /api/admin/users/:id. Removes an account for good.
+ *
+ * Deletion is gated on **an active ban**, not offered as a first response. The
+ * ban is what makes the delete safe rather than merely permitted: banning
+ * already revokes every session the account holds and suspends its servers, so
+ * by the time this route runs the account cannot be mid-request, and the admin
+ * has had a reversible step (unban) to change their mind in. It also means the
+ * two-part decision reads in the audit log as two entries.
+ *
+ * The other gates:
+ *
+ *  - **Zero owned servers.** `servers.owner_id` cascades on user deletion
+ *    (`001_initial_schema.sql`), so deleting an owner would silently destroy
+ *    their servers, their data directories and their port allocations, with the
+ *    node left holding orphaned containers. This is the same rule the
+ *    self-service delete enforces (`routes/users.ts`); an admin who wants the
+ *    account gone deletes its servers first, deliberately, one at a time.
+ *  - **Not yourself.** Self-deletion goes through `POST /api/account/delete`,
+ *    which requires the password. Better Auth's `removeUser` refuses it too;
+ *    this check just gives the better message.
+ *  - **Not the last admin**, mirroring the demote guard: the panel must always
+ *    have one.
+ *  - **No surviving server-link attribution.** `server_links.created_by` is the
+ *    one reference to `"user"` with no `ON DELETE` action (every other
+ *    attribution column is `SET NULL`), so the delete would fail on a foreign
+ *    key. The normal case cannot hit it, because a link's row dies with its
+ *    server and the account owns none; an *admin* who wired up links on someone
+ *    else's servers can, and gets told which ones rather than a 500.
+ *
+ * What survives the deletion, on purpose: the audit trail. `audit_logs.user_id`
+ * is `ON DELETE SET NULL`, so the account's actions stay on record as "system"
+ * with their target intact, and this deletion is itself audited with the
+ * deleted address in the metadata.
+ */
+export async function handleAdminDeleteUser(
+  request: Request,
+  userId: string,
+): Promise<Response> {
+  const admin = await requireAdmin(request);
+
+  const targetId = userId.trim();
+  if (targetId.length === 0) throw badRequest('"userId" is required.');
+
+  if (targetId === admin.id) {
+    throw conflict(
+      "You cannot delete your own account from here. Use your account settings, which require your password.",
+    );
+  }
+
+  const targetRows = (await sql`
+    SELECT id, email, name, role, banned, "banExpires" AS ban_expires
+    FROM "user" WHERE id = ${targetId}
+  `) as {
+    id: string;
+    email: string;
+    name: string | null;
+    role: string | null;
+    banned: boolean | null;
+    ban_expires: Date | null;
+  }[];
+
+  const target = targetRows[0];
+  if (!target) throw notFound("User not found");
+
+  // An expired ban is not a ban: the sign-in hook clears it lazily and the UI
+  // already renders such an account as active, so treating it as banned here
+  // would let a lapsed ban authorise a deletion nobody re-confirmed.
+  const banActive =
+    Boolean(target.banned) &&
+    (target.ban_expires === null || target.ban_expires.getTime() > Date.now());
+
+  if (!banActive) {
+    throw conflict(
+      "Ban the account before deleting it. Banning signs the user out everywhere and suspends their servers, which is what makes the deletion safe.",
+    );
+  }
+
+  if (target.role === "admin") {
+    const adminCount = (await sql`
+      SELECT COUNT(*)::int AS count FROM "user" WHERE role = 'admin'
+    `) as { count: number }[];
+
+    if ((adminCount[0]?.count ?? 0) <= 1) {
+      throw conflict("Cannot delete the last remaining admin");
+    }
+  }
+
+  const ownedRows = (await sql`
+    SELECT COUNT(*)::int AS count FROM servers WHERE owner_id = ${targetId}
+  `) as { count: number }[];
+  const owned = ownedRows[0]?.count ?? 0;
+
+  if (owned > 0) {
+    throw conflict(
+      `This account still owns ${owned} server${owned === 1 ? "" : "s"}. Deleting the account would delete ${owned === 1 ? "it" : "them"} and ${owned === 1 ? "its" : "their"} data with it. Delete the server${owned === 1 ? "" : "s"} first.`,
+    );
+  }
+
+  const linkRows = (await sql`
+    SELECT s.name
+    FROM server_links l
+    JOIN servers s ON s.id = l.server_id
+    WHERE l.created_by = ${targetId}
+    ORDER BY s.name
+    LIMIT 4
+  `) as { name: string }[];
+
+  if (linkRows.length > 0) {
+    const names = linkRows.slice(0, 3).map((row) => row.name).join(", ");
+    throw conflict(
+      `This account created server connections that still exist (on ${names}${linkRows.length > 3 ? ", and more" : ""}). Remove those connections first.`,
+    );
+  }
+
+  // Delegated to the admin plugin, which drops the user's sessions and their
+  // credential accounts alongside the row. Everything panel-owned that hangs
+  // off the account cascades (subuser grants, SFTP credentials, console
+  // sessions); attribution columns go null.
+  await auth.api.removeUser({
+    headers: request.headers,
+    body: { userId: targetId },
+  });
+
+  // The `apikey` table is the one thing with no foreign key back to `"user"`
+  // (the plugin stores the owner in `referenceId`), so its rows would outlive
+  // the account. They could not authenticate anything without a user row to
+  // synthesize a session from, but leaving credential rows behind for an
+  // account that no longer exists is not a state worth having.
+  await sql`DELETE FROM apikey WHERE "referenceId" = ${targetId}`;
+
+  await recordAuditFromRequest(request, {
+    userId: admin.id,
+    action: "user.delete",
+    targetType: "user",
+    targetId,
+    metadata: { email: target.email, name: target.name, role: target.role, byAdmin: true },
+  });
+
+  return json({ deleted: true, userId: targetId });
+}
+
 // --- Audit log ----------------------------------------------------------------
 
 /**
