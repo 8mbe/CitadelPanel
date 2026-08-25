@@ -12,6 +12,8 @@
 
 import type Docker from "dockerode";
 
+import { daemonRead } from "./client";
+
 /** Normalised, point-in-time view of one container's resource usage. */
 export interface ContainerStats {
   containerId: string;
@@ -249,9 +251,16 @@ async function readRawStats(
   client: Docker,
   containerId: string,
 ): Promise<RawDockerStats> {
-  return (await client
-    .getContainer(containerId)
-    .stats({ stream: false, "one-shot": true } as never)) as unknown as RawDockerStats;
+  // Bounded: a stalled daemon must surface as an error the caller can report,
+  // not as a request that never ends. See `daemonRead`.
+  return (await daemonRead(`stats for container ${containerId.slice(0, 12)}`, (abortSignal) =>
+    client.getContainer(containerId).stats({
+      stream: false,
+      "one-shot": true,
+      // Accepted at runtime and typed on other calls, just not on this one.
+      abortSignal,
+    } as { stream?: false; "one-shot"?: boolean }),
+  )) as unknown as RawDockerStats;
 }
 
 /**
@@ -321,10 +330,13 @@ export async function sampleContainerStats(
 export async function listManagedContainers(
   client: Docker,
 ): Promise<{ id: string; names: string[]; state: string }[]> {
-  const containers = await client.listContainers({
-    all: true,
-    filters: { label: ["citadel.managed=true"] },
-  });
+  const containers = await daemonRead("the container list", (abortSignal) =>
+    client.listContainers({
+      all: true,
+      filters: { label: ["citadel.managed=true"] },
+      abortSignal,
+    }),
+  );
 
   return containers.map((container) => ({
     id: container.Id,

@@ -83,6 +83,54 @@ one slow or dead agent before even asking the next stretched each sweep by the
 fleet's agents. Error containment is unchanged. An unreachable node logs and
 returns, and one server's scoring failure costs only itself.
 
+### The agent bounds its own daemon reads
+
+dockerode has no timeout, and neither does the unix socket. A daemon that
+accepts the connection and then stalls (a busy pull, a wedged snapshotter, a
+socket that is bound but not being served) leaves the agent's request open
+indefinitely, so the agent hangs on a route that normally answers in
+milliseconds and the panel finds out only by burning its own timeout. That is
+the shape of the "answers `/v1/health` in 9 ms, hangs on `/v1/stats`" report:
+nothing was unreachable, one daemon read never came back.
+
+`daemonRead` (`docker/client.ts`) wraps the reads with an abort signal and a
+10 s ceiling, and names the call in the error so an operator can tell a
+daemon-wide stall from one container. It covers the calls the sweeps hit
+(`/v1/stats`, `/v1/states`, `/v1/health`, and the container-name lookup) and
+deliberately not power actions or streams: pulling an image, stopping a game
+server with a grace period, and an attached console are all legitimately slow.
+A stalled read now becomes a fast, explicit failure, which the panel can report
+and back off from instead of waiting on it.
+
+### A node that is down must not cost anything per tick
+
+Concurrency bounds a sweep's *width*, not its duration, and the cost of a node
+that is down is the whole timeout: a host that drops packets is only discovered
+when the request expires. Two sweeps run on timers over every node (the abuse
+watcher every `WATCHER_INTERVAL_SECONDS`, the status sweeper every 30s), so an
+outage that costs one timeout costs it again on the next tick, forever. Three
+things follow, and the first one is what actually broke:
+
+- **The per-node timeout is derived from the sweep interval**, not fixed. The
+  watcher's stats batch used to default to 60s, which is also the default
+  interval, so a single dead node guaranteed the sweep outlived its own tick and
+  the next one was dropped with "previous sweep still running". One dead node
+  therefore stopped the watcher from looking at the live ones, which is a cheap
+  way to blind it. It is now half the interval, floored.
+- **A node that fails is put in backoff** (`nodes/nodeReachability.ts`), shared
+  by both sweeps: 30s, then 1m, 2m, 5m, capped, cleared by the first success.
+  The transitions are logged (one line when it goes, one when it returns) rather
+  than the failure, because a line repeated every 30 seconds for an hour buries
+  the ones that mean something. Backoff applies only to the unattended timers;
+  an operator opening the nodes page or pressing Scan now
+  (`runSweep({ force: true })`) still asks the agent directly.
+- **A sweep stops starting new nodes** once it has spent its interval minus one
+  timeout, and resumes there next pass (`lib/boundedWork.ts` runs the queue and
+  reports where it stopped). Deferring costs some nodes a little freshness; not
+  deferring costs whole sweeps. The rotation is the point: the nodes a pass
+  gives up on must not be the same ones every time, or the watcher has a
+  permanent blind spot and an abuser gets to choose it.
+
 ## Rule 2: panel endpoints are shaped around database round trips
 
 The control plane's database is frequently not on the same machine as the panel.
@@ -251,3 +299,8 @@ Known and not yet addressed:
 - `ports.md`: the port rows the list endpoints batch.
 - `../lib/server/control-plane/security/watcher.ts`: the sweep this doc's
   per-node batching and concurrency caps were built for.
+- `../lib/server/control-plane/nodes/nodeReachability.ts`: the backoff both
+  timer-driven sweeps share, and why an outage is logged twice rather than
+  every tick.
+- `../../backend/src/docker/client.ts`: `daemonRead`, the ceiling on the
+  agent's own daemon reads.

@@ -99,10 +99,16 @@ export async function handleGetSuspicious(
   return json({ activity });
 }
 
-/** POST /api/admin/scan. Triggers an out-of-band detection sweep. */
+/**
+ * POST /api/admin/scan. Triggers an out-of-band detection sweep.
+ *
+ * Forced: an admin pressing this is asking about the fleet *now*, so it ignores
+ * both the per-node backoff and the scheduled sweep's time budget, which exist
+ * to keep an unattended timer from eating itself.
+ */
 export async function handleTriggerScan(request: Request): Promise<Response> {
   await requireAdmin(request);
-  return json({ result: await runSweep() });
+  return json({ result: await runSweep({ force: true }) });
 }
 
 // --- Server enforcement -------------------------------------------------------

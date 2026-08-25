@@ -13,7 +13,7 @@
 import { readdir, stat, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { config } from "./config";
-import { docker } from "./docker/client";
+import { daemonRead, docker } from "./docker/client";
 import { defaultRunAsUser } from "./docker/userns";
 import {
   attachToContainer,
@@ -84,10 +84,13 @@ export interface CreateContainerRequest {
 async function findContainerIdByName(name: string): Promise<string | null> {
   // Docker's name filter is a substring match, so the exact name is re-checked
   // below; `/name` is how the daemon reports it.
-  const matches = await docker.listContainers({
-    all: true,
-    filters: { name: [name] },
-  });
+  const matches = await daemonRead(`the container named ${name}`, (abortSignal) =>
+    docker.listContainers({
+      all: true,
+      filters: { name: [name] },
+      abortSignal,
+    }),
+  );
 
   const exact = matches.find((container) =>
     (container.Names ?? []).some((candidate) => candidate === `/${name}`),
@@ -368,7 +371,9 @@ export async function getServerState(serverId: string): Promise<ContainerState> 
 export async function getServerStates(
   serverIds: string[],
 ): Promise<Record<string, ContainerState>> {
-  const containers = await docker.listContainers({ all: true });
+  const containers = await daemonRead("the container list", (abortSignal) =>
+    docker.listContainers({ all: true, abortSignal }),
+  );
 
   const stateByName = new Map<string, ContainerState>();
   for (const container of containers) {

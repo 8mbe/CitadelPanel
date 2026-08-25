@@ -21,12 +21,19 @@
  *     the panel is up, and that is the same staleness with a different cause.
  *
  * Cost is one request per node per pass, and one UPDATE per server that
- * actually drifted, which on a healthy panel is none. The decision itself is
+ * actually drifted, which on a healthy panel is none. A node that fails is put
+ * in backoff (`nodes/nodeReachability.ts`) so an outage costs one request every
+ * few minutes instead of one every 30 seconds, forever. The decision itself is
  * `statusReconcile.ts`, shared with the detail endpoint so the two can never
  * disagree and fight over a row.
  */
 
 import { sql } from "../db/client";
+import {
+  isNodeInBackoff,
+  noteNodeReachable,
+  noteNodeUnreachable,
+} from "../nodes/nodeReachability";
 import { listActiveNodesWithSecrets } from "../nodes/nodeRegistry";
 import { getNodeServerStates } from "../nodes/nodeServerApi";
 import {
@@ -60,6 +67,8 @@ interface SweepableRow extends ReconcilableServer {
 export interface StatusSweepResult {
   nodesScanned: number;
   nodesUnreachable: number;
+  /** Nodes left alone this pass because they are in backoff after failing. */
+  nodesSkipped: number;
   serversChecked: number;
   statusesCorrected: number;
 }
@@ -131,14 +140,14 @@ async function sweepNode(
       servers.map((server) => server.id),
     );
     result.nodesScanned += 1;
+    noteNodeReachable("status-sweeper", nodeId, nodeName);
   } catch (error) {
     // A node that cannot be reached is not evidence that its containers
-    // stopped, so its servers keep the status they have.
+    // stopped, so its servers keep the status they have. It is also put in
+    // backoff: this pass repeats every 30s, and a node that is down for an
+    // afternoon should not cost a timeout and a log line every 30s of it.
     result.nodesUnreachable += 1;
-    console.error(
-      `[status-sweeper] could not read states from node ${nodeName}:`,
-      error instanceof Error ? error.message : error,
-    );
+    noteNodeUnreachable("status-sweeper", nodeId, nodeName, error);
     return;
   }
 
@@ -172,6 +181,7 @@ export async function runStatusSweep(): Promise<StatusSweepResult> {
   const result: StatusSweepResult = {
     nodesScanned: 0,
     nodesUnreachable: 0,
+    nodesSkipped: 0,
     serversChecked: 0,
     statusesCorrected: 0,
   };
@@ -198,6 +208,10 @@ export async function runStatusSweep(): Promise<StatusSweepResult> {
     async () => {
       while (next < work.length) {
         const job = work[next++];
+        if (isNodeInBackoff(job.node.id)) {
+          result.nodesSkipped += 1;
+          continue;
+        }
         await sweepNode(job.node.id, job.node.name, job.nodeServers, result);
       }
     },
@@ -216,7 +230,9 @@ async function sweepOnce(): Promise<void> {
   sweepInFlight = true;
   try {
     const result = await runStatusSweep();
-    if (result.statusesCorrected > 0 || result.nodesUnreachable > 0) {
+    // Corrections only. An unreachable node announces itself once, in one line,
+    // when it goes away and again when it returns (`nodeReachability.ts`).
+    if (result.statusesCorrected > 0) {
       console.log("[status-sweeper] sweep complete:", result);
     }
   } catch (error) {

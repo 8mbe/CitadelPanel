@@ -119,6 +119,27 @@ function buildUrl(
 }
 
 /**
+ * The reason a `fetch` failed, in words that name the actual fault.
+ *
+ * Node's `fetch` reports every transport failure as `TypeError: fetch failed`
+ * and puts the part worth reading (`ECONNREFUSED`, `ENOTFOUND`, a TLS error) in
+ * `cause`. Reporting the wrapper verbatim turned "the agent's port is closed"
+ * and "that hostname does not resolve" into the same useless line, so the cause
+ * is unwrapped when the outer message is that placeholder. Bun already puts the
+ * detail in the message, which the fallback covers.
+ */
+function transportFailureReason(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+
+  const cause = (error as { cause?: unknown }).cause;
+  const causeMessage =
+    cause instanceof Error ? cause.message : undefined;
+
+  if (causeMessage && /^fetch failed$/i.test(error.message)) return causeMessage;
+  return error.message;
+}
+
+/**
  * Turn a failed `fetch` to an agent into the error an operator can act on.
  *
  * A refused connection and a request that ran out of time are different faults
@@ -146,8 +167,10 @@ function agentCallFailed(
     );
   }
 
-  const reason = error instanceof Error ? error.message : String(error);
-  return new HttpError(502, `Node "${node.name}" is unreachable: ${reason}`);
+  return new HttpError(
+    502,
+    `Node "${node.name}" is unreachable: ${transportFailureReason(error)}`,
+  );
 }
 
 /**
