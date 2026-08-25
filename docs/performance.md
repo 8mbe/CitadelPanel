@@ -83,6 +83,25 @@ one slow or dead agent before even asking the next stretched each sweep by the
 fleet's agents. Error containment is unchanged. An unreachable node logs and
 returns, and one server's scoring failure costs only itself.
 
+### The agent bounds its own daemon reads
+
+dockerode has no timeout, and neither does the unix socket. A daemon that
+accepts the connection and then stalls (a busy pull, a wedged snapshotter, a
+socket that is bound but not being served) leaves the agent's request open
+indefinitely, so the agent hangs on a route that normally answers in
+milliseconds and the panel finds out only by burning its own timeout. That is
+the shape of the "answers `/v1/health` in 9 ms, hangs on `/v1/stats`" report:
+nothing was unreachable, one daemon read never came back.
+
+`daemonRead` (`docker/client.ts`) wraps the reads with an abort signal and a
+10 s ceiling, and names the call in the error so an operator can tell a
+daemon-wide stall from one container. It covers the calls the sweeps hit
+(`/v1/stats`, `/v1/states`, `/v1/health`, and the container-name lookup) and
+deliberately not power actions or streams: pulling an image, stopping a game
+server with a grace period, and an attached console are all legitimately slow.
+A stalled read now becomes a fast, explicit failure, which the panel can report
+and back off from instead of waiting on it.
+
 ### A node that is down must not cost anything per tick
 
 Concurrency bounds a sweep's *width*, not its duration, and the cost of a node
@@ -274,3 +293,5 @@ Known and not yet addressed:
 - `../lib/server/control-plane/nodes/nodeReachability.ts`: the backoff both
   timer-driven sweeps share, and why an outage is logged twice rather than
   every tick.
+- `../../backend/src/docker/client.ts`: `daemonRead`, the ceiling on the
+  agent's own daemon reads.
