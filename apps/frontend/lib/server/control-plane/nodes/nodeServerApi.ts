@@ -261,12 +261,6 @@ export async function getServerStats(
   return result.stats;
 }
 
-/**
- * Sample many servers on one node in a single request.
- *
- * The abuse watcher sweeps the whole fleet on a timer; one request per
- * container would make sweep cost scale with fleet size.
- */
 export async function sendServerCommand(
   nodeId: string,
   serverId: string,
@@ -279,9 +273,17 @@ export async function sendServerCommand(
 }
 
 /**
- * @param timeoutMs The watcher's fleet sweep can legitimately take a while on a
- *   busy node, so it keeps the long default. The admin node detail page passes
- *   a shorter value so a dead node cannot hold the page open for a full minute.
+ * Sample many servers on one node in a single request.
+ *
+ * The abuse watcher sweeps the whole fleet on a timer; one request per
+ * container would make sweep cost scale with fleet size.
+ *
+ * @param timeoutMs How long to wait. Every caller passes its own, because the
+ *   number that matters is not how slow a busy node can be but how long the
+ *   *caller* can afford to wait for a node that will never answer: the watcher
+ *   derives it from its sweep interval, and the admin node detail page keeps it
+ *   short so a dead node cannot hold the page open. The default is the
+ *   generous one, for a caller with nothing better to do than wait.
  */
 export async function sampleNodeServers(
   nodeId: string,

@@ -55,7 +55,10 @@ Three details are load-bearing:
 - **An unreachable node corrects nothing.** A node that cannot be reached is not
   evidence that its containers stopped, so its servers keep the status they
   have. Same reasoning as `getServerReconciled` falling back to the stored
-  status.
+  status. It is also skipped for a growing window rather than re-asked every 30
+  seconds (`nodes/nodeReachability.ts`, shared with the abuse watcher): a node
+  that is down for an afternoon should not cost a timeout, and a log line, 500
+  times. See `performance.md`.
 
 The boot pass is deliberately not awaited before the panel serves its first
 request. It talks to every node, and a node that is down would hold startup open

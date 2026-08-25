@@ -7,13 +7,22 @@
  * review, never a silent deletion.
  *
  * Node-aware from the first pass, as required by the plan: an unreachable node is
- * logged and skipped rather than aborting the whole sweep.
+ * logged and skipped rather than aborting the whole sweep. It is also put in
+ * backoff (`nodes/nodeReachability.ts`), because "skipped" only holds for the
+ * sweep that failed: retrying a dead node at full timeout on every tick made
+ * sweeps outlive their own interval, and a skipped sweep looks at nobody.
  */
 
 import { sql } from "../db/client";
 import { env } from "../config/env";
 import { getResourceProfileById } from "../blueprints/registry";
 import type { ResourceProfile } from "../blueprints/types";
+import { rotate, runWithBudget } from "../lib/boundedWork";
+import {
+  isNodeInBackoff,
+  noteNodeReachable,
+  noteNodeUnreachable,
+} from "../nodes/nodeReachability";
 import { listActiveNodesWithSecrets } from "../nodes/nodeRegistry";
 import {
   sampleNodeServers,
@@ -178,6 +187,12 @@ async function resolveResourceProfiles(
 export interface SweepResult {
   nodesScanned: number;
   nodesUnreachable: number;
+  /**
+   * Nodes this pass deliberately did not ask: in backoff after recent failures,
+   * or left for the next sweep because this one ran out of its time budget.
+   * Distinct from `nodesUnreachable`, which cost a request and a timeout.
+   */
+  nodesSkipped: number;
   containersSampled: number;
   serversFlagged: number;
   serversAutoSuspended: number;
@@ -205,11 +220,16 @@ async function sampleAndScoreNode(
     samples = await sampleNodeServers(
       node.id,
       nodeServers.map((server) => server.id),
+      SAMPLE_TIMEOUT_MS,
     );
     result.nodesScanned += 1;
+    noteNodeReachable("watcher", node.id, node.name);
   } catch (error) {
+    // An unreachable node is an operational state, not a defect: it is
+    // reported as one line and put in backoff, rather than a stack trace on
+    // every tick for as long as the node is down. See `nodeReachability.ts`.
     result.nodesUnreachable += 1;
-    console.error(`[watcher] could not sample node ${node.name}:`, error);
+    noteNodeUnreachable("watcher", node.id, node.name, error);
     return;
   }
 
@@ -277,16 +297,67 @@ async function sampleAndScoreNode(
 const MAX_NODE_CONCURRENCY = 4;
 
 /**
+ * How long one node's stats batch may take.
+ *
+ * Derived from the sweep interval rather than fixed, because the failure this
+ * bounds is a node that does not answer at all: that costs the *whole* timeout,
+ * and the old fixed 60s happened to equal the default interval, so a single
+ * dead node guaranteed the sweep outlived its own tick and the next one was
+ * skipped ("previous sweep still running"). Half the interval leaves room for
+ * the nodes either side of a dead one, and the floor keeps a deliberately tiny
+ * interval from timing out healthy agents mid-answer.
+ */
+const SAMPLE_TIMEOUT_MS = Math.max(
+  5_000,
+  Math.round((env.security.watcherIntervalSeconds * 1000) / 2),
+);
+
+/**
+ * How long into its interval a sweep may still *start* asking a new node.
+ *
+ * Past this point the remaining nodes are left for the next sweep. Concurrency
+ * bounds how many nodes are in flight, not how long the queue behind them
+ * takes, so on a fleet where several nodes are slow the pass could still run
+ * past its own tick and lose the next one. Stopping early costs freshness for
+ * some nodes; not stopping costs whole sweeps, which is worse. The rotation in
+ * {@link runSweep} is what keeps the deferred nodes from being the same ones
+ * every time.
+ */
+const START_DEADLINE_MS = Math.max(
+  SAMPLE_TIMEOUT_MS,
+  env.security.watcherIntervalSeconds * 1000 - SAMPLE_TIMEOUT_MS,
+);
+
+/**
+ * Where the next sweep starts in the node list.
+ *
+ * A sweep that gives up on its remaining nodes must not give up on the *same*
+ * nodes forever: that is a permanent blind spot, and picking which servers the
+ * watcher never looks at is exactly the capability an abuser would want. Each
+ * pass resumes where the last one stopped.
+ */
+let sweepCursor = 0;
+
+/**
  * Run one full detection pass across every active node.
  *
  * Nodes are sampled concurrently, up to {@link MAX_NODE_CONCURRENCY} at a
  * time. Errors are contained per node and per container: one bad node must not
  * stop the sweep, because that would be an easy way to blind the whole watcher.
+ *
+ * A scheduled pass also protects the *next* pass: nodes in backoff are not
+ * asked, and once {@link START_DEADLINE_MS} is spent the rest are left for the
+ * following sweep. `force` turns both off, for the admin's Scan-now button,
+ * where somebody is waiting for the answer and asked for it deliberately.
  */
-export async function runSweep(): Promise<SweepResult> {
+export async function runSweep(
+  { force = false }: { force?: boolean } = {},
+): Promise<SweepResult> {
+  const startedAt = Date.now();
   const result: SweepResult = {
     nodesScanned: 0,
     nodesUnreachable: 0,
+    nodesSkipped: 0,
     containersSampled: 0,
     serversFlagged: 0,
     serversAutoSuspended: 0,
@@ -308,21 +379,36 @@ export async function runSweep(): Promise<SweepResult> {
     serversByNode.set(server.node_id, list);
   }
 
-  const work = nodes
+  const candidates = nodes
     .map((node) => ({ node, nodeServers: serversByNode.get(node.id) ?? [] }))
     .filter(({ nodeServers }) => nodeServers.length > 0);
 
-  let next = 0;
-  const workers = Array.from(
-    { length: Math.min(MAX_NODE_CONCURRENCY, work.length) },
-    async () => {
-      while (next < work.length) {
-        const job = work[next++];
-        await sampleAndScoreNode(job.node, job.nodeServers, profiles, result);
-      }
+  // Rotate so the nodes a previous pass ran out of time for are asked first.
+  const offset = candidates.length ? sweepCursor % candidates.length : 0;
+  const work = rotate(candidates, offset);
+
+  const resumeAt = await runWithBudget(work, {
+    concurrency: MAX_NODE_CONCURRENCY,
+    startDeadlineAt: force ? Infinity : startedAt + START_DEADLINE_MS,
+    onDeferred: (count) => {
+      result.nodesSkipped += count;
     },
-  );
-  await Promise.all(workers);
+    run: async (job) => {
+      // Checked here rather than when the work list is built, because the
+      // window can expire while an earlier node is still being sampled.
+      if (!force && isNodeInBackoff(job.node.id)) {
+        result.nodesSkipped += 1;
+        return;
+      }
+      await sampleAndScoreNode(job.node, job.nodeServers, profiles, result);
+    },
+  });
+
+  // Resume where this pass stopped. A pass that finished wraps back to where it
+  // began, so a healthy fleet keeps a stable order.
+  if (candidates.length) {
+    sweepCursor = (offset + resumeAt) % candidates.length;
+  }
 
   // Drop state for servers that no longer exist, so the map cannot grow forever.
   const liveIds = new Set(servers.map((server) => server.id));
@@ -357,7 +443,10 @@ export function startWatcher(): void {
     sweepInFlight = true;
     try {
       const result = await runSweep();
-      if (result.serversFlagged > 0 || result.nodesUnreachable > 0) {
+      // Only findings. An unreachable node already announced itself once, in
+      // one line, and re-printing the whole result every minute for as long as
+      // it stays down is the noise `nodeReachability.ts` exists to stop.
+      if (result.serversFlagged > 0 || result.serversAutoSuspended > 0) {
         console.log("[watcher] sweep complete:", result);
       }
     } catch (error) {
@@ -381,7 +470,8 @@ export function stopWatcher(): void {
   console.log("[watcher] stopped");
 }
 
-/** Exposed for tests: clear all in-memory observation state. */
+/** Exposed for tests: clear all in-memory sweep state. */
 export function resetObservations(): void {
   observations.clear();
+  sweepCursor = 0;
 }
