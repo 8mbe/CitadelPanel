@@ -58,6 +58,72 @@ describe("GET /api/admin/users/:id", () => {
   });
 });
 
+/**
+ * The invite surface. A successful create is NOT exercised, for the same reason
+ * the ban/promote paths are not: it leaves a permanent account behind on the dev
+ * panel and there is no admin endpoint to remove one. The gates and validation
+ * are what this covers; the happy path is covered by the dialog in the UI.
+ */
+describe("POST /api/admin/users", () => {
+  e2e("with a user key is 403", async () => {
+    const res = await api("/api/admin/users", {
+      method: "POST",
+      key: config.userKey,
+      body: { name: "Nope", email: "nope@example.com" },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  e2e("with no key is 401", async () => {
+    const res = await api("/api/admin/users", {
+      method: "POST",
+      key: null,
+      body: { name: "Nope", email: "nope@example.com" },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  e2e("with an admin key + a malformed email is 400", async () => {
+    const res = await api("/api/admin/users", {
+      method: "POST",
+      key: config.adminKey,
+      body: { name: "Ada", email: "not-an-email" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  e2e("with an admin key + no name is 400", async () => {
+    const res = await api("/api/admin/users", {
+      method: "POST",
+      key: config.adminKey,
+      body: { email: "ada@example.com" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  e2e("with an admin key + a password under the 12-char floor is 400", async () => {
+    const res = await api("/api/admin/users", {
+      method: "POST",
+      key: config.adminKey,
+      body: { name: "Ada", email: "ada@example.com", password: "short" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  e2e("with an admin key + an email that already exists is 400", async () => {
+    // The calling admin's own address is guaranteed to be taken.
+    const me = await api("/api/me", { key: config.adminKey });
+    const email = (me.body as { user?: { email?: string } }).user?.email;
+    expect(typeof email).toBe("string");
+    const res = await api("/api/admin/users", {
+      method: "POST",
+      key: config.adminKey,
+      body: { name: "Duplicate", email },
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe("PATCH /api/admin/users/:id/role", () => {
   e2e("with an admin key + an invalid role is 400", async () => {
     const { userUserId } = await loadFixtures();
@@ -311,6 +377,51 @@ describe("POST /api/admin/scan (trigger a detection sweep)", () => {
     const res = await api("/api/admin/scan", { method: "POST", key: config.adminKey });
     expectStatus(res, 200);
     expect((res.body as { result?: unknown }).result).toBeDefined();
+  });
+});
+
+/**
+ * Account deletion. The happy path is not exercised for the obvious reason:
+ * it is irreversible and the suite runs against a live dev panel. What the
+ * gates refuse is what matters here.
+ */
+describe("DELETE /api/admin/users/:id", () => {
+  e2e("with a user key is 403", async () => {
+    const { userUserId } = await loadFixtures();
+    const res = await api(`/api/admin/users/${userUserId}`, {
+      method: "DELETE",
+      key: config.userKey,
+    });
+    expect(res.status).toBe(403);
+  });
+
+  e2e("with an admin key targeting the admin's OWN id is 409", async () => {
+    const { adminUserId } = await loadFixtures();
+    const res = await api(`/api/admin/users/${adminUserId}`, {
+      method: "DELETE",
+      key: config.adminKey,
+    });
+    expect(res.status).toBe(409);
+  });
+
+  e2e("with an admin key + an unbanned account is 409", async () => {
+    // The fixture user is a normal active account, so the ban gate is what
+    // refuses this, not the server or link gates.
+    const { userUserId } = await loadFixtures();
+    const res = await api(`/api/admin/users/${userUserId}`, {
+      method: "DELETE",
+      key: config.adminKey,
+    });
+    expectStatus(res, 409);
+    expect(String((res.body as { error?: string }).error)).toContain("Ban");
+  });
+
+  e2e("with an unknown id is 404", async () => {
+    const res = await api(`/api/admin/users/${UNKNOWN_UUID}`, {
+      method: "DELETE",
+      key: config.adminKey,
+    });
+    expect(res.status).toBe(404);
   });
 });
 

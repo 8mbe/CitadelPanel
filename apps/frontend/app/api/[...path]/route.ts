@@ -7,6 +7,8 @@ import { json, parseJsonBody, requireString, toErrorResponse } from "@/lib/serve
 import { sendServerCommand } from "@/lib/server/control-plane/nodes/nodeServerApi";
 import {
   handleAdminCreateServer,
+  handleAdminCreateUser,
+  handleAdminDeleteUser,
   handleBanUser,
   handleGetSuspicious,
   handleGetUser,
@@ -217,7 +219,7 @@ const exact = new Map<string, Partial<Record<string, Handler>>>([
   ["admin/servers", { GET: handleListAdminServers, POST: handleAdminCreateServer }],
   ["admin/blueprints", { GET: handleAdminListBlueprints, POST: handleAdminCreateBlueprint }],
   ["admin/blueprints/import-url", { POST: handleAdminImportBlueprintUrl }],
-  ["admin/users", { GET: handleListUsers }],
+  ["admin/users", { GET: handleListUsers, POST: handleAdminCreateUser }],
   ["admin/api-keys", { GET: handleAdminListApiKeys, POST: handleAdminCreateApiKey }],
   ["admin/audit-logs", { GET: handleListAuditLogs }],
   // Agent callbacks for the direct-console WebSocket (see routes/console.ts).
@@ -333,7 +335,7 @@ const patterns: Array<{
   { pattern: /^admin\/legal\/([^/]+)$/, methods: { PUT: handleUpdateLegal } },
   // Must come after the /role, /ban, /unban patterns so those more specific
   // paths match first rather than being captured by the bare :id GET.
-  { pattern: /^admin\/users\/([^/]+)$/, methods: { GET: handleGetUser } },
+  { pattern: /^admin\/users\/([^/]+)$/, methods: { GET: handleGetUser, DELETE: handleAdminDeleteUser } },
 ];
 
 async function handleConsoleCommand(request: Request, serverId: string): Promise<Response> {

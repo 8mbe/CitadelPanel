@@ -1,9 +1,19 @@
 "use client";
 
 import * as React from "react";
-import { Ban, Search, Shield, ShieldCheck, User as UserIcon } from "lucide-react";
+import {
+  Ban,
+  Search,
+  Shield,
+  ShieldCheck,
+  Trash2,
+  User as UserIcon,
+  UserPlus,
+} from "lucide-react";
 import Link from "next/link";
 
+import { AddUserDialog } from "@/components/admin/add-user-dialog";
+import { DeleteUserDialog } from "@/components/admin/delete-user-dialog";
 import { useSession } from "@/components/session-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,6 +50,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Table,
   TableBody,
   TableCell,
@@ -71,6 +86,7 @@ export default function AdminUsersPage() {
   const [query, setQuery] = React.useState("");
   // Bumped after any mutation to reload the (possibly filtered) list.
   const [refreshKey, setRefreshKey] = React.useState(0);
+  const [addOpen, setAddOpen] = React.useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -124,15 +140,21 @@ export default function AdminUsersPage() {
                   : `${users.length} accounts on the panel. ${admins} with administrator privileges, ${banned} banned.`}
           </p>
         </div>
-        <div className="relative w-full md:w-64">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search email or name…"
-            className="pl-8"
-            aria-label="Search users"
-          />
+        <div className="flex gap-2">
+          <div className="relative w-full md:w-64">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search email or name…"
+              className="pl-8"
+              aria-label="Search users"
+            />
+          </div>
+          <Button onClick={() => setAddOpen(true)}>
+            <UserPlus />
+            Add user
+          </Button>
         </div>
       </div>
 
@@ -244,7 +266,7 @@ export default function AdminUsersPage() {
                         user={user}
                         isSelf={user.id === me.id}
                         onRoleChange={handleRoleChange}
-                        onBanned={reload}
+                        onChanged={reload}
                       />
                     </TableCell>
                   </TableRow>
@@ -254,6 +276,16 @@ export default function AdminUsersPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <AddUserDialog
+        open={addOpen}
+        onOpenChange={(open) => {
+          setAddOpen(open);
+          // Closing is when the new account joins the list, whether the admin
+          // dismissed the credentials panel or cancelled outright.
+          if (!open) reload();
+        }}
+      />
     </>
   );
 }
@@ -262,14 +294,28 @@ function UserActions({
   user,
   isSelf,
   onRoleChange,
-  onBanned,
+  onChanged,
 }: {
   user: ApiUser;
   isSelf: boolean;
   onRoleChange: (userId: string, role: "admin" | "user") => void | Promise<void>;
-  onBanned: () => void | Promise<void>;
+  /** Reload the list: a ban, unban or deletion changes rows we do not patch. */
+  onChanged: () => void | Promise<void>;
 }) {
   const [banOpen, setBanOpen] = React.useState(false);
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
+
+  // Deletion is gated server-side on the same facts; repeated here only to say
+  // *why* the item is unavailable, which a disabled row otherwise leaves the
+  // admin guessing at. Shown on hover rather than as a second line in the menu,
+  // so the reason costs nothing until it is asked for.
+  const blocker = isSelf
+    ? "You cannot delete your own account here. Use your account settings, which ask for your password."
+    : !user.banned
+      ? "Ban the account first. That signs them out and suspends their servers, which is what makes deleting it safe."
+      : user.serverCount > 0
+        ? `Owns ${user.serverCount} server${user.serverCount === 1 ? "" : "s"}. Deleting the account would delete ${user.serverCount === 1 ? "it and its" : "them and their"} data too, so delete ${user.serverCount === 1 ? "it" : "them"} first.`
+        : null;
 
   return (
     <>
@@ -302,7 +348,7 @@ function UserActions({
           )}
           <DropdownMenuSeparator />
           {user.banned ? (
-            <UnbanItem userId={user.id} onDone={onBanned} />
+            <UnbanItem userId={user.id} onDone={onChanged} />
           ) : (
             <DropdownMenuItem
               disabled={isSelf}
@@ -312,6 +358,30 @@ function UserActions({
               Ban user…
             </DropdownMenuItem>
           )}
+          <DropdownMenuSeparator />
+          {blocker ? (
+            // A disabled item is `pointer-events-none`, so it can never be
+            // hovered itself: the tooltip hangs off a plain wrapper, which is
+            // what the cursor actually lands on. Only the blocked item is
+            // wrapped, so the actionable one stays a direct menu child.
+            <Tooltip>
+              <TooltipTrigger render={<div />} delay={150}>
+                <DropdownMenuItem variant="destructive" disabled>
+                  <Trash2 />
+                  Delete account…
+                </DropdownMenuItem>
+              </TooltipTrigger>
+              <TooltipContent side="left">{blocker}</TooltipContent>
+            </Tooltip>
+          ) : (
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={() => setDeleteOpen(true)}
+            >
+              <Trash2 />
+              Delete account…
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -319,7 +389,14 @@ function UserActions({
         user={user}
         open={banOpen}
         onOpenChange={setBanOpen}
-        onDone={onBanned}
+        onDone={onChanged}
+      />
+
+      <DeleteUserDialog
+        user={user}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        onDeleted={onChanged}
       />
     </>
   );

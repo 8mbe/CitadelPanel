@@ -113,6 +113,14 @@ Existing docs:
   constant), the registration toggle, SEO/`robots.txt`/`sitemap.xml` with
   indexing off by default, the Plausible/GA analytics toggle, and the error
   pages.
+- `docs/user-accounts.md`: the admin side of an account's life. Invites
+  ("Add user"): why the invite route bypasses the registration gate rather
+  than special-casing it, why the password is optional and the length floor is
+  re-enforced here, why an invited account starts email-verified, and why the
+  invitation email never carries the password. Deletion: why the admin route
+  requires an active ban first, why both delete paths demand zero owned
+  servers, the two references the delete has to clean up itself, and why the
+  audit trail outlives the account.
 - `docs/backups.md`: restic snapshots to S3. The two scopes (owner-triggered
   server *files*, admin-triggered per-node *databases*) and why the credential
   forces that split, why restic in a throwaway container, the FIFO snapshot

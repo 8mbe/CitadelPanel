@@ -1697,6 +1697,59 @@ export async function adminListUsers(q?: string): Promise<ApiUser[]> {
   });
 }
 
+/** What POST /api/admin/users reports back about an invited account. */
+export interface AdminInvitedUser {
+  id: string;
+  email: string;
+  name: string;
+  /**
+   * The generated password, shown exactly once. Null when the admin supplied
+   * one themselves (they already have it, so it is never sent back).
+   */
+  password: string | null;
+  /**
+   * True when the invitation email actually went out. False means mail is not
+   * configured, or the provider rejected it: the admin has to pass the sign-in
+   * details along by hand.
+   */
+  emailSent: boolean;
+}
+
+/**
+ * POST /api/admin/users. Creates an account for someone else.
+ *
+ * Leave `password` blank to have the panel generate one; it comes back in
+ * `password` and is never retrievable afterwards. The invited person is emailed
+ * that an account exists (never the password) when mail is configured.
+ */
+export async function adminCreateUser(input: {
+  name: string;
+  email: string;
+  password?: string;
+}): Promise<AdminInvitedUser> {
+  const data = await request<{
+    user: { id: string; email: string; name: string };
+    password: string | null;
+    emailSent: boolean;
+  }>("/api/admin/users", {
+    method: "POST",
+    body: JSON.stringify({
+      name: input.name,
+      email: input.email,
+      // Blank means "generate one", which the route treats the same as absent.
+      password: input.password && input.password.length > 0 ? input.password : undefined,
+    }),
+  });
+
+  return {
+    id: data.user.id,
+    email: data.user.email,
+    name: data.user.name,
+    password: data.password,
+    emailSent: data.emailSent,
+  };
+}
+
 /**
  * PATCH /api/admin/users/:id/role. Promotes or demotes an account.
  *
@@ -1762,6 +1815,17 @@ export interface AdminUserDetail {
   banReason: string | null;
   banExpires: string | null;
   servers: ApiServerSummary[];
+}
+
+/**
+ * DELETE /api/admin/users/:id. Deletes an account permanently.
+ *
+ * Only allowed for an account that is currently banned and owns no servers;
+ * the route explains which gate failed, so surface its message rather than a
+ * generic one. Irreversible.
+ */
+export async function adminDeleteUser(userId: string): Promise<void> {
+  await request(`/api/admin/users/${userId}`, { method: "DELETE" });
 }
 
 /** GET /api/admin/users/:id. A single account's profile plus owned servers. */
