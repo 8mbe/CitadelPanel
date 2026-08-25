@@ -14,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 
-import type { AdminSettings } from "@/lib/api";
+import { toServerView, type AdminSettings, type ApiServerSummary } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   CardContent,
@@ -49,14 +49,21 @@ interface Remaining {
 export function FinishStep({
   settings,
   nodeName,
-  serverName,
-  serverId,
+  server,
 }: {
   settings: AdminSettings;
   nodeName: string | null;
-  serverName: string | null;
-  serverId: string | null;
+  /** The first server, if one was built. Null when step 6 was skipped. */
+  server: ApiServerSummary | null;
 }) {
+  const view = server ? toServerView(server) : null;
+  const running = view?.status === "running";
+  const address =
+    view && view.primaryPort > 0
+      ? view.nodeHostname
+        ? `${view.nodeHostname}:${view.primaryPort}`
+        : `port ${view.primaryPort}`
+      : null;
   const done: { label: string; ok: boolean }[] = [
     { label: `Named "${settings.branding.siteName}"`, ok: true },
     { label: `Timestamps in ${settings.timezone}`, ok: true },
@@ -82,7 +89,16 @@ export function FinishStep({
       label: nodeName ? `Node "${nodeName}" registered` : "No node registered yet",
       ok: nodeName != null,
     },
-    ...(serverName ? [{ label: `Server "${serverName}" created`, ok: true }] : []),
+    ...(server
+      ? [
+          {
+            label: running
+              ? `Server "${server.name}" is running${address ? ` at ${address}` : ""}`
+              : `Server "${server.name}" created, currently ${server.status}`,
+            ok: running,
+          },
+        ]
+      : []),
   ];
 
   const remaining: Remaining[] = [];
@@ -222,10 +238,10 @@ export function FinishStep({
         <div className="flex flex-wrap items-center gap-2">
           <Button
             className="ml-auto"
-            render={<Link href={serverId ? `/servers/${serverId}/console` : "/"} />}
+            render={<Link href={server ? `/servers/${server.id}/console` : "/"} />}
             nativeButton={false}
           >
-            {serverId ? "Open your server" : "Go to the panel"}
+            {server ? "Open the console" : "Go to the panel"}
             <ArrowRight />
           </Button>
         </div>

@@ -78,8 +78,10 @@ Existing docs:
 - `docs/server-lifecycle.md`: provisioning, the power actions and the stored
   status. Why status is a record and the node is the truth, why a server is
   built *after* the create request answers (and what the `installing` gate and
-  the admin-only install log are for), and how a container that vanished from
-  its node is rebuilt on the next start instead of 404ing forever.
+  the admin-only install log are for), why `startWhenBuilt` starts the first
+  server from the provision task rather than the browser, and how a container
+  that vanished from its node is rebuilt on the next start instead of 404ing
+  forever.
 - `docs/ports.md`: published ports as identity mappings (host N → container
   N) claimed on TCP and UDP together. Per-node port pools, why allocation is
   random and nobody picks a number, the `SERVER_PORT` env sync, and the owner's

@@ -320,6 +320,14 @@ export interface CreateServerPayload {
   diskLimitMb: number;
   /** Optional explicit node; the scheduler picks one when omitted. */
   nodeId?: string;
+  /**
+   * Start the server once it is built, rather than leaving it stopped.
+   *
+   * Set by the setup wizard so the operator's first server is running by the
+   * time they reach the panel. The start happens on the server, after the
+   * build, so it still happens if the browser has moved on.
+   */
+  startWhenBuilt?: boolean;
 }
 
 /** POST /api/admin/servers. Provisions a server for a user (admin only). */

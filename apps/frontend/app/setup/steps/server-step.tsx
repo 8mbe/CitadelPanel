@@ -154,6 +154,10 @@ export function ServerStep({
         memoryLimitMb: Math.round(Number(memoryGb) * 1024),
         diskLimitMb: Math.round(Number(diskGb) * 1024),
         ...(nodeId ? { nodeId } : {}),
+        // Start it as soon as it is built. Asked for at create time rather than
+        // from this page, so it still happens when the operator takes the
+        // wizard up on "you do not have to wait here".
+        startWhenBuilt: true,
       });
       setCreated(server);
     } catch (err) {
@@ -209,12 +213,10 @@ export function ServerStep({
   }
 
   if (created) {
-    return (
-      <InstallProgress
-        server={created}
-        onFinish={() => onFinish(created)}
-      />
-    );
+    // `onFinish` takes whatever the install step ended up with rather than the
+    // create-time summary: ports are allocated during the build, so the row we
+    // got back from create has none.
+    return <InstallProgress server={created} onFinish={onFinish} />;
   }
 
   return (

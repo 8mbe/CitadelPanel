@@ -282,12 +282,49 @@ panel. So the step polls `GET /api/servers/:id/install-log` every two seconds
 and shows named stages, derived from the panel's own `[panel]` log lines:
 
 ```
-Allocating ports  ->  Running the install script  ->  Creating the container  ->  Ready to start
+Allocating ports -> Running the install script -> Creating the container
+  -> Container built -> Starting the server
 ```
 
 Nothing here blocks: the build runs server-side whether or not the page is open,
 so "Finish setup" stays available throughout. A dropped poll is reported as
 "not getting updates" and retried, not as a failed build, because it is not one.
+
+### The server starts itself
+
+The wizard ends with the server **running**, not merely built. The create
+request sets `startWhenBuilt` (see
+[server-lifecycle.md](server-lifecycle.md#starting-it-straight-away-startwhenbuilt)),
+so the start is part of the provision task rather than something this page does.
+
+That placement is the whole point. This step tells the operator they do not have
+to wait, and means it; a browser-side start would then not happen for anyone who
+took it up on that, and they would arrive at the panel holding a stopped
+container. Asking for it at create time means the server is running by the time
+they get there either way.
+
+So the last stage is *observed*, not driven. The step watches the reported
+status and stops polling once it settles on `running` or `error`, which is why
+it keeps polling past the end of the build: `provisioning` is already false
+while the start is happening.
+
+Three outcomes, told apart because they need different things from the operator:
+
+- **Running.** The connect address (the node's hostname and the allocated port)
+  is shown with a copy button. The copy says the game process is still booting,
+  because `docker start` returning is not the same as a game accepting
+  connections, and a first join attempt is often refused.
+- **Built but did not start.** The container is on the node and intact, so this
+  is reported as a start failure rather than a build failure, and the retry is
+  "Start it now" rather than a reinstall.
+- **Built, and the start never arrived.** If the status is still `stopped` 45
+  seconds after the build finished, the step says so instead of spinning
+  forever, and offers the same manual start. An indefinite "starting…" is the
+  state this whole screen exists to avoid.
+
+The connect address needs a second read (`GET /api/servers/:id`) because ports
+are allocated *during* the build: the row returned by the create request has
+none yet.
 
 The step degrades in both directions it can. With no node (step 5 skipped) it
 renders an empty state explaining that a server needs somewhere to run, offering
@@ -305,8 +342,9 @@ redirecting to `/setup`.
 The endpoint is idempotent: calling it on an already-completed install returns
 the existing timestamp rather than refusing, so a double-submit is not an error.
 
-The final screen then lists what the install ended up with, and what was left
-undone, each with a link. Backups, the legal pages, theming, the AI helper and
+The final screen then lists what the install ended up with, including whether
+the server is running and at what address, and what was left undone, each with a
+link. Backups, the legal pages, theming, the AI helper and
 search indexing are all listed there whether or not the operator asked about
 them, because they are all easy to postpone and easy to forget forever.
 
@@ -374,8 +412,10 @@ Routes the wizard borrows from the admin surface:
 | POST | `/api/admin/nodes/probe` | Test an agent without persisting anything |
 | POST | `/api/admin/nodes` | Register the node |
 | POST | `/api/admin/nodes/:id/ports` | Reserve the first port range |
-| POST | `/api/admin/servers` | Provision the first server |
-| GET | `/api/servers/:id/install-log` | Poll the build |
+| POST | `/api/admin/servers` | Provision the first server (with `startWhenBuilt`) |
+| GET | `/api/servers/:id/install-log` | Poll the build and the first start |
+| GET | `/api/servers/:id` | Read the allocated port for the connect address |
+| POST | `/api/servers/:id/start` | Retry the start by hand when it failed |
 
 `/api/setup/admin` is the one unauthenticated mutating endpoint. It is gated on
 the admin count, not the `completedAt` latch alone, because the latch is
@@ -415,8 +455,9 @@ to one means checking all four are still answered:
 
 - **Loading.** Under a second, nothing. Saves and probes put a spinner in the
   button that caused them. Whole-panel reads (settings, blueprints, the port
-  pool) use skeletons. The one operation that runs for minutes, the server
-  build, gets named stages and an elapsed clock rather than a spinner.
+  pool) use skeletons. The one operation that runs for minutes, the server build
+  and its first start, gets named stages and an elapsed clock rather than a
+  spinner, and a bounded wait rather than an open-ended one.
 - **Error.** Always inline, next to the control that caused it, with a retry
   where repeating is safe. Never a toast: every failure here is correctable by
   the operator, and a toast can scroll away unseen. No raw backend text reaches
@@ -424,7 +465,8 @@ to one means checking all four are still answered:
 - **Empty.** The "no node" and "no blueprints" cases in step 6 are real empty
   states with an explanation and an action, not a disabled dropdown.
 - **Success.** Every action confirms in place: a green probe result, the
-  reserved ranges as badges, "sent to <address>", the registered-node view.
+  reserved ranges as badges, "sent to <address>", the registered-node view, the
+  running server's connect address.
 
 Disabled primary buttons always name the first thing that is missing
 (`BlockingIssues`). A greyed-out control with no explanation is indistinguishable

@@ -64,6 +64,38 @@ The route also hands the task to Next's `after()`. The task is already running;
 that call only stops the runtime from considering the request's work finished
 when the response goes out.
 
+### Starting it straight away: `startWhenBuilt`
+
+A build normally ends with the server `stopped`, and somebody presses Start.
+`POST /api/admin/servers` accepts `startWhenBuilt: true` to have the provision
+carry on into a first start instead.
+
+It is opt-in, and read with a strict `=== true`, because it is the wrong default
+for ordinary provisioning: an admin building servers for other people should not
+have them all boot and start consuming CPU the moment they exist. The setup
+wizard is the only caller that sets it, because a wizard that ends on a
+built-but-stopped container leaves the operator one manual step short of knowing
+whether any of this works (see [first-time-setup.md](first-time-setup.md)).
+
+Two things about how it is wired:
+
+- **It runs on the server, not in the browser.** The wizard invites the operator
+  to stop watching and finish setup, so a browser-side start would simply not
+  happen for anyone who took the invitation. Because the start is inside the
+  provision task, the `after()` handoff above keeps the runtime alive through it
+  too.
+- **It goes through `startServer`, not straight at the container.** The first
+  start is therefore the same start as every other one: it runs the plugin
+  auto-updater before the game process boots, and it records the `server.start`
+  audit entry. Starting the container directly would skip both, and a privileged
+  action missing from the audit log is exactly what must not happen.
+
+A failed first start is reported as its own thing. It sits outside the block
+that owns the build, writes `The server was built but did not start: …` to the
+install log, and leaves the container on the node. That distinction is the point:
+a build that failed left nothing to inspect and has to be reinstalled, while a
+container that refused to boot is intact and retrying the start is the whole fix.
+
 ### A provision that loses its server
 
 An admin can delete a server during the minutes a provision takes. Left alone,

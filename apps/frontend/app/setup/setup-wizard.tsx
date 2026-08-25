@@ -185,8 +185,7 @@ export default function SetupWizard({
             <FinishStep
               settings={settings}
               nodeName={node?.name ?? null}
-              serverName={server?.name ?? null}
-              serverId={server?.id ?? null}
+              server={server}
             />
           </Card>
         </div>

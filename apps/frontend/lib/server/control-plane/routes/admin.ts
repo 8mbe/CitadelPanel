@@ -291,6 +291,11 @@ export async function handleAdminCreateServer(request: Request): Promise<Respons
   // No port input: the panel draws the server's ports at random from the target
   // node's pool. See `allocateHostPort`.
 
+  // Opt-in, strict `=== true`: a missing or malformed value must never boot a
+  // server the caller did not ask to boot. The setup wizard is the only caller
+  // that sets it.
+  const startWhenBuilt = body.startWhenBuilt === true;
+
   const envInput =
     typeof body.env === "object" && body.env !== null && !Array.isArray(body.env)
       ? (body.env as Record<string, unknown>)
@@ -314,6 +319,7 @@ export async function handleAdminCreateServer(request: Request): Promise<Respons
     diskLimitMb,
     env: envInput,
     nodeId,
+    startWhenBuilt,
   });
 
   // The provisioning task is already running; this tells the Next runtime not

@@ -164,51 +164,48 @@ export function BlockingIssues({ issues }: { issues: string[] }) {
 }
 
 /**
- * A secret the panel will never show again, with copy-to-clipboard.
+ * A value the operator has to get out of the browser and into something else,
+ * with copy-to-clipboard.
  *
- * The copy button confirms in place (the icon becomes a tick) because the
- * clipboard is invisible: without that, the only way to know the copy worked is
- * to paste it somewhere, and by then the wizard has moved on.
+ * The button confirms in place (the icon becomes a tick) because the clipboard
+ * is invisible: without that, the only way to know the copy worked is to paste
+ * it somewhere, and by then the wizard has moved on. A denied clipboard says so
+ * rather than leaving a button that silently does nothing.
  */
-export function GeneratedToken({
-  token,
-  children,
+export function CopyRow({
+  value,
+  label,
 }: {
-  token: string;
-  children: React.ReactNode;
+  value: string;
+  /** Accessible name for the copy button, e.g. "Copy the agent token". */
+  label: string;
 }) {
   const [copied, setCopied] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(token);
+      await navigator.clipboard.writeText(value);
       setFailed(false);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Clipboard access can be denied outright (insecure origin, permissions).
-      // Say so, rather than leaving a button that silently does nothing.
       setFailed(true);
     }
   };
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
-      <div className="flex items-start gap-2 text-sm">
-        <KeyRound className="mt-0.5 size-4 shrink-0 text-amber-500" />
-        <span className="text-muted-foreground">{children}</span>
-      </div>
+    <div className="flex flex-col gap-1">
       <div className="flex items-center gap-2">
         <code className="flex-1 overflow-x-auto rounded-md bg-muted px-2 py-1.5 font-mono text-xs">
-          {token}
+          {value}
         </code>
         <Button
           type="button"
           size="icon"
           variant="outline"
           onClick={copy}
-          aria-label="Copy to clipboard"
+          aria-label={label}
         >
           {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
         </Button>
@@ -219,6 +216,25 @@ export function GeneratedToken({
           manually.
         </p>
       )}
+    </div>
+  );
+}
+
+/** A secret the panel will never show again, with copy-to-clipboard. */
+export function GeneratedToken({
+  token,
+  children,
+}: {
+  token: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
+      <div className="flex items-start gap-2 text-sm">
+        <KeyRound className="mt-0.5 size-4 shrink-0 text-amber-500" />
+        <span className="text-muted-foreground">{children}</span>
+      </div>
+      <CopyRow value={token} label="Copy the agent token" />
     </div>
   );
 }
