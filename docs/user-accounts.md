@@ -130,10 +130,12 @@ and it splits one irreversible decision into two audited entries
 (`user.ban`, then `user.delete`).
 
 The UI follows the same shape: the delete item in the row menu is disabled
-until the account is banned and owns nothing, and says which of the two is
-missing rather than leaving a greyed-out row unexplained. The dialog does not
-re-check the rules; it renders whatever the route refuses with, so the reason
-shown is the reason applied.
+until the account is banned and owns nothing, and hovering it explains which
+gate is in the way rather than leaving a greyed-out row unexplained. The
+tooltip hangs off a wrapper element, because a disabled menu item is
+`pointer-events-none` and can never be hovered itself. The confirmation dialog
+does not re-check the rules; it renders whatever the route refuses with, so the
+reason shown is the reason applied.
 
 An **expired** ban does not count. The sign-in hook clears lapsed bans lazily
 and the list already renders such an account as active, so treating it as

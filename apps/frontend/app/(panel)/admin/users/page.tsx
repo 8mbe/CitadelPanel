@@ -50,6 +50,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Table,
   TableBody,
   TableCell,
@@ -300,15 +305,16 @@ function UserActions({
   const [banOpen, setBanOpen] = React.useState(false);
   const [deleteOpen, setDeleteOpen] = React.useState(false);
 
-  // Deletion is gated server-side on the same two facts; repeated here only to
-  // say *why* the item is unavailable, which a disabled row otherwise leaves
-  // the admin guessing at.
+  // Deletion is gated server-side on the same facts; repeated here only to say
+  // *why* the item is unavailable, which a disabled row otherwise leaves the
+  // admin guessing at. Shown on hover rather than as a second line in the menu,
+  // so the reason costs nothing until it is asked for.
   const blocker = isSelf
-    ? "Use your account settings"
+    ? "You cannot delete your own account here. Use your account settings, which ask for your password."
     : !user.banned
-      ? "Ban the account first"
+      ? "Ban the account first. That signs them out and suspends their servers, which is what makes deleting it safe."
       : user.serverCount > 0
-        ? `Owns ${user.serverCount} server${user.serverCount === 1 ? "" : "s"}`
+        ? `Owns ${user.serverCount} server${user.serverCount === 1 ? "" : "s"}. Deleting the account would delete ${user.serverCount === 1 ? "it and its" : "them and their"} data too, so delete ${user.serverCount === 1 ? "it" : "them"} first.`
         : null;
 
   return (
@@ -353,19 +359,29 @@ function UserActions({
             </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            variant="destructive"
-            disabled={blocker !== null}
-            onClick={() => setDeleteOpen(true)}
-          >
-            <Trash2 />
-            <span className="flex flex-col">
+          {blocker ? (
+            // A disabled item is `pointer-events-none`, so it can never be
+            // hovered itself: the tooltip hangs off a plain wrapper, which is
+            // what the cursor actually lands on. Only the blocked item is
+            // wrapped, so the actionable one stays a direct menu child.
+            <Tooltip>
+              <TooltipTrigger render={<div />} delay={150}>
+                <DropdownMenuItem variant="destructive" disabled>
+                  <Trash2 />
+                  Delete account…
+                </DropdownMenuItem>
+              </TooltipTrigger>
+              <TooltipContent side="left">{blocker}</TooltipContent>
+            </Tooltip>
+          ) : (
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={() => setDeleteOpen(true)}
+            >
+              <Trash2 />
               Delete account…
-              {blocker && (
-                <span className="text-xs text-muted-foreground">{blocker}</span>
-              )}
-            </span>
-          </DropdownMenuItem>
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 
