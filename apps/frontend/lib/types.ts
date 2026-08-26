@@ -142,6 +142,12 @@ export interface NodeDatabaseView {
   error: string | null;
   /** True once the panel holds an admin credential for this database. */
   hasCredentials: boolean;
+  /**
+   * The address the panel provisions against, when it has one. Usually the
+   * container above; it can also be a database this panel did not create, from
+   * the register-node form, which is the case setup must not overwrite blindly.
+   */
+  configured: { host: string; port: number } | null;
   /** Server databases living here: what a stop takes offline. */
   databaseCount: number;
 }

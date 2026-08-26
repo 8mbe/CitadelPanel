@@ -18,7 +18,7 @@ Setup is a six-step wizard at `/setup`:
 | 2 | Panel identity | `branding`, `timezone` | yes (both pre-filled) |
 | 3 | Access | `registration`, `captcha` | no |
 | 4 | Email | `mail`, `verification` | no |
-| 5 | First node | a `nodes` row + its port pool | no |
+| 5 | First node | a `nodes` row + its port pool (+ optional database) | no |
 | 6 | First server | a `servers` row, built live | no |
 
 The wizard is server-gated: Next.js checks database-backed setup status before
@@ -243,6 +243,27 @@ agent to confirm every port is actually free on the host. That means it needs a
 **reachable** agent: when the node was registered offline, the step says so and
 points at the admin area rather than showing a form that cannot work.
 
+### Then, optionally, a database
+
+Under the port pool the step offers one button that gives the node its own
+MariaDB (see [node-database.md](node-database.md)). Unlike the pool, this is
+genuinely optional: a node without a database hosts servers fine, it just cannot
+hand them a MySQL database. Nothing blocks the wizard, and it can be done later
+from `/admin/nodes`.
+
+It is here anyway because this is the moment the operator is thinking about what
+the node can do. The failure mode without it is silent: months later, a plugin
+needs MySQL, a server cannot have one, and nobody knew the feature existed.
+
+Two states the block reads off the node instead of offering the button:
+
+- The agent is unreachable, so no container can be created; it points at the
+  admin area, as the port pool does.
+- The node was registered *with* an existing database's credentials. The address
+  is confirmed back rather than offering to create a second one, because creating
+  one would repoint the node at a new, empty database. (The admin page has the
+  confirmation flow for the rarer case where that database is really gone.)
+
 ### The rest of the node form
 
 - If no token is supplied, one is **generated and shown once**. The operator
@@ -251,11 +272,11 @@ points at the admin area rather than showing a form that cannot work.
 - CPU and memory are probed from the agent automatically when it is reachable,
   and fall back to defaults when it is not, so an offline node still registers.
   Only disk is asked for.
-- The optional shared database server (`dbAdminHost` and friends, see
-  `docs/database-explorer.md`) is behind a switch. Most first installs do not
-  need one, and four more credential fields on the first node form is where
-  operators give up. The three credential fields are all-or-nothing; the backend
-  rejects a partial triple.
+- The shared-database credential fields (`dbAdminHost` and friends) are behind a
+  switch, and are no longer the normal way to get a database: they are for
+  *adopting* a MariaDB this panel did not create. The button after registration
+  is the normal way. The three fields are all-or-nothing; the backend rejects a
+  partial triple.
 
 ## Step 6: First server
 

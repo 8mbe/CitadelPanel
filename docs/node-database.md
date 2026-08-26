@@ -20,6 +20,11 @@ Admin → Nodes → *(a node)* → **Shared database**:
   enables the Databases tab for every server on the node.
 - **Start** / **Stop**: the container's power buttons.
 
+The first-time-setup wizard offers the same button right after the first node is
+registered, next to its port pool (see
+[first-time-setup.md](first-time-setup.md)), so a fresh install does not have to
+discover the feature later.
+
 `bun run setup-db` still exists, as a thin CLI over the same functions
 (`apps/backend/src/docker/nodeDb.ts`), for bringing a node up before it is
 registered. The register-node form's database fields also remain, but they are
@@ -59,6 +64,21 @@ So the panel generates the password, writes it encrypted, and only then calls th
 agent. Retrying presents the **same** password, and `setUpNodeDb` treats a
 container that accepts it as success. The whole operation is idempotent as a
 result: pressing the button again after a timeout finishes the job.
+
+### The other refusal: a database this agent does not run
+
+If the node already has a *configured address* (`db_admin_host`) and this agent
+has no container, setup refuses. That state means the register-node form was
+given an existing MariaDB's credentials: creating a container would take that
+stored credential, use it for a brand new empty database, and overwrite the
+address, quietly cutting every server on the node off from the data it was
+using.
+
+It is a confirmation rather than a hard refusal, because the same state also
+covers "our container was removed", which is a real thing to want to fix. The
+admin card names the address being replaced and asks; only then does it send
+`replaceEndpoint: true`. The wizard never sends it: there, the state simply means
+the operator typed those credentials a minute ago.
 
 A container that exists and *rejects* the stored password is a 409, not a
 recreate. It means another panel install (or a hand-run of the script) owns this

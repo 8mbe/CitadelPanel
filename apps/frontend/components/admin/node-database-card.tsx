@@ -60,6 +60,7 @@ export function NodeDatabaseCard({
   const [action, setAction] = React.useState<"setup" | "start" | "stop" | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [stopOpen, setStopOpen] = React.useState(false);
+  const [replaceOpen, setReplaceOpen] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -76,7 +77,11 @@ export function NodeDatabaseCard({
   }, [nodeId]);
 
   React.useEffect(() => {
-    void load();
+    // Wrapped rather than called bare, matching the setup wizard's blocks: the
+    // read is an external fetch, so its state updates belong after the await.
+    (async () => {
+      await load();
+    })();
   }, [load]);
 
   /**
@@ -107,6 +112,12 @@ export function NodeDatabaseCard({
   const status = view?.status ?? null;
   const running = status?.state === "running";
   const busy = action !== null;
+
+  // The node points at a database this agent does not run: the register-node
+  // form was given an existing MariaDB's credentials (or our container was
+  // removed). Creating one here would silently repoint the node at a new empty
+  // database, so it takes a confirmation that names the address being replaced.
+  const configuredElsewhere = Boolean(view?.configured && !status?.exists);
 
   return (
     <Card>
@@ -181,6 +192,16 @@ export function NodeDatabaseCard({
               </Callout>
             )}
           </>
+        ) : configuredElsewhere ? (
+          <Callout tone="warning">
+            This node is configured to use a database at{" "}
+            <Code>
+              {view?.configured?.host}:{view?.configured?.port}
+            </Code>
+            , which this agent does not run. That is expected if it was entered
+            when the node was registered. Creating one here would point the node
+            at a new, empty database instead.
+          </Callout>
         ) : (
           <p className="text-sm text-muted-foreground">
             No database on this node yet. Setting one up pulls MariaDB, creates
@@ -198,11 +219,20 @@ export function NodeDatabaseCard({
             <Button
               type="button"
               size="sm"
+              variant={configuredElsewhere ? "outline" : "default"}
               disabled={busy || loading || view?.reachable === false}
-              onClick={() => run("setup", () => adminSetUpNodeDatabase(nodeId))}
+              onClick={() =>
+                configuredElsewhere
+                  ? setReplaceOpen(true)
+                  : run("setup", () => adminSetUpNodeDatabase(nodeId))
+              }
             >
               {action === "setup" ? <Spinner /> : <Database />}
-              {action === "setup" ? "Setting up…" : "Set up database"}
+              {action === "setup"
+                ? "Setting up…"
+                : configuredElsewhere
+                  ? "Create one here instead"
+                  : "Set up database"}
             </Button>
           ) : running ? (
             <Button
@@ -237,6 +267,45 @@ export function NodeDatabaseCard({
           </Button>
         </div>
       </CardContent>
+
+      {/* Replacing a configured address is destructive in a way that is easy to
+        miss, so the dialog states what stops working rather than just asking. */}
+      <Dialog open={replaceOpen} onOpenChange={setReplaceOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Point this node at a new database?</DialogTitle>
+            <DialogDescription>
+              The node currently uses {view?.configured?.host}:
+              {view?.configured?.port}. Creating a database here replaces that
+              address, so any server still using the old one loses access to its
+              data. Do this only if that database is gone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setReplaceOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={action === "setup"}
+              onClick={async () => {
+                await run("setup", () =>
+                  adminSetUpNodeDatabase(nodeId, { replaceEndpoint: true }),
+                );
+                setReplaceOpen(false);
+              }}
+            >
+              {action === "setup" && <Spinner />}
+              Create and replace
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Stop confirms, start does not: stopping breaks every live game server
         that is talking to this database, and the count is the thing worth

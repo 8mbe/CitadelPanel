@@ -2118,12 +2118,19 @@ export async function adminGetNodeDatabase(
  * Slow on a cold node: the agent pulls the image and waits out MariaDB's
  * first-boot initialisation. Safe to retry, because the panel presents the same
  * generated password each time (see `routes/nodeDatabase.ts`).
+ *
+ * `replaceEndpoint` confirms the one case the server refuses by default: the
+ * node is configured against a database this agent does not run, so creating a
+ * container would point it at a new empty one. Only send it from a UI that
+ * showed the operator the address being replaced.
  */
 export async function adminSetUpNodeDatabase(
   nodeId: string,
+  options: { replaceEndpoint?: boolean } = {},
 ): Promise<NodeDatabaseView> {
   return request<NodeDatabaseView>(`/api/admin/nodes/${nodeId}/database/setup`, {
     method: "POST",
+    body: JSON.stringify({ replaceEndpoint: options.replaceEndpoint === true }),
   });
 }
 

@@ -19,7 +19,13 @@
 
 import { requireAdmin } from "../auth/middleware";
 import { sql } from "../db/client";
-import { conflict, json, notFound, requireUuidParam } from "../lib/http";
+import {
+  conflict,
+  json,
+  notFound,
+  parseJsonBody,
+  requireUuidParam,
+} from "../lib/http";
 import { generateStrongPassword } from "../lib/crypto";
 import {
   getNodeDbStatus,
@@ -53,6 +59,14 @@ interface NodeDatabaseView {
   error: string | null;
   /** True once the panel holds an admin credential for this node's database. */
   hasCredentials: boolean;
+  /**
+   * The address the panel is configured to provision against, when there is one.
+   *
+   * Normally the container the agent reports. It can also be a database this
+   * panel did not create, entered on the register-node form; that is the case the
+   * setup button must not silently overwrite, so the UI needs to see it.
+   */
+  configured: { host: string; port: number } | null;
   /** Server databases provisioned here. What a Stop takes offline. */
   databaseCount: number;
 }
@@ -95,6 +109,7 @@ export async function handleGetNodeDatabase(
 
   const node = await requireNodeWithSecrets(id);
   const hasCredentials = Boolean(node.db.user && node.db.password);
+  const configured = configuredEndpoint(node);
   const databaseCount = await countServerDatabases(id);
 
   try {
@@ -104,6 +119,7 @@ export async function handleGetNodeDatabase(
       status,
       error: null,
       hasCredentials,
+      configured,
       databaseCount,
     } satisfies NodeDatabaseView);
   } catch (error) {
@@ -112,9 +128,17 @@ export async function handleGetNodeDatabase(
       status: null,
       error: error instanceof Error ? error.message : "The node did not answer.",
       hasCredentials,
+      configured,
       databaseCount,
     } satisfies NodeDatabaseView);
   }
+}
+
+/** The stored provisioning address, or null when the node has none. */
+function configuredEndpoint(node: {
+  db: { host?: string | null; port?: number | null };
+}): { host: string; port: number } | null {
+  return node.db.host ? { host: node.db.host, port: node.db.port ?? 3306 } : null;
 }
 
 /**
@@ -144,6 +168,31 @@ export async function handleSetUpNodeDatabase(
   const id = requireUuidParam(nodeId, "nodeId");
 
   const node = await requireNodeWithSecrets(id);
+  const body = await parseJsonBody(request).catch(() => ({}) as Record<string, unknown>);
+  const replaceEndpoint = body.replaceEndpoint === true;
+
+  // Guard the one case where creating a container is the wrong answer: the node
+  // is already pointed at a database this agent does not run. That happens when
+  // the register-node form was given an existing MariaDB's credentials. Creating
+  // a container here would take the stored credential, use it for a brand new
+  // empty database, and overwrite the address, quietly cutting every server on
+  // the node off from the database it was actually using.
+  //
+  // The same state also covers "our container was removed", which is a real
+  // thing to want to fix, so this is a confirmation rather than a refusal: the
+  // UI shows the configured address and asks before sending `replaceEndpoint`.
+  if (node.db.host && !replaceEndpoint) {
+    const status = await getNodeDbStatus(id, node.db.password ?? undefined);
+    if (!status.exists) {
+      throw conflict(
+        `This node is already configured to use a database at ` +
+          `${node.db.host}:${node.db.port ?? 3306}, which this agent does not ` +
+          `run (no "${status.containerName}" container here). Creating one would ` +
+          `point the node at a new, empty database instead. Confirm the ` +
+          `replacement if that is what you want.`,
+      );
+    }
+  }
 
   // Reuse the stored credential when there is one; only mint a password the
   // first time. See the note above on why this must not be regenerated.
@@ -177,6 +226,7 @@ export async function handleSetUpNodeDatabase(
       // Whether this run minted the credential or reused the stored one. Never
       // the credential itself.
       credentialCreated: created,
+      ...(replaceEndpoint ? { replacedEndpoint: true } : {}),
     },
   });
 
@@ -266,6 +316,7 @@ async function viewAfterAction(
     status,
     error: null,
     hasCredentials: Boolean(node?.db.user && node?.db.password),
+    configured: node ? configuredEndpoint(node) : null,
     databaseCount: await countServerDatabases(nodeId),
   };
 }
