@@ -231,9 +231,19 @@ export function NodeDatabaseCard({
               running &&
               !status.ready && (
                 <Callout tone="warning">
-                  The container is running but is not accepting connections yet.
-                  MariaDB&apos;s first boot initialises its system tables, which
-                  takes about 20 seconds.
+                  {status.probe === null ? (
+                    <>
+                      The container is running, but the panel has no credential to
+                      check it with, so whether it actually works is unknown.
+                      Servers here cannot be given a database until it does.
+                    </>
+                  ) : (
+                    <>
+                      The container is running but is not accepting connections
+                      yet. MariaDB&apos;s first boot initialises its system
+                      tables, which takes about 20 seconds.
+                    </>
+                  )}
                 </Callout>
               )
             )}
@@ -490,10 +500,17 @@ function StatusBadge({
       </Badge>
     );
   }
+  // A refused credential is not "starting". Saying so left this badge amber
+  // forever on a database that was up and denying access.
+  if (view.status.probe === "denied") {
+    return <Badge variant="destructive">Credential refused</Badge>;
+  }
   if (!view.status.ready) {
     return (
       <Badge variant="outline" className="bg-amber-500/10 text-amber-600 dark:text-amber-400">
-        Starting
+        {/* No credential to probe with means the panel genuinely cannot tell
+          whether it is usable, which is different from watching it boot. */}
+        {view.status.probe === null ? "Unverified" : "Starting"}
       </Badge>
     );
   }

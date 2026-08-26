@@ -197,6 +197,13 @@ export async function nodeRequestFor<T>(
   if (options.body !== undefined) {
     headers["content-type"] = "application/json";
   }
+  // Caller-supplied headers, last so they can override the defaults. This line
+  // was missing while `options.headers` was already documented and honoured by
+  // `nodeRequestRaw`, so the first JSON caller to use it (the node database's
+  // credential probe) had its headers silently dropped: the agent saw no
+  // credential, reported "not ready", and the UI sat on "Starting" forever. A
+  // silently ignored option is worse than an absent one.
+  Object.assign(headers, options.headers);
 
   let response: Response;
   try {
