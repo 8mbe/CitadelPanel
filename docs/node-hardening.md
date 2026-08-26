@@ -155,7 +155,8 @@ request directly, which the agent never sees.
 ## Residual risks (known, accepted, or mitigated elsewhere)
 
 - **`node_db_net` has ICC on.** It must, so a server can reach the shared
-  MariaDB. But two servers that *both* have a provisioned database sit on that
+  MariaDB, and the agent now repairs a legacy ICC-disabled network during setup
+  rather than leaving a database nothing can reach (`docs/node-database.md`). But two servers that *both* have a provisioned database sit on that
   bridge together with ICC enabled, so one could reach the other's game port
   directly, and the per-server isolation network does not cover this path.
   Cross-tenant *database* access is still blocked by MariaDB's per-database user

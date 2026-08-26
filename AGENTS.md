@@ -96,6 +96,12 @@ Existing docs:
 - `docs/plugins.md`: blueprint-declared plugin/mod support. The provider
   fetch spec (data, never code), the fetch engine's host pinning, and the
   pre-start auto-updater.
+- `docs/node-database.md`: the per-node MariaDB container itself. Why the
+  one-button setup replaced an SSH script (the agent already holds the Docker
+  socket), why the panel stores the root password *before* the container exists
+  and what that buys on a retry, the data volume that makes the container
+  disposable, the two properties that must not be "fixed" (no published host
+  ports, ICC on), and why status has four states rather than two.
 - `docs/database-explorer.md`: the in-panel database browser/editor for
   provisioned server databases. Panel-composed SQL (never browser SQL), the
   scoped-user execution model, and why the agent parses `--xml` output.

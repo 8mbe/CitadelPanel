@@ -352,6 +352,57 @@ export async function updateNode(
   return rows[0] ? toPublicNode(rows[0]) : null;
 }
 
+/**
+ * Store the credentials for a node's shared database, before the container that
+ * uses them exists.
+ *
+ * Split from {@link setNodeDbEndpoint} on purpose. The panel generates the
+ * MariaDB root password, then asks the agent to create a container with it, and
+ * that call can take minutes (image pull + first-boot init) and time out. If the
+ * password only landed here *after* the agent answered, a timed-out setup would
+ * leave a running database whose password nobody knows. Written first, the retry
+ * presents the same password and the agent recognises its own container.
+ *
+ * Leaves the host null until the container is up, so `hasDatabaseServer` (host
+ * AND user) stays false and no owner is offered a database that does not exist
+ * yet.
+ */
+export async function stageNodeDbCredentials(
+  nodeId: string,
+  user: string,
+  password: string,
+): Promise<void> {
+  await sql`
+    UPDATE nodes SET
+      db_admin_user = ${user},
+      db_admin_password_encrypted = ${encryptOptionalSecret(password)}
+    WHERE id = ${nodeId}
+  `;
+  invalidateNode(nodeId);
+}
+
+/**
+ * Record where a node's database actually answers, which is what switches the
+ * feature on for that node's servers.
+ *
+ * The host is the MariaDB container's IP on `node_db_net`. Docker assigns it at
+ * start, so it can change when the container is recreated, and every setup/start
+ * writes it again rather than trusting the stored value.
+ */
+export async function setNodeDbEndpoint(
+  nodeId: string,
+  host: string,
+  port: number,
+): Promise<void> {
+  await sql`
+    UPDATE nodes SET
+      db_admin_host = ${host},
+      db_admin_port = ${port}
+    WHERE id = ${nodeId}
+  `;
+  invalidateNode(nodeId);
+}
+
 export async function recordHeartbeat(nodeId: string): Promise<void> {
   await sql`UPDATE nodes SET last_heartbeat_at = now() WHERE id = ${nodeId}`;
 }

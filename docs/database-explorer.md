@@ -7,7 +7,9 @@ without the owner leaving the panel or knowing a SQL client.
 It builds on the per-server database feature (see the Databases tab): each
 server can provision databases on its node's shared MariaDB, each with a
 scoped user that has `GRANT ALL` on exactly that one database. The explorer
-is the read/write UI for what lives *inside* those databases.
+is the read/write UI for what lives *inside* those databases. Where that
+MariaDB comes from, and how it is started and stopped, is
+`docs/node-database.md`.
 
 ## Flow
 

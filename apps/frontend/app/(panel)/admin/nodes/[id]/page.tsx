@@ -36,6 +36,7 @@ import {
   ApiError,
   type NodeHealthResult,
 } from "@/lib/api";
+import { NodeDatabaseCard } from "@/components/admin/node-database-card";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -374,6 +375,10 @@ function NodeDetailBody({
       )}
 
       <CapacityCards detail={detail} />
+
+      {/* Loads itself: the database status is an agent round trip and does not
+        belong on this page's critical path. */}
+      <NodeDatabaseCard nodeId={detail.node.id} onChanged={onChanged} />
 
       <PortPoolCard
         nodeId={detail.node.id}

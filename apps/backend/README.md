@@ -119,17 +119,24 @@ A node can host one shared MariaDB instance that server owners request
 databases from (for plugins/mods that need MySQL). It is optional: a node
 without it simply cannot provision databases, and servers on it work normally.
 
-Set it up once per node:
+**Prefer the panel.** Admin → Nodes → *(the node)* → Shared database → **Set up
+database** does all of this through this agent, and keeps the generated
+credential encrypted panel-side so there is nothing to copy. Start and stop are
+buttons there too. See `docs/node-database.md`.
+
+This script is the same code as that button, for a node you want to prepare
+before registering it:
 
 ```bash
 bun run setup-db
 ```
 
-This creates a `node_db_net` Docker network (with inter-container communication
-disabled, so tenants on it can reach the database but not each other) and a
-MariaDB container with a randomly-generated root password. No host ports are
-published. The database is only reachable from containers attached to
-`node_db_net`.
+It creates the `node_db_net` Docker network, a named volume for the data
+directory, and a MariaDB container with a randomly-generated root password. No
+host ports are published: the database is reachable only from containers
+attached to `node_db_net`. Inter-container communication on that network is
+**enabled** on purpose, because a game server has to reach the database over it;
+tenants are isolated by MariaDB's per-database user grants, not by the bridge.
 
 The script prints the connection details (`dbAdminHost`, `dbAdminPort`,
 `dbAdminUser`, `dbAdminPassword`). Paste those into the node registration form
@@ -137,7 +144,9 @@ in the panel; they are stored encrypted and used to create/drop per-server
 databases and users on demand.
 
 The host it prints is the MariaDB container's IP on `node_db_net`. That is the
-address the agent (and therefore server containers) use to connect.
+address the agent (and therefore server containers) use to connect. It can change
+when the container is recreated, which is one more reason to prefer the panel:
+setup and start both re-record it.
 
 For remote nodes, deploy `docker-compose.agent.yml`, keep port 8081 on a private
 network or behind TLS, then register its URL and token in the panel.

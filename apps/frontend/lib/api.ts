@@ -12,6 +12,7 @@ import type {
   DirectoryListing,
   NodeAbuseSummary,
   NodeAllocation,
+  NodeDatabaseView,
   NodeDetail,
   NodePortPoolEntry,
   NodeServerView,
@@ -2095,6 +2096,56 @@ export async function adminDeleteNodePortPoolEntry(
   entryId: string,
 ): Promise<void> {
   await request(`/api/admin/nodes/ports/${entryId}`, { method: "DELETE" });
+}
+
+/**
+ * GET /api/admin/nodes/:id/database. The node's shared-database state.
+ *
+ * Its own request rather than part of `adminGetNode`, because it costs an agent
+ * round trip (and a ping inside the container) that the rest of the node page
+ * should not wait on. An unreachable agent comes back as a 200 with
+ * `reachable: false`, not an `ApiError`, so the card can say "cannot tell".
+ */
+export async function adminGetNodeDatabase(
+  nodeId: string,
+): Promise<NodeDatabaseView> {
+  return request<NodeDatabaseView>(`/api/admin/nodes/${nodeId}/database`);
+}
+
+/**
+ * POST /api/admin/nodes/:id/database/setup. Creates the node's MariaDB.
+ *
+ * Slow on a cold node: the agent pulls the image and waits out MariaDB's
+ * first-boot initialisation. Safe to retry, because the panel presents the same
+ * generated password each time (see `routes/nodeDatabase.ts`).
+ */
+export async function adminSetUpNodeDatabase(
+  nodeId: string,
+): Promise<NodeDatabaseView> {
+  return request<NodeDatabaseView>(`/api/admin/nodes/${nodeId}/database/setup`, {
+    method: "POST",
+  });
+}
+
+/** POST /api/admin/nodes/:id/database/start. */
+export async function adminStartNodeDatabase(
+  nodeId: string,
+): Promise<NodeDatabaseView> {
+  return request<NodeDatabaseView>(`/api/admin/nodes/${nodeId}/database/start`, {
+    method: "POST",
+  });
+}
+
+/**
+ * POST /api/admin/nodes/:id/database/stop. Takes every server database on the
+ * node offline until it is started again.
+ */
+export async function adminStopNodeDatabase(
+  nodeId: string,
+): Promise<NodeDatabaseView> {
+  return request<NodeDatabaseView>(`/api/admin/nodes/${nodeId}/database/stop`, {
+    method: "POST",
+  });
 }
 
 /**

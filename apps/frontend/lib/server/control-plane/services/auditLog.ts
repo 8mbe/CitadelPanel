@@ -57,6 +57,11 @@ export type AuditAction =
   | "node.database.backup"
   | "node.database.restore"
   | "node.database.backup.delete"
+  // The node's shared MariaDB itself, not its backups: created, started and
+  // stopped from the node's admin page (see routes/nodeDatabase.ts).
+  | "node.database.setup"
+  | "node.database.start"
+  | "node.database.stop"
   | "server.sftp.auth"
   | "server.sftp.credential.create"
   | "server.sftp.credential.regenerate"

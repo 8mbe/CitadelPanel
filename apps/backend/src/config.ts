@@ -161,6 +161,22 @@ export const config = {
   nodeDbContainer: optional("NODE_DB_CONTAINER", "citadel-node-db"),
 
   /**
+   * The image the node database container runs. Pinned to a major version so a
+   * node set up today and one set up next year agree on the SQL dialect.
+   */
+  nodeDbImage: optional("NODE_DB_IMAGE", "mariadb:11"),
+
+  /**
+   * Named volume holding the node database's data directory.
+   *
+   * Separate from the container on purpose: it is what makes the container
+   * disposable. Recreating the container (an image bump, a failed setup, a
+   * manual cleanup) keeps every tenant's database, which would not survive in
+   * the container's writable layer.
+   */
+  nodeDbVolume: optional("NODE_DB_VOLUME", "citadel-node-db-data"),
+
+  /**
    * Scratch space for backup work: database dumps on the way into a snapshot,
    * and on the way back out during a restore.
    *

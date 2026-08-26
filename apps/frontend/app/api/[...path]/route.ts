@@ -100,6 +100,12 @@ import {
   handleUpdateNode,
 } from "@/lib/server/control-plane/routes/nodes";
 import {
+  handleGetNodeDatabase,
+  handleSetUpNodeDatabase,
+  handleStartNodeDatabase,
+  handleStopNodeDatabase,
+} from "@/lib/server/control-plane/routes/nodeDatabase";
+import {
   handleDeleteServer,
   handleGetServer,
   handleGetServerEnv,
@@ -318,6 +324,12 @@ const patterns: Array<{
   { pattern: /^admin\/backups\/databases\/([^/]+)\/runs\/([^/]+)$/, methods: { DELETE: handleDeleteNodeDatabaseBackup } },
   { pattern: /^admin\/nodes\/([^/]+)$/, methods: { GET: handleGetNode, PATCH: handleUpdateNode, DELETE: handleDeleteNode } },
   { pattern: /^admin\/nodes\/([^/]+)\/health$/, methods: { GET: handleNodeHealth } },
+  // The node's shared MariaDB (see routes/nodeDatabase.ts). One-click setup plus
+  // start/stop, all driven through the node's agent and its Docker socket.
+  { pattern: /^admin\/nodes\/([^/]+)\/database$/, methods: { GET: handleGetNodeDatabase } },
+  { pattern: /^admin\/nodes\/([^/]+)\/database\/setup$/, methods: { POST: handleSetUpNodeDatabase } },
+  { pattern: /^admin\/nodes\/([^/]+)\/database\/start$/, methods: { POST: handleStartNodeDatabase } },
+  { pattern: /^admin\/nodes\/([^/]+)\/database\/stop$/, methods: { POST: handleStopNodeDatabase } },
   { pattern: /^admin\/nodes\/([^/]+)\/ports$/, methods: { GET: handleListNodePortPool, POST: handleAddNodePortPoolEntry } },
   { pattern: /^admin\/nodes\/ports\/([^/]+)$/, methods: { DELETE: handleDeleteNodePortPoolEntry } },
   { pattern: /^admin\/suspicious-activity\/([^/]+)$/, methods: { GET: handleGetSuspicious } },

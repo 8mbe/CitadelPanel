@@ -406,13 +406,14 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                 <Field orientation="horizontal">
                   <div className="flex flex-1 flex-col gap-0.5">
                     <FieldLabel htmlFor="node-enable-db" className="font-normal">
-                      Set up a shared database
+                      Use an existing database
                     </FieldLabel>
                     <FieldDescription>
-                      Run <code className="font-mono">bun run setup-db</code> on
-                      the node first, then enter the credentials it prints. This
-                      is a one-time step. It enables database provisioning for
-                      all servers on this node.
+                      Only for a MariaDB this panel did not create. To give the
+                      node a database, register it and use{" "}
+                      <span className="text-foreground">Set up database</span> on
+                      its page: the agent creates the container and the panel
+                      keeps the credentials, so there is nothing to copy.
                     </FieldDescription>
                   </div>
                   <Switch
@@ -433,7 +434,9 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                       />
                       <FieldDescription>
                         The MariaDB container&apos;s IP on the node&apos;s
-                        internal network (from the setup-db output).
+                        internal network. From an earlier{" "}
+                        <code className="font-mono">bun run setup-db</code>, or
+                        another panel install that owns this database.
                       </FieldDescription>
                     </Field>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -465,7 +468,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
                       <Input
                         id="node-db-password"
                         type="password"
-                        placeholder="From the setup-db output"
+                        placeholder="The existing database's admin password"
                         value={dbPassword}
                         onChange={(e) => setDbPassword(e.target.value)}
                         autoComplete="off"

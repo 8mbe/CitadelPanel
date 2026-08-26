@@ -109,6 +109,44 @@ export interface NodeDetail {
 }
 
 /**
+ * The node's shared MariaDB, as the admin card shows it.
+ *
+ * Three states the UI has to tell apart, which is why `exists` and `state` are
+ * separate: no container at all (offer Set up), a container that is stopped
+ * (offer Start), and one that is running (offer Stop). `ready` splits that last
+ * one again, because a container reports "running" for the ~20s MariaDB spends
+ * initialising and a green badge over a database that refuses connections is
+ * worse than an honest "starting".
+ */
+export interface NodeDatabaseStatus {
+  exists: boolean;
+  /** Docker's status string ("running", "exited", …); null when absent. */
+  state: string | null;
+  /** True once MariaDB answered a ping. */
+  ready: boolean;
+  /** The container's address on the node's internal DB network. */
+  host: string | null;
+  port: number;
+  containerName: string;
+  networkName: string;
+  /** Named volume holding the data, so the container itself is disposable. */
+  volumeName: string;
+  image: string;
+}
+
+/** The node-database card's whole state, from one endpoint. */
+export interface NodeDatabaseView {
+  /** False when the node's agent could not be asked at all. */
+  reachable: boolean;
+  status: NodeDatabaseStatus | null;
+  error: string | null;
+  /** True once the panel holds an admin credential for this database. */
+  hasCredentials: boolean;
+  /** Server databases living here: what a stop takes offline. */
+  databaseCount: number;
+}
+
+/**
  * A port published on a node, flattened across servers for the allocation view.
  * Derived client-side from `servers[].ports` so no second endpoint is needed.
  */

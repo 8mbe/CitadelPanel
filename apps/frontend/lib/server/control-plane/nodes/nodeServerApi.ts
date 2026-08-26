@@ -380,6 +380,95 @@ export async function getNodeDbInfo(nodeId: string): Promise<NodeDbInfo> {
   return nodeRequest(nodeId, "/v1/database/info");
 }
 
+/**
+ * The node DB container's lifecycle state, as the agent reports it.
+ *
+ * The richer sibling of {@link NodeDbInfo}: it says whether the container
+ * exists at all, so the admin card can offer "Set up" rather than a broken
+ * "Start".
+ */
+export interface NodeDbStatus {
+  exists: boolean;
+  /** Docker's status string ("running", "exited", …); null when absent. */
+  state: string | null;
+  /** True once MariaDB answered a ping, so "running" means "usable". */
+  ready: boolean;
+  host: string | null;
+  port: number;
+  containerName: string;
+  networkName: string;
+  volumeName: string;
+  image: string;
+}
+
+/**
+ * GET /v1/database/status. The node DB container's state.
+ *
+ * The admin password (when the panel has one stored) is sent so the agent can
+ * also ping MariaDB and report `ready`. It travels in a header, not the query
+ * string, because query strings end up in access logs.
+ */
+export async function getNodeDbStatus(
+  nodeId: string,
+  adminPassword?: string,
+): Promise<NodeDbStatus> {
+  return nodeRequest(
+    nodeId,
+    adminPassword ? "/v1/database/status?probe=1" : "/v1/database/status",
+    adminPassword ? { headers: { "X-Db-Password": adminPassword } } : undefined,
+  );
+}
+
+/**
+ * POST /v1/database/setup. Creates the node's MariaDB container.
+ *
+ * The panel generates and stores `rootPassword` before calling, so a retry
+ * after a timeout presents the same password and is recognised rather than
+ * creating a second, orphaned database (see `setUpNodeDb` on the agent).
+ *
+ * The timeout is generous because a cold node pulls the MariaDB image and then
+ * runs its first-boot initialisation. The agent's own readiness wait is 120s,
+ * so this stays above it: whichever side gives up first owns the error message,
+ * and the agent's is the specific one.
+ */
+export async function setUpNodeDb(
+  nodeId: string,
+  rootPassword: string,
+): Promise<NodeDbStatus> {
+  return nodeRequest(nodeId, "/v1/database/setup", {
+    method: "POST",
+    body: { rootPassword },
+    timeoutMs: 300_000,
+  });
+}
+
+/**
+ * POST /v1/database/start. Starts the container and waits until it answers.
+ *
+ * Passing the password makes a 200 mean "accepting connections" rather than
+ * "container started", which is the distinction an admin who just clicked Start
+ * actually cares about.
+ */
+export async function startNodeDb(
+  nodeId: string,
+  rootPassword?: string,
+): Promise<NodeDbStatus> {
+  return nodeRequest(nodeId, "/v1/database/start", {
+    method: "POST",
+    body: rootPassword ? { rootPassword } : {},
+    timeoutMs: 180_000,
+  });
+}
+
+/** POST /v1/database/stop. Stops the container (30s graceful shutdown). */
+export async function stopNodeDb(nodeId: string): Promise<NodeDbStatus> {
+  return nodeRequest(nodeId, "/v1/database/stop", {
+    method: "POST",
+    body: {},
+    timeoutMs: 90_000,
+  });
+}
+
 /** The connection details returned when a database is provisioned. */
 export interface ProvisionedDatabase {
   name: string;

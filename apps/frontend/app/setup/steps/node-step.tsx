@@ -41,7 +41,10 @@ import { BlockingIssues, ErrorNote, StepNav } from "./wizard-ui";
  *
  * The optional shared database is disclosed behind a switch rather than shown
  * flat. Most first installs do not need one, and four more credentials fields
- * on the first node form is where operators give up.
+ * on the first node form is where operators give up. It is also no longer the
+ * normal way to get one: the node page can create the database with one button
+ * (see `docs/node-database.md`), so these fields are for adopting a MariaDB the
+ * panel did not create.
  */
 
 export interface RegisteredNode {
@@ -311,9 +314,10 @@ export function NodeStep({
               Shared database server on this node
             </FieldLabel>
             <FieldDescription>
-              Optional. Lets servers on this node be given their own MySQL
-              database. Skip it unless you have already run the node&apos;s
-              database setup script.
+              Optional, and only for a database this panel did not create. To
+              give the node one, skip this and use <em>Set up database</em> on the
+              node&apos;s page afterwards: the agent creates the container and the
+              panel keeps the credentials.
             </FieldDescription>
           </div>
           <Switch

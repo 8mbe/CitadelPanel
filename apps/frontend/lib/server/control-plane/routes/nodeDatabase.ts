@@ -1,0 +1,271 @@
+/**
+ * The node's shared database, as an admin operation instead of an SSH session.
+ *
+ * A node agent already holds the Docker socket, which is everything needed to
+ * run a MariaDB container next to the game servers. So the whole "run
+ * `bun run setup-db` on the node, copy the printed password, paste it into the
+ * register-node form" ritual was never a technical requirement: it was a missing
+ * button. These four routes are that button, plus start and stop.
+ *
+ * Admin-only, without exception. The database's root credential is
+ * root-equivalent on every tenant database on the node.
+ *
+ * Where the secret lives: the panel generates the MariaDB root password, stores
+ * it encrypted on the node row, and hands it to the agent per request. The agent
+ * never persists it. That is the same split as per-server database provisioning
+ * (see `docs/database-explorer.md`), and it is why setup is safe to retry: the
+ * password exists panel-side before the container does.
+ */
+
+import { requireAdmin } from "../auth/middleware";
+import { sql } from "../db/client";
+import { conflict, json, notFound, requireUuidParam } from "../lib/http";
+import { generateStrongPassword } from "../lib/crypto";
+import {
+  getNodeDbStatus,
+  setUpNodeDb,
+  startNodeDb,
+  stopNodeDb,
+  type NodeDbStatus,
+} from "../nodes/nodeServerApi";
+import {
+  getNodeWithSecrets,
+  setNodeDbEndpoint,
+  stageNodeDbCredentials,
+} from "../nodes/nodeRegistry";
+import { recordAuditFromRequest } from "../services/auditLog";
+
+/** The admin user MariaDB's own image creates on first boot. */
+const DB_ADMIN_USER = "root";
+
+/**
+ * What the admin card renders.
+ *
+ * `reachable: false` is a normal answer, not an error: a node whose agent is
+ * down should show "cannot tell" rather than an empty card, exactly as the
+ * health endpoints do.
+ */
+interface NodeDatabaseView {
+  reachable: boolean;
+  /** The agent's report; null when it could not be asked. */
+  status: NodeDbStatus | null;
+  /** Why the agent could not be asked. */
+  error: string | null;
+  /** True once the panel holds an admin credential for this node's database. */
+  hasCredentials: boolean;
+  /** Server databases provisioned here. What a Stop takes offline. */
+  databaseCount: number;
+}
+
+/** How many per-server databases live on this node. */
+async function countServerDatabases(nodeId: string): Promise<number> {
+  const rows = (await sql`
+    SELECT COUNT(*)::int AS count FROM server_databases WHERE node_id = ${nodeId}
+  `) as { count: number }[];
+  return rows[0]?.count ?? 0;
+}
+
+/**
+ * Load the node with its decrypted credentials, or 404.
+ *
+ * Every route here needs the stored root password (to prove ownership of the
+ * container to the agent), so they all start the same way.
+ */
+async function requireNodeWithSecrets(nodeId: string) {
+  const node = await getNodeWithSecrets(nodeId);
+  if (!node) throw notFound("Node not found");
+  return node;
+}
+
+/**
+ * GET /api/admin/nodes/:id/database
+ *
+ * Deliberately *not* folded into `handleGetNode`: it costs an agent round trip
+ * plus (when a password is stored) a `docker exec` ping inside the container, so
+ * putting it on the node page's critical path would slow down the page for the
+ * one card that can load itself. Same reasoning as the port pool's standalone
+ * endpoint, one cost tier up.
+ */
+export async function handleGetNodeDatabase(
+  request: Request,
+  nodeId: string,
+): Promise<Response> {
+  await requireAdmin(request);
+  const id = requireUuidParam(nodeId, "nodeId");
+
+  const node = await requireNodeWithSecrets(id);
+  const hasCredentials = Boolean(node.db.user && node.db.password);
+  const databaseCount = await countServerDatabases(id);
+
+  try {
+    const status = await getNodeDbStatus(id, node.db.password ?? undefined);
+    return json({
+      reachable: true,
+      status,
+      error: null,
+      hasCredentials,
+      databaseCount,
+    } satisfies NodeDatabaseView);
+  } catch (error) {
+    return json({
+      reachable: false,
+      status: null,
+      error: error instanceof Error ? error.message : "The node did not answer.",
+      hasCredentials,
+      databaseCount,
+    } satisfies NodeDatabaseView);
+  }
+}
+
+/**
+ * POST /api/admin/nodes/:id/database/setup
+ *
+ * Creates the network, the data volume and the MariaDB container on the node,
+ * then records where it answers, which is what enables database provisioning for
+ * every server on that node.
+ *
+ * The password is generated here on first run and **reused** on any subsequent
+ * one. Reuse is the whole reason a retry works: this call can take minutes on a
+ * cold node (image pull, then MariaDB's first-boot initialisation), and if it
+ * times out the container may already exist. Presenting the same password lets
+ * the agent recognise its own container instead of the panel stranding a running
+ * database it can no longer authenticate to.
+ *
+ * A container that exists but rejects the stored password is the agent's 409,
+ * passed through: it means another panel install (or a hand-run of the script)
+ * owns this node's database. Recreating it would destroy every tenant's data, so
+ * this refuses and says what to do.
+ */
+export async function handleSetUpNodeDatabase(
+  request: Request,
+  nodeId: string,
+): Promise<Response> {
+  const admin = await requireAdmin(request);
+  const id = requireUuidParam(nodeId, "nodeId");
+
+  const node = await requireNodeWithSecrets(id);
+
+  // Reuse the stored credential when there is one; only mint a password the
+  // first time. See the note above on why this must not be regenerated.
+  const rootPassword = node.db.password ?? generateStrongPassword(32);
+  const created = !node.db.password;
+
+  // Written before the agent is called, so a timeout leaves recoverable state.
+  await stageNodeDbCredentials(id, DB_ADMIN_USER, rootPassword);
+
+  const status = await setUpNodeDb(id, rootPassword);
+
+  if (!status.host) {
+    throw conflict(
+      `The node's database container started but has no address on ` +
+        `"${status.networkName}". Check the network with ` +
+        `"docker network inspect ${status.networkName}" on the node.`,
+    );
+  }
+
+  await setNodeDbEndpoint(id, status.host, status.port);
+
+  await recordAuditFromRequest(request, {
+    userId: admin.id,
+    action: "node.database.setup",
+    targetType: "node",
+    targetId: id,
+    metadata: {
+      nodeName: node.name,
+      containerName: status.containerName,
+      image: status.image,
+      // Whether this run minted the credential or reused the stored one. Never
+      // the credential itself.
+      credentialCreated: created,
+    },
+  });
+
+  return json(await viewAfterAction(id, status));
+}
+
+/**
+ * POST /api/admin/nodes/:id/database/start
+ *
+ * Also re-records the endpoint: Docker assigns the container's IP at start, so a
+ * container that was stopped and started may answer on a different address than
+ * the one stored at setup. Skipping this is how a node quietly stops being able
+ * to provision databases after a reboot.
+ */
+export async function handleStartNodeDatabase(
+  request: Request,
+  nodeId: string,
+): Promise<Response> {
+  const admin = await requireAdmin(request);
+  const id = requireUuidParam(nodeId, "nodeId");
+
+  const node = await requireNodeWithSecrets(id);
+  const status = await startNodeDb(id, node.db.password ?? undefined);
+
+  if (status.host) await setNodeDbEndpoint(id, status.host, status.port);
+
+  await recordAuditFromRequest(request, {
+    userId: admin.id,
+    action: "node.database.start",
+    targetType: "node",
+    targetId: id,
+    metadata: { nodeName: node.name, containerName: status.containerName },
+  });
+
+  return json(await viewAfterAction(id, status));
+}
+
+/**
+ * POST /api/admin/nodes/:id/database/stop
+ *
+ * Every server database on the node goes unreachable until it is started again.
+ * That is a legitimate thing for an admin to want (maintenance, a restore), so
+ * it is not blocked; the audit row records how many databases it affected, and
+ * the UI warns before the click.
+ *
+ * The stored endpoint is left alone: the container keeps its address while it is
+ * merely stopped, and clearing it would turn "the database is down" into "this
+ * node never had a database".
+ */
+export async function handleStopNodeDatabase(
+  request: Request,
+  nodeId: string,
+): Promise<Response> {
+  const admin = await requireAdmin(request);
+  const id = requireUuidParam(nodeId, "nodeId");
+
+  const node = await requireNodeWithSecrets(id);
+  const status = await stopNodeDb(id);
+  const databaseCount = await countServerDatabases(id);
+
+  await recordAuditFromRequest(request, {
+    userId: admin.id,
+    action: "node.database.stop",
+    targetType: "node",
+    targetId: id,
+    metadata: {
+      nodeName: node.name,
+      containerName: status.containerName,
+      databasesAffected: databaseCount,
+    },
+  });
+
+  return json(await viewAfterAction(id, status));
+}
+
+/**
+ * Wrap a fresh agent status in the same view the GET returns, so the client can
+ * replace its state from any response instead of re-fetching after every action.
+ */
+async function viewAfterAction(
+  nodeId: string,
+  status: NodeDbStatus,
+): Promise<NodeDatabaseView> {
+  const node = await getNodeWithSecrets(nodeId);
+  return {
+    reachable: true,
+    status,
+    error: null,
+    hasCredentials: Boolean(node?.db.user && node?.db.password),
+    databaseCount: await countServerDatabases(nodeId),
+  };
+}

@@ -20,6 +20,7 @@ import {
   detachFromNetwork,
 } from "./container";
 import { execInContainer } from "./exec";
+import { assertNodeDbNetworkAllowsIcc, findNodeDbContainer } from "./nodeDb";
 import { config } from "../config";
 import { badRequest, conflict, notFound, serviceUnavailable } from "../http";
 
@@ -76,11 +77,7 @@ export async function getNodeDbInfo(): Promise<NodeDbInfo> {
   const networkName = config.nodeDbNetwork;
   const containerName = config.nodeDbContainer;
 
-  const matches = await docker.listContainers({
-    all: true,
-    filters: { name: [containerName] },
-  });
-  const info = matches.find((c) => (c.Names ?? []).some((n) => n === `/${containerName}`));
+  const info = await findNodeDbContainer();
 
   if (!info) {
     return { host: null, port: DB_PORT, containerName, networkName };
@@ -108,59 +105,19 @@ export async function requireNodeDb(): Promise<{ containerId: string; networkNam
   const networkName = config.nodeDbNetwork;
   const containerName = config.nodeDbContainer;
 
-  const matches = await docker.listContainers({
-    all: true,
-    filters: { name: [containerName] },
-  });
-  const info = matches.find((c) => (c.Names ?? []).some((n) => n === `/${containerName}`));
+  const info = await findNodeDbContainer();
 
   if (!info) {
     throw serviceUnavailable(
       `The node database container "${containerName}" was not found. ` +
-        `Run "bun run setup-db" on this node to create it.`,
+        `Set up this node's database from its admin page (or run ` +
+        `"bun run setup-db" on the node).`,
     );
   }
 
-  await assertNetworkAllowsIcc(networkName);
+  await assertNodeDbNetworkAllowsIcc(networkName);
 
   return { containerId: info.Id, networkName };
-}
-
-/**
- * Reject a `node_db_net` that has ICC disabled.
- *
- * Older `setup-db` runs created the network with `enable_icc=false` under the
- * mistaken belief that it isolated tenants while still allowing DB access. It
- * does not: ICC=false drops all inter-container traffic on the bridge, so a
- * server container attached to the network can never reach MariaDB. The TCP
- * connect simply times out. Tenant isolation comes from MariaDB's per-database
- * user grants, not the network.
- *
- * We fail loudly here (rather than letting provisions succeed at the SQL level
- * and then silently fail at the network level) so the operator gets one clear
- * instruction: recreate the network.
- */
-async function assertNetworkAllowsIcc(networkName: string): Promise<void> {
-  let net: Docker.NetworkInspectInfo | null = null;
-  try {
-    net = await docker.getNetwork(networkName).inspect();
-  } catch {
-    // Network missing entirely. The container-message above covers the spirit.
-    return;
-  }
-  const icc = net.Options?.["com.docker.network.bridge.enable_icc"];
-  if (icc === "false") {
-    throw serviceUnavailable(
-      `The "${networkName}" Docker network has inter-container communication ` +
-        `disabled (enable_icc=false), which blocks server containers from ` +
-        `reaching the database. Recreate it with ICC enabled: ` +
-        `"docker network rm ${networkName} && docker network create ` +
-        `--driver bridge -o com.docker.network.bridge.enable_icc=true ${networkName}", ` +
-        `then re-attach the database container: ` +
-        `"docker network connect ${networkName} ${config.nodeDbContainer}". ` +
-        `Tenant isolation is enforced by MariaDB user grants, not the network.`,
-    );
-  }
 }
 
 /**

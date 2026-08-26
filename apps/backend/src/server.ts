@@ -31,6 +31,12 @@ import {
   runServerDatabaseSql,
 } from "./docker/database";
 import {
+  getNodeDbStatus,
+  setUpNodeDb,
+  startNodeDb,
+  stopNodeDb,
+} from "./docker/nodeDb";
+import {
   hasRunningJob,
   NODE_DATABASES_SUBJECT,
   readJob,
@@ -496,6 +502,79 @@ const server = Bun.serve<ConsoleSocket, never>({
           containerName: info.containerName,
         });
       }),
+    },
+
+    /**
+     * GET /v1/database/status. The node DB container's lifecycle state.
+     *
+     * The richer sibling of `/v1/database/info`: it also says whether the
+     * container exists at all and whether it is running, which is what the
+     * panel's admin card needs to decide between "Set up", "Start" and "Stop".
+     *
+     * `?probe=1` with the admin password in the `X-Db-Password` header also
+     * pings MariaDB, so "running" can be reported as "running and accepting
+     * connections". The password travels in a header rather than the query
+     * string because query strings land in access logs.
+     */
+    "/v1/database/status": {
+      GET: route(async (request) => {
+        const probe = queryOf(request).get("probe") === "1";
+        const password = request.headers.get("x-db-password");
+        return json(
+          await getNodeDbStatus(probe && password ? password : undefined),
+        );
+      }),
+    },
+
+    /**
+     * POST /v1/database/setup. Creates the network, volume and MariaDB
+     * container, and waits until it accepts connections.
+     *
+     * Body: { rootPassword }
+     *
+     * The password is generated and stored by the *panel*, not here: the panel
+     * has to hold it encrypted either way, and generating it there means a
+     * retry after a timeout can present the same password and be recognised
+     * rather than starting a second, orphaned database. Idempotent for that
+     * reason; see `setUpNodeDb`.
+     */
+    "/v1/database/setup": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+        const rootPassword = body.rootPassword;
+        if (typeof rootPassword !== "string" || rootPassword.length < 16) {
+          throw badRequest('"rootPassword" must be at least 16 characters.');
+        }
+        return json(await setUpNodeDb(rootPassword));
+      }),
+    },
+
+    /**
+     * POST /v1/database/start. Starts the node DB container.
+     *
+     * Body: { rootPassword? }. With a password the agent waits until MariaDB
+     * answers, so a 200 means usable rather than merely started.
+     */
+    "/v1/database/start": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+        const rootPassword =
+          typeof body.rootPassword === "string" && body.rootPassword.length > 0
+            ? body.rootPassword
+            : undefined;
+        return json(await startNodeDb(rootPassword));
+      }),
+    },
+
+    /**
+     * POST /v1/database/stop. Stops the node DB container, gracefully.
+     *
+     * Every server database on this node becomes unreachable until it is
+     * started again. The panel is where that warning belongs; the agent just
+     * does it.
+     */
+    "/v1/database/stop": {
+      POST: route(async () => json(await stopNodeDb())),
     },
 
     /**
