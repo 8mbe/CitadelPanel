@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, Database, ServerCog } from "lucide-react";
+import { Check, ServerCog } from "lucide-react";
 
 import type { NodeHealthResult } from "@/lib/api";
 import { agentProblem } from "@/lib/node-health";
@@ -13,7 +13,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-import { NodeDatabaseSetup } from "./node-database";
 import { NodePortPool } from "./node-ports";
 import type { RegisteredNode } from "./node-step";
 import {
@@ -33,9 +32,11 @@ import {
  * next, since "the agent did not answer" is useless on its own to someone who
  * has just installed one for the first time.
  *
- * The follow-up work is ordered by whether the node works without it: the port
- * pool first (a node without one cannot host a server at all), then the optional
- * shared database.
+ * The only follow-up work here is the port pool, because it is the only thing a
+ * node cannot host a server without. The shared database is offered on the
+ * registration form itself (inside its switch), so repeating the offer here was
+ * a second prompt for something the operator had already decided one screen
+ * earlier.
  */
 
 /** The connection test's three outcomes, each with what to do about it. */
@@ -84,10 +85,7 @@ export function ProbeResult({
   );
 }
 
-/**
- * After registration: the one-time token, any health caveat, the port pool, and
- * the optional database.
- */
+/** After registration: the one-time token, any health caveat, and the port pool. */
 export function RegisteredView({
   node,
   generatedToken,
@@ -110,7 +108,7 @@ export function RegisteredView({
         </CardTitle>
         <CardDescription>
           One thing left before it can host anything: a range of ports to hand
-          out to servers. A shared database is optional, and below that.
+          out to servers.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
@@ -141,20 +139,6 @@ export function RegisteredView({
             nodeId={node.id}
             agentReachable={node.health.reachable}
             onPoolChange={onPoolChange}
-          />
-        </div>
-
-        {/* Second, and optional: the ports above are what the node cannot host
-          without. A database is a capability the operator either wants or does
-          not, and the wizard continues either way. */}
-        <div className="flex flex-col gap-3">
-          <span className="flex items-center gap-1.5 text-sm font-medium">
-            <Database className="size-4" />
-            Database
-          </span>
-          <NodeDatabaseSetup
-            nodeId={node.id}
-            agentReachable={node.health.reachable}
           />
         </div>
 

@@ -22,10 +22,10 @@ Admin → Nodes → *(a node)* → **Shared database**:
 
 The register-node form offers it too, inside the **Shared database** toggle:
 **Set it up for me** creates the database on the agent whose URL and token are
-typed above, then fills the form's four fields from the answer. The wizard also
-repeats the offer after registration, next to the port pool (see
-[first-time-setup.md](first-time-setup.md)), for an operator who skipped the
-toggle.
+typed above, then fills the form's four fields from the answer. That is the only
+place the first-time-setup wizard offers it (see
+[first-time-setup.md](first-time-setup.md)); a node that skipped the toggle is
+given one from its admin page later, which is where start and stop live anyway.
 
 `bun run setup-db` still exists, as a thin CLI over the same functions
 (`apps/backend/src/docker/nodeDb.ts`), for bringing a node up before it is
@@ -99,7 +99,7 @@ MariaDB: Docker pulls the image, MariaDB initialises its system tables, then the
 panel's account is created. A spinner for that long reads as a hang, and the
 first version of this feature proved it.
 
-So all three entry points run the call through `useNodeDatabaseProgress`
+So both entry points run the call through `useNodeDatabaseProgress`
 (`apps/frontend/lib/node-database-progress.ts`), which shows two things:
 
 - **the phase**, polled off the node every 3 seconds rather than guessed from a

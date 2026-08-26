@@ -18,7 +18,7 @@ Setup is a six-step wizard at `/setup`:
 | 2 | Panel identity | `branding`, `timezone` | yes (both pre-filled) |
 | 3 | Access | `registration`, `captcha` | no |
 | 4 | Email | `mail`, `verification` | no |
-| 5 | First node | a `nodes` row + its port pool (+ optional database) | no |
+| 5 | First node | a `nodes` row + its port pool (+ its optional database) | no |
 | 6 | First server | a `servers` row, built live | no |
 
 The wizard is server-gated: Next.js checks database-backed setup status before
@@ -243,25 +243,12 @@ agent to confirm every port is actually free on the host. That means it needs a
 **reachable** agent: when the node was registered offline, the step says so and
 points at the admin area rather than showing a form that cannot work.
 
-### Then, optionally, a database
-
-Under the port pool the step repeats the database offer, for an operator who left
-the switch on the form alone (see [node-database.md](node-database.md)). Unlike
-the pool, this is genuinely optional: a node without a database hosts servers
-fine, it just cannot hand them a MySQL database. Nothing blocks the wizard, and
-it can be done later from `/admin/nodes`.
-
-It is offered twice because the failure mode is silent: months later, a plugin
-needs MySQL, a server cannot have one, and nobody knew the feature existed.
-
-Two states the block reads off the node instead of offering the button:
-
-- The agent is unreachable, so no container can be created; it points at the
-  admin area, as the port pool does.
-- The node was registered *with* an existing database's credentials. The address
-  is confirmed back rather than offering to create a second one, because creating
-  one would repoint the node at a new, empty database. (The admin page has the
-  confirmation flow for the rarer case where that database is really gone.)
+The port pool is the *only* follow-up work on this screen. The shared database is
+decided one screen earlier, on the form itself (below), so the post-registration
+block that used to repeat the offer here has been removed: it was a second prompt
+for something the operator had already answered. A node that skipped the switch is
+given a database later from `/admin/nodes`, which is where its start and stop live
+anyway.
 
 ### The rest of the node form
 

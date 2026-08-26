@@ -68,10 +68,9 @@ export function nodeDatabasePhaseLabel(phase: NodeDatabasePhase): string {
 /**
  * Run a slow database setup while reporting what the node is doing.
  *
- * Shared by all three places that can start one (the register form, the wizard's
- * post-registration block, and the node's admin card) because they had the same
- * problem: one blocking call, up to a minute, and nothing on screen but a
- * spinner.
+ * Shared by both places that can start one (the register form and the node's
+ * admin card) because they had the same problem: one blocking call, up to a
+ * minute, and nothing on screen but a spinner.
  *
  * One timer drives both halves. The second counter is what proves the page is
  * alive; the phase poll (every third second, so a slow node cannot queue polls
