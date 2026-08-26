@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Database, PlugZap } from "lucide-react";
+import { Database, PlugZap, Trash2, TriangleAlert } from "lucide-react";
 
 import {
   ApiError,
@@ -10,7 +10,9 @@ import {
   adminProbeNodeConnection,
   adminProvisionNodeDatabase,
   type NodeHealthResult,
+  type UnregisteredNodeDatabaseView,
 } from "@/lib/api";
+import { NodeDatabaseResetDialog } from "@/components/admin/node-database-reset-dialog";
 import {
   nodeDatabasePhaseLabel,
   useNodeDatabaseProgress,
@@ -98,6 +100,14 @@ export function NodeStep({
   // fields below from the result, so nothing has to be typed or copied.
   const [provisioned, setProvisioned] = React.useState(false);
   const [provisionError, setProvisionError] = React.useState<string | null>(null);
+  // What the machine already has, read when the switch goes on. Checking up
+  // front is the difference between "this node already has one, here are your
+  // options" and a minute of spinner followed by a conflict.
+  const [existing, setExisting] = React.useState<UnregisteredNodeDatabaseView | null>(
+    null,
+  );
+  const [checking, setChecking] = React.useState(false);
+  const [resetOpen, setResetOpen] = React.useState(false);
   // Live progress for that minute-long call: the phase the node is actually in,
   // plus a second counter. Without both, a slow image pull is indistinguishable
   // from a hang, which is exactly how it read before.
@@ -163,13 +173,40 @@ export function NodeStep({
    * generated panel-side; the operator never sees a password prompt, and what
    * lands in the fields is posted straight back to be stored encrypted.
    */
-  const provisionDatabase = async () => {
+  /**
+   * Read what the node already has, when the operator turns the switch on.
+   *
+   * A machine that already runs a database cannot take a newly generated
+   * account (only its existing credential opens it), so the form has to know
+   * before it offers to create one.
+   */
+  const checkExistingDatabase = async () => {
+    if (!canProbe) return;
+    setChecking(true);
+    try {
+      setExisting(
+        await adminGetUnregisteredNodeDatabase({
+          apiUrl: apiUrl.trim(),
+          token: token.trim(),
+        }),
+      );
+    } catch {
+      // Not fatal: the provision attempt itself reports any real problem, and
+      // the manual fields are always available.
+      setExisting(null);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const provisionDatabase = async (recreate?: { confirm: string }) => {
     setProvisionError(null);
     try {
       const result = await withProgress(() =>
         adminProvisionNodeDatabase({
           apiUrl: apiUrl.trim(),
           token: token.trim(),
+          ...(recreate ? { recreate: "all" as const, confirm: recreate.confirm } : {}),
         }),
       );
       setDbHost(result.host);
@@ -177,6 +214,7 @@ export function NodeStep({
       setDbUser(result.user);
       setDbPassword(result.password);
       setProvisioned(true);
+      setExisting(null);
     } catch (err) {
       setProvisionError(
         err instanceof ApiError
@@ -379,7 +417,10 @@ export function NodeStep({
           <Switch
             id="node-enable-db"
             checked={enableDb}
-            onCheckedChange={setEnableDb}
+            onCheckedChange={(next) => {
+              setEnableDb(next);
+              if (next) void checkExistingDatabase();
+            }}
           />
         </Field>
 
@@ -396,17 +437,69 @@ export function NodeStep({
                 you, including a generated account and password; they are stored
                 encrypted when you register the node.
               </SuccessNote>
+            ) : existing?.status?.exists ? (
+              // The machine already has one. A generated account cannot be added
+              // to it, and recreating the container would not help either
+              // (MariaDB keeps its accounts in the data volume), so the honest
+              // set of options is: use its credentials, or delete it.
+              <div className="flex flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
+                <div className="flex items-start gap-2 text-sm">
+                  <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
+                  <span className="text-muted-foreground">
+                    {existing.registeredAs ? (
+                      <>
+                        This machine already runs a database, and its agent is
+                        already registered here as{" "}
+                        <strong>{existing.registeredAs}</strong>. Only the
+                        credential stored on that node opens it, so manage it from
+                        that node&apos;s page rather than setting it up again.
+                      </>
+                    ) : (
+                      <>
+                        This machine already runs a database container (
+                        <code className="font-mono text-foreground">
+                          {existing.status.containerName}
+                        </code>
+                        ). A newly generated account cannot be added to it: only
+                        whoever holds its existing credential can open it, and
+                        recreating the container would not change that, because
+                        MariaDB keeps its accounts in the data volume.
+                      </>
+                    )}
+                  </span>
+                </div>
+                {!existing.registeredAs && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={() => setResetOpen(true)}
+                      disabled={provisioning}
+                    >
+                      {provisioning ? <Spinner /> : <Trash2 />}
+                      Delete it and create a new one
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      Or type its existing credentials into the fields below.
+                    </span>
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={provisionDatabase}
-                    disabled={provisioning || !canProbe}
+                    onClick={() => provisionDatabase()}
+                    disabled={provisioning || checking || !canProbe}
                   >
-                    {provisioning ? <Spinner /> : <Database />}
-                    {provisioning ? "Setting up…" : "Set it up for me"}
+                    {provisioning || checking ? <Spinner /> : <Database />}
+                    {provisioning
+                      ? "Setting up…"
+                      : checking
+                        ? "Checking the node…"
+                        : "Set it up for me"}
                   </Button>
                   {!provisioning && (
                     <span className="text-xs text-muted-foreground">
@@ -443,11 +536,23 @@ export function NodeStep({
             {provisionError && (
               <ErrorNote
                 title="Could not create the database"
-                onRetry={provisionDatabase}
+                onRetry={() => provisionDatabase()}
                 retrying={provisioning}
               >
                 {provisionError}
               </ErrorNote>
+            )}
+            {/* Remounted on each open, so a cancelled confirmation leaves nothing
+              typed behind for the next attempt. */}
+            {resetOpen && existing?.status && (
+              <NodeDatabaseResetDialog
+                confirmPhrase={existing.status.containerName}
+                // No node row yet, so the panel cannot count what is in there.
+                databaseCount={null}
+                subject="This deletes the database container on the node, and the volume holding its data, then creates an empty one."
+                onConfirm={(typed) => provisionDatabase({ confirm: typed })}
+                onClose={() => setResetOpen(false)}
+              />
             )}
             <Field>
               <FieldLabel htmlFor="node-db-host">Database host</FieldLabel>

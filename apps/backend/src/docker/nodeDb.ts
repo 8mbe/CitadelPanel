@@ -29,7 +29,12 @@
 import type Docker from "dockerode";
 import { randomBytes } from "node:crypto";
 import { docker } from "./client";
-import { ensureImage, ensureNetwork, removeNetwork } from "./container";
+import {
+  ensureImage,
+  ensureNetwork,
+  removeContainer,
+  removeNetwork,
+} from "./container";
 import { execInContainer } from "./exec";
 import { config } from "../config";
 import { badRequest, conflict, notFound } from "../http";
@@ -50,6 +55,15 @@ const DATA_DIR = "/var/lib/mysql";
  * its own message, rather than a bare fetch abort.
  */
 const READY_TIMEOUT_MS = 120_000;
+
+/**
+ * Consecutive access-denied pings tolerated before giving up on a credential.
+ *
+ * At one probe every two seconds this is a ~6s grace for the tail end of a first
+ * boot, after which "wrong credential" is the honest answer rather than two more
+ * minutes of pretending to start.
+ */
+const DENIED_TOLERANCE = 3;
 
 /** Docker returns 404 for "no such container/volume". */
 function isNotFound(error: unknown): boolean {
@@ -90,6 +104,18 @@ export function generateRootPassword(length = 32): string {
  * credential the panel owns end to end, separate from the image's root account,
  * and one that shows up as itself in `SHOW PROCESSLIST` and the audit trail.
  */
+/**
+ * How much to throw away before creating the container again.
+ *
+ * - `"container"`: the container only. The volume, its databases and its
+ *   accounts survive, so this needs the credential that volume already knows.
+ *   For a container that is broken, misconfigured or gone.
+ * - `"all"`: container **and** volume. The only thing that resets a credential
+ *   nobody holds, and it destroys every database on the node. The panel gates it
+ *   behind a typed confirmation.
+ */
+export type NodeDbRecreate = "container" | "all";
+
 export interface NodeDbAdmin {
   user: string;
   password: string;
@@ -283,6 +309,9 @@ export async function findNodeDbContainer(): Promise<Docker.ContainerInfo | null
   );
 }
 
+/** The three things a ping can tell us. See {@link probePing}. */
+export type NodeDbProbe = "alive" | "unreachable" | "denied";
+
 /** What the panel shows on the node's database card. */
 export interface NodeDbStatus {
   /** False when the container does not exist: the "Set up" case. */
@@ -291,6 +320,14 @@ export interface NodeDbStatus {
   state: string | null;
   /** True once MariaDB answers a ping, so "running" means "usable". */
   ready: boolean;
+  /**
+   * Why `ready` is false, when a credential was supplied to check with.
+   *
+   * `"denied"` is the one an operator has to act on: the database is up and
+   * refusing the panel's account, which no amount of waiting fixes. Null when no
+   * credential was supplied (nothing was probed).
+   */
+  probe: NodeDbProbe | null;
   /** The container's IP on `node_db_net`; null when absent or detached. */
   host: string | null;
   port: number;
@@ -327,19 +364,21 @@ export async function getNodeDbStatus(admin?: NodeDbAdmin): Promise<NodeDbStatus
       exists: false,
       state: null,
       ready: false,
+      probe: null,
       host: null,
       image: config.nodeDbImage,
     };
   }
 
   const running = info.State === "running";
-  const ready = running && admin ? await pingSucceeds(info.Id, admin) : false;
+  const probe = running && admin ? await probePing(info.Id, admin) : null;
 
   return {
     ...base,
     exists: true,
     state: info.State ?? null,
-    ready,
+    ready: probe === "alive",
+    probe,
     // Docker reports an empty string, not a missing field, for a stopped
     // container's IP. `|| null` collapses both into "no address".
     host: info.NetworkSettings?.Networks?.[base.networkName]?.IPAddress || null,
@@ -363,59 +402,88 @@ export async function getNodeDbStatus(admin?: NodeDbAdmin): Promise<NodeDbStatus
  * the operator ran the script by hand; both are recoverable by hand, and neither
  * is worth destroying data over.
  */
-export async function setUpNodeDb(admin: NodeDbAdmin): Promise<NodeDbStatus> {
+export async function setUpNodeDb(
+  admin: NodeDbAdmin,
+  options: { recreate?: NodeDbRecreate } = {},
+): Promise<NodeDbStatus> {
   assertValidAdmin(admin);
 
-  const networkName = config.nodeDbNetwork;
   const containerName = config.nodeDbContainer;
-  const isRoot = admin.user.toLowerCase() === "root";
+  const volumeName = config.nodeDbVolume;
 
   await ensureNodeDbNetwork();
 
   const existing = await findNodeDbContainer();
-  if (existing) {
+
+  // "Delete and start over": the only thing that truly resets a database whose
+  // credential nobody has, because the accounts live in the volume. Destroys
+  // every database inside it, which is why the panel makes the operator confirm
+  // it and never picks it automatically.
+  if (options.recreate === "all") {
+    if (existing) await removeContainer(docker, existing.Id);
+    await removeVolume(volumeName);
+  } else if (options.recreate === "container" && existing) {
+    // "Recreate the container": for a container that is broken or gone while the
+    // volume (and therefore the data and the accounts) is intact. The credential
+    // must be the one that volume already knows; a fresh one would be refused,
+    // which `waitUntilReady` now says immediately instead of waiting out a
+    // two-minute timeout.
+    await removeContainer(docker, existing.Id);
+  }
+
+  const current = options.recreate ? await findNodeDbContainer() : existing;
+
+  if (current) {
     // Start it before probing: a stopped container cannot answer, and "setup"
     // on an existing-but-stopped database should leave it usable.
-    if (existing.State !== "running") {
-      await docker.getContainer(existing.Id).start();
+    if (current.State !== "running") {
+      await docker.getContainer(current.Id).start();
     }
-    await waitUntilReady(existing.Id, admin, {
-      // An already-initialised volume comes back in seconds. If it does not, the
-      // likely cause is a credential this database does not know.
-      onTimeout: () =>
-        conflict(
-          `The container "${containerName}" already exists on this node but did ` +
-            `not accept the panel's stored credentials. It was probably created ` +
-            `by another panel install or by hand. Either register this node with ` +
-            `that database's credentials, or remove the container ` +
-            `("docker rm -f ${containerName}") and set it up again. Its data ` +
-            `volume "${config.nodeDbVolume}" is kept either way.`,
-        ),
-    });
+    await waitUntilReady(current.Id, admin);
     return getNodeDbStatus(admin);
   }
 
-  await ensureVolume(config.nodeDbVolume);
+  // Read this BEFORE creating the volume, or the answer is always "not fresh":
+  // `ensureVolume` is what makes it exist. Getting that order wrong made a
+  // first-ever setup skip creating the panel's account and then time out waiting
+  // for a credential nothing had been told about.
+  //
+  // Whether MariaDB is initialising from scratch decides whether the root
+  // password passed below has any effect at all: the image applies
+  // MARIADB_ROOT_PASSWORD only to an empty data directory. On a kept volume the
+  // accounts already exist, so none is created and the credential probe is what
+  // proves the setup.
+  const freshData = await volumeIsEmpty(volumeName);
+  const isRoot = admin.user.toLowerCase() === "root";
+
+  await ensureVolume(volumeName);
   await ensureImage(docker, config.nodeDbImage);
 
   // When the panel asked for its own named account, the image's root password is
   // generated here and then deliberately forgotten: nothing needs it again,
   // because the account created below has the same privileges, and a second
-  // root-equivalent secret that no one holds is one fewer thing to leak. The
-  // node's recovery path if the panel loses its credential is the Docker socket
-  // (recreate the container against the kept volume), not a spare password.
+  // root-equivalent secret that no one holds is one fewer thing to leak.
   const rootPassword = isRoot ? admin.password : generateRootPassword(32);
 
   const container = await docker.createContainer(
     nodeDbContainerConfig({
       containerName,
       image: config.nodeDbImage,
-      networkName,
-      volumeName: config.nodeDbVolume,
+      networkName: config.nodeDbNetwork,
+      volumeName,
       rootPassword,
     }),
   );
   await container.start();
+
+  if (!freshData) {
+    // Existing data: the accounts are already in the volume. Prove the panel's
+    // own credential directly, and fail fast (not in two minutes) if this volume
+    // belongs to a different install.
+    await waitUntilReady(container.id, admin);
+    return getNodeDbStatus(admin);
+  }
+
   await waitUntilReady(container.id, { user: "root", password: rootPassword });
 
   if (!isRoot) {
@@ -425,6 +493,40 @@ export async function setUpNodeDb(admin: NodeDbAdmin): Promise<NodeDbStatus> {
   }
 
   return getNodeDbStatus(admin);
+}
+
+/**
+ * Remove the data volume, and with it every database on this node.
+ *
+ * Only reached through an explicit `recreate: "all"`, which the panel only sends
+ * after the operator confirms a dialog naming how many databases it holds.
+ */
+async function removeVolume(name: string): Promise<void> {
+  try {
+    await docker.getVolume(name).remove({ force: true });
+  } catch (error) {
+    if (!isNotFound(error)) throw error;
+  }
+}
+
+/**
+ * Whether a data volume has never been initialised by MariaDB.
+ *
+ * Docker does not report a volume's contents on a plain inspect, so this uses
+ * the one fact it does give reliably: a volume that does not exist yet is empty.
+ * Anything else is assumed to hold data, which is the safe direction: MariaDB
+ * skips its initialisation on a populated directory anyway, so the only cost of
+ * being wrong is that the panel proves its credential (which it must do in
+ * either case) instead of creating an account.
+ */
+async function volumeIsEmpty(name: string): Promise<boolean> {
+  try {
+    await docker.getVolume(name).inspect();
+    return false;
+  } catch (error) {
+    if (isNotFound(error)) return true;
+    throw error;
+  }
 }
 
 /**
@@ -553,14 +655,28 @@ async function ensureVolume(name: string): Promise<void> {
 }
 
 /**
- * True when MariaDB answers `mariadb-admin ping` as the given account.
+ * What `mariadb-admin ping` said, as the given account.
+ *
+ * Three outcomes, and the difference between the last two is the whole point:
+ * "not up yet" is worth waiting out, "wrong credential" never becomes right. A
+ * loop that treats them the same spends two minutes reporting progress on
+ * something that failed on the first attempt.
+ *
+ * Classified by the output text, not the exit code, because `mariadb-admin`
+ * exits **0** on an access-denied ping (verified against mariadb:11) and 1 when
+ * the server is unreachable. Matching on the status line is the only thing that
+ * distinguishes them.
  *
  * The image ships `mariadb-admin`, not the `mysqladmin` symlink: the wrong name
  * fails with "executable file not found" on every probe, which reads exactly
  * like a database that never came up. The password goes through `MYSQL_PWD`
  * rather than `-p`, so it stays out of the container's process list.
  */
-async function pingSucceeds(containerId: string, admin: NodeDbAdmin): Promise<boolean> {
+async function probePing(
+  containerId: string,
+  admin: NodeDbAdmin,
+): Promise<NodeDbProbe> {
+  let output: string;
   try {
     const { stdout, stderr } = await execInContainer(
       docker,
@@ -571,11 +687,15 @@ async function pingSucceeds(containerId: string, admin: NodeDbAdmin): Promise<bo
         env: [`MYSQL_PWD=${admin.password}`],
       },
     );
-    return `${stdout}${stderr}`.includes("mysqld is alive");
+    output = `${stdout}${stderr}`;
   } catch {
-    // Exec failed: the container is still booting, or has no shell yet.
-    return false;
+    // Exec itself failed: the container is still booting, or is gone.
+    return "unreachable";
   }
+
+  if (output.includes("mysqld is alive")) return "alive";
+  if (/access denied/i.test(output)) return "denied";
+  return "unreachable";
 }
 
 /**
@@ -583,17 +703,37 @@ async function pingSucceeds(containerId: string, admin: NodeDbAdmin): Promise<bo
  *
  * The container reports "running" long before mysqld listens, so every caller
  * that promises a usable database has to wait here.
+ *
+ * An access-denied answer short-circuits the wait. It is not a stage of
+ * starting up: the credential is wrong and will still be wrong in two minutes.
+ * A few denials are tolerated first (`DENIED_TOLERANCE`) because the very end of
+ * a first boot can briefly answer before its grants are flushed, and a false
+ * "wrong credential" on a working setup would be worse than six extra seconds.
  */
 async function waitUntilReady(
   containerId: string,
   admin: NodeDbAdmin,
-  options: { onTimeout?: () => Error } = {},
+  options: { onTimeout?: () => Error; onDenied?: () => Error } = {},
 ): Promise<void> {
   const deadline = Date.now() + READY_TIMEOUT_MS;
+  let denials = 0;
+
   while (Date.now() < deadline) {
-    if (await pingSucceeds(containerId, admin)) return;
+    const probe = await probePing(containerId, admin);
+    if (probe === "alive") return;
+
+    if (probe === "denied") {
+      denials += 1;
+      if (denials >= DENIED_TOLERANCE) {
+        throw options.onDenied?.() ?? credentialRejected(admin.user);
+      }
+    } else {
+      denials = 0;
+    }
+
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
+
   throw (
     options.onTimeout?.() ??
     conflict(
@@ -601,5 +741,26 @@ async function waitUntilReady(
         `${Math.round(READY_TIMEOUT_MS / 1000)}s. Check the container's logs ` +
         `("docker logs ${config.nodeDbContainer}").`,
     )
+  );
+}
+
+/**
+ * The error for "this database exists and does not know this account".
+ *
+ * The advice matters as much as the diagnosis, and the obvious advice is wrong:
+ * recreating the container does **not** reset the password. MariaDB only applies
+ * `MARIADB_ROOT_PASSWORD` when it initialises an empty data directory, so on an
+ * existing volume the old credentials survive every `docker rm` (verified
+ * against mariadb:11). Only the credential the volume already knows, or deleting
+ * the volume with the databases in it, changes this.
+ */
+function credentialRejected(user: string): Error {
+  return conflict(
+    `The database on this node refused the account "${user}": it exists and ` +
+      `does not know this credential. Recreating the container will not help, ` +
+      `because MariaDB keeps its accounts in the data volume ` +
+      `("${config.nodeDbVolume}"), not in the container. Either register this ` +
+      `node with the credentials that database already knows, or delete the ` +
+      `volume and start a new database, which destroys every database inside it.`,
   );
 }

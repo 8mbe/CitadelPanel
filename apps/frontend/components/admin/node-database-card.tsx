@@ -1,7 +1,15 @@
 "use client";
 
 import * as React from "react";
-import { Check, Database, Play, Square, TriangleAlert } from "lucide-react";
+import {
+  Check,
+  Database,
+  Play,
+  RefreshCw,
+  Square,
+  Trash2,
+  TriangleAlert,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +38,7 @@ import {
   adminStopNodeDatabase,
   ApiError,
 } from "@/lib/api";
+import { NodeDatabaseResetDialog } from "@/components/admin/node-database-reset-dialog";
 import {
   nodeDatabasePhaseLabel,
   useNodeDatabaseProgress,
@@ -54,9 +63,12 @@ import type { NodeDatabaseView } from "@/lib/types";
  */
 export function NodeDatabaseCard({
   nodeId,
+  nodeName,
   onChanged,
 }: {
   nodeId: string;
+  /** What the operator must type to confirm deleting the data volume. */
+  nodeName: string;
   onChanged?: () => void | Promise<void>;
 }) {
   const [view, setView] = React.useState<NodeDatabaseView | null>(null);
@@ -65,6 +77,7 @@ export function NodeDatabaseCard({
   const [error, setError] = React.useState<string | null>(null);
   const [stopOpen, setStopOpen] = React.useState(false);
   const [replaceOpen, setReplaceOpen] = React.useState(false);
+  const [resetOpen, setResetOpen] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -133,6 +146,12 @@ export function NodeDatabaseCard({
   // database, so it takes a confirmation that names the address being replaced.
   const configuredElsewhere = Boolean(view?.configured && !status?.exists);
 
+  // The database is up and refusing the panel's account. Not a stage of starting
+  // (the agent now says so in seconds rather than after a two-minute wait), and
+  // not fixable by recreating the container, because MariaDB keeps its accounts
+  // in the data volume. So the operator gets the two choices that do exist.
+  const rejecting = status?.probe === "denied";
+
   return (
     <Card>
       <CardHeader>
@@ -198,12 +217,25 @@ export function NodeDatabaseCard({
               </Callout>
             )}
 
-            {running && !status.ready && (
+            {rejecting ? (
               <Callout tone="warning">
-                The container is running but is not accepting connections yet.
-                MariaDB&apos;s first boot initialises its system tables, which
-                takes about 20 seconds.
+                The database is running but refuses the account the panel holds
+                (<Code>{view?.hasCredentials ? "stored credential" : "none stored"}</Code>),
+                so no server here can be given a database. Recreating the
+                container will not change that: MariaDB keeps its accounts in the
+                data volume <Code>{status.volumeName}</Code>, not in the
+                container. Either register this node with the credentials this
+                database already knows, or delete it and start over below.
               </Callout>
+            ) : (
+              running &&
+              !status.ready && (
+                <Callout tone="warning">
+                  The container is running but is not accepting connections yet.
+                  MariaDB&apos;s first boot initialises its system tables, which
+                  takes about 20 seconds.
+                </Callout>
+              )
             )}
           </>
         ) : configuredElsewhere ? (
@@ -266,6 +298,37 @@ export function NodeDatabaseCard({
                   ? "Create one here instead"
                   : "Set up database"}
             </Button>
+          ) : rejecting ? (
+            <>
+              {/* Two real options, in the order of what they cost. Recreating the
+                container keeps every database and only helps if the stored
+                credential is the one this volume knows; deleting the volume
+                always works and destroys the data. */}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={() =>
+                  run("setup", () =>
+                    adminSetUpNodeDatabase(nodeId, { recreate: "container" }),
+                  )
+                }
+              >
+                {action === "setup" ? <Spinner /> : <RefreshCw />}
+                Recreate the container
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                disabled={busy}
+                onClick={() => setResetOpen(true)}
+              >
+                <Trash2 />
+                Delete and start over
+              </Button>
+            </>
           ) : running ? (
             <Button
               type="button"
@@ -299,6 +362,22 @@ export function NodeDatabaseCard({
           </Button>
         </div>
       </CardContent>
+
+      {/* Remounted on each open so a cancelled confirmation never leaves a
+        ticked box or a typed name behind for the next attempt. */}
+      {resetOpen && (
+        <NodeDatabaseResetDialog
+          confirmPhrase={nodeName}
+          databaseCount={view?.databaseCount ?? null}
+          subject={`This deletes the database on "${nodeName}" and creates an empty one in its place.`}
+          onConfirm={async (typed) => {
+            await run("setup", () =>
+              adminSetUpNodeDatabase(nodeId, { recreate: "all", confirm: typed }),
+            );
+          }}
+          onClose={() => setResetOpen(false)}
+        />
+      )}
 
       {/* Replacing a configured address is destructive in a way that is easy to
         miss, so the dialog states what stops working rather than just asking. */}

@@ -13,6 +13,7 @@ const base: NodeDatabaseStatus = {
   exists: true,
   state: "running",
   ready: true,
+  probe: "alive",
   host: "172.18.0.2",
   port: 3306,
   containerName: "citadel-node-db",
@@ -28,22 +29,38 @@ describe("nodeDatabasePhase", () => {
   });
 
   test("no container yet means the image is still coming down", () => {
-    expect(nodeDatabasePhase({ ...base, exists: false, state: null, ready: false })).toBe(
-      "pulling",
-    );
+    expect(
+      nodeDatabasePhase({
+        ...base,
+        exists: false,
+        state: null,
+        ready: false,
+        probe: null,
+      }),
+    ).toBe("pulling");
   });
 
   test("a created-but-not-running container is starting", () => {
-    expect(nodeDatabasePhase({ ...base, state: "created", ready: false })).toBe(
-      "starting",
-    );
-    expect(nodeDatabasePhase({ ...base, state: "exited", ready: false })).toBe(
-      "starting",
-    );
+    expect(
+      nodeDatabasePhase({ ...base, state: "created", ready: false, probe: null }),
+    ).toBe("starting");
+    expect(
+      nodeDatabasePhase({ ...base, state: "exited", ready: false, probe: null }),
+    ).toBe("starting");
   });
 
   test("running without answering is the first-boot initialisation", () => {
-    expect(nodeDatabasePhase({ ...base, ready: false })).toBe("initialising");
+    expect(nodeDatabasePhase({ ...base, ready: false, probe: "unreachable" })).toBe(
+      "initialising",
+    );
+  });
+
+  test("a refused credential is its own phase, not 'initialising'", () => {
+    // The bug this pins: the UI said "initialising its system tables" while the
+    // container log showed access-denied every two seconds.
+    expect(nodeDatabasePhase({ ...base, ready: false, probe: "denied" })).toBe(
+      "denied",
+    );
   });
 
   test("answering as the panel's account is done", () => {
@@ -53,7 +70,13 @@ describe("nodeDatabasePhase", () => {
 
 describe("nodeDatabasePhaseLabel", () => {
   test("every phase has a sentence, and none of them is empty", () => {
-    for (const phase of ["pulling", "starting", "initialising", "ready"] as const) {
+    for (const phase of [
+      "pulling",
+      "starting",
+      "initialising",
+      "denied",
+      "ready",
+    ] as const) {
       expect(nodeDatabasePhaseLabel(phase).length).toBeGreaterThan(10);
     }
   });

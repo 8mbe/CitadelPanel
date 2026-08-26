@@ -124,6 +124,15 @@ export interface NodeDatabaseStatus {
   state: string | null;
   /** True once MariaDB answered a ping. */
   ready: boolean;
+  /**
+   * Why `ready` is false, when there was a credential to check with.
+   *
+   * `"denied"` is the state an operator has to decide about: the database is
+   * running and refusing the panel's account. Waiting does not fix it, and
+   * neither does recreating the container, because MariaDB keeps its accounts in
+   * the data volume.
+   */
+  probe: "alive" | "unreachable" | "denied" | null;
   /** The container's address on the node's internal DB network. */
   host: string | null;
   port: number;

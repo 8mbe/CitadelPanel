@@ -2162,6 +2162,13 @@ export async function adminGetUnregisteredNodeDatabase(payload: {
 export async function adminProvisionNodeDatabase(payload: {
   apiUrl: string;
   token: string;
+  /**
+   * `"all"` deletes an existing database container **and its data volume**
+   * first, destroying every database inside it. Requires `confirm` to equal the
+   * container's name; the server re-checks, so this cannot be a stray click.
+   */
+  recreate?: "all";
+  confirm?: string;
 }): Promise<ProvisionedNodeDatabase> {
   return request<ProvisionedNodeDatabase>("/api/admin/nodes/database/provision", {
     method: "POST",
@@ -2183,11 +2190,25 @@ export async function adminProvisionNodeDatabase(payload: {
  */
 export async function adminSetUpNodeDatabase(
   nodeId: string,
-  options: { replaceEndpoint?: boolean } = {},
+  options: {
+    replaceEndpoint?: boolean;
+    /**
+     * Throw away what is there first. `"container"` keeps the data volume (and
+     * therefore the databases and accounts in it); `"all"` deletes the volume
+     * too, which destroys every database on the node and needs `confirm` to
+     * equal the node's name.
+     */
+    recreate?: "container" | "all";
+    confirm?: string;
+  } = {},
 ): Promise<NodeDatabaseView> {
   return request<NodeDatabaseView>(`/api/admin/nodes/${nodeId}/database/setup`, {
     method: "POST",
-    body: JSON.stringify({ replaceEndpoint: options.replaceEndpoint === true }),
+    body: JSON.stringify({
+      replaceEndpoint: options.replaceEndpoint === true,
+      ...(options.recreate ? { recreate: options.recreate } : {}),
+      ...(options.confirm ? { confirm: options.confirm } : {}),
+    }),
   });
 }
 

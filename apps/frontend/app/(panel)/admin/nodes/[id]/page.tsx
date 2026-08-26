@@ -378,7 +378,11 @@ function NodeDetailBody({
 
       {/* Loads itself: the database status is an agent round trip and does not
         belong on this page's critical path. */}
-      <NodeDatabaseCard nodeId={detail.node.id} onChanged={onChanged} />
+      <NodeDatabaseCard
+        nodeId={detail.node.id}
+        nodeName={detail.node.name}
+        onChanged={onChanged}
+      />
 
       <PortPoolCard
         nodeId={detail.node.id}

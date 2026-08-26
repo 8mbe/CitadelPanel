@@ -114,6 +114,57 @@ So all three entry points run the call through `useNodeDatabaseProgress`
 A failed poll is swallowed. The setup call owns the outcome, and a missed tick is
 not news worth putting on screen.
 
+## When the credential is refused: two options, and only two
+
+MariaDB keeps its accounts **in the data volume**, not in the container. That one
+fact decides the whole recovery story, and it is worth stating because the
+obvious guess is wrong: `MARIADB_ROOT_PASSWORD` is applied only when the image
+initialises an *empty* data directory, so on an existing volume the old
+credentials survive every `docker rm` (verified against mariadb:11 — recreating
+a container with a new password still authenticates with the old one).
+
+So when a database refuses the panel's account, there are exactly two ways
+forward, and the panel offers both rather than picking one:
+
+| Option | What it does | Cost |
+| --- | --- | --- |
+| **Recreate the container** (`recreate: "container"`) | New container, same volume | Nothing. Every database survives. Only works if the stored credential is the one that volume knows |
+| **Delete and start over** (`recreate: "all"`) | Deletes container **and volume** | Destroys every database on the node |
+
+The first is offered first because it is free, and it is the fix for a container
+that is broken, misconfigured or gone rather than a credential that is wrong. The
+second always works, which is exactly why it is gated.
+
+### The wipe is gated twice, server-side
+
+`recreate: "all"` needs `confirm` to equal the node's name (the container's name,
+in the pre-registration form). The dialog collects it in two steps, matching the
+server-reinstall dialog: a page of consequences naming how many databases are
+destroyed, then a checkbox plus the name typed by hand. A single "are you sure?"
+is a reflex; typing the name is a decision.
+
+The check is re-done in the route, so calling the API directly gains nothing, and
+the audit row records `recreate` plus the number of databases that were destroyed
+(counted before the volume is deleted, while they still exist).
+
+## An access-denied ping is not a stage of starting up
+
+The first version treated every failed ping the same and retried for 120 seconds,
+so a wrong credential produced two minutes of "MariaDB is initialising its system
+tables" over a container log full of `Access denied for user 'root'@'127.0.0.1'`.
+That is a lie the logs contradict, which is worse than no progress output at all.
+
+The probe is now three-valued (`alive` / `unreachable` / `denied`), classified by
+the output text rather than the exit code, because `mariadb-admin` exits **0** on
+an access-denied ping and 1 when the server is unreachable. Only the status line
+distinguishes them.
+
+`denied` short-circuits the wait after a 6-second grace (a first boot can briefly
+answer before its grants are flushed), so a wrong credential now fails in about
+9 seconds instead of 120, with a message that names the cause. The status
+endpoint carries the same value, so the UI says "the database is up but refusing
+this credential" instead of inventing an initialisation that finished long ago.
+
 ## Refusing before the wait, not after it
 
 A machine that already has a `citadel-node-db` container cannot accept a
@@ -129,9 +180,9 @@ knows the machine:
   registering the same agent twice, and the database they are looking for is on
   that node's page. Only the credential stored on that node can open it.
 - **It does not**: the container is from somewhere else. Enter its credential in
-  the form's fields, or remove the container (`docker rm -f citadel-node-db`) and
-  set it up again. The data volume is kept, so an existing database is not lost
-  by removing the container.
+  the form's fields, or delete it and create a new one, which destroys whatever
+  is in it (the same gated wipe as above). Removing only the container would
+  change nothing, for the reason in the section above.
 
 "Another panel install" was the only explanation the first version offered, which
 was misleading in the most common case: one machine registered twice during a
@@ -187,10 +238,9 @@ admin card names the address being replaced and asks; only then does it send
 `replaceEndpoint: true`. The wizard never sends it: there, the state simply means
 the operator typed those credentials a minute ago.
 
-A container that exists and *rejects* the stored password is a 409, not a
-recreate. It means another panel install (or a hand-run of the script) owns this
-node's database, and recreating it would destroy every tenant's data. The panel
-says so and names the two ways out.
+A container that exists and *rejects* the stored credential is a 409, not a
+silent recreate: it means the volume belongs to a different install (or a
+hand-run of the script), and the panel says so and offers the two options above.
 
 Until the container is up, the row holds the account but no host.
 `hasDatabaseServer` is `host AND user`, so a half-finished setup never offers

@@ -35,6 +35,7 @@ import {
   setUpNodeDb,
   startNodeDb,
   stopNodeDb,
+  type NodeDbRecreate,
 } from "./docker/nodeDb";
 import {
   hasRunningJob,
@@ -158,6 +159,20 @@ function parseAdminBody(body: Record<string, unknown>): {
     throw badRequest('"adminUser" must be a non-empty string when supplied.');
   }
   return { user: (user as string) ?? "root", password };
+}
+
+/**
+ * How much of an existing database to throw away, from a request body.
+ *
+ * Absent means "do not destroy anything", which is what every ordinary setup
+ * sends. An unrecognised value is a 400 rather than a silent no-op, because the
+ * difference between the two accepted values is whether a node's databases
+ * survive.
+ */
+function parseRecreate(value: unknown): NodeDbRecreate | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (value === "container" || value === "all") return value;
+  throw badRequest('"recreate" must be "container" or "all" when supplied.');
 }
 
 /** The same credential from the status route's headers. */
@@ -567,10 +582,20 @@ const server = Bun.serve<ConsoleSocket, never>({
      * A non-root `adminUser` is created inside MariaDB with a throwaway root
      * password that is then forgotten, so the panel's account is the only
      * credential anyone holds.
+     *
+     * `recreate` throws away what is already there first: `"container"` keeps the
+     * data volume (and therefore the accounts), `"all"` deletes it and every
+     * database in it. The panel only ever sends either after the operator picked
+     * it explicitly.
      */
     "/v1/database/setup": {
       POST: route(async (request) => {
-        return json(await setUpNodeDb(parseAdminBody(await parseJsonBody(request))));
+        const body = await parseJsonBody(request);
+        return json(
+          await setUpNodeDb(parseAdminBody(body), {
+            recreate: parseRecreate(body.recreate),
+          }),
+        );
       }),
     },
 

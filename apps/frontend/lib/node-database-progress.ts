@@ -20,9 +20,17 @@ import type { NodeDatabaseStatus } from "@/lib/types";
  * - running but not answering as the panel's account ⇒ MariaDB's first boot, or
  *   the account is not created yet. These two are deliberately one phase: they
  *   are indistinguishable from outside, and both mean "wait".
+ * - running and *refusing* the account ⇒ not a stage of starting at all. Saying
+ *   "initialising" here (which this did, once) is a lie the logs contradict:
+ *   the database is up and denying access, and no amount of waiting fixes it.
  * - answering ⇒ done.
  */
-export type NodeDatabasePhase = "pulling" | "starting" | "initialising" | "ready";
+export type NodeDatabasePhase =
+  | "pulling"
+  | "starting"
+  | "initialising"
+  | "denied"
+  | "ready";
 
 /** Classify a polled status. `null` (not asked yet) counts as pulling. */
 export function nodeDatabasePhase(
@@ -30,7 +38,8 @@ export function nodeDatabasePhase(
 ): NodeDatabasePhase {
   if (!status || !status.exists) return "pulling";
   if (status.state !== "running") return "starting";
-  return status.ready ? "ready" : "initialising";
+  if (status.ready) return "ready";
+  return status.probe === "denied" ? "denied" : "initialising";
 }
 
 /**
@@ -49,6 +58,8 @@ export function nodeDatabasePhaseLabel(phase: NodeDatabasePhase): string {
       return "Starting the database container.";
     case "initialising":
       return "MariaDB is initialising its system tables. About 20s.";
+    case "denied":
+      return "The database is up but refusing this credential. Not a wait: it needs a decision.";
     case "ready":
       return "Database is up. Finishing.";
   }

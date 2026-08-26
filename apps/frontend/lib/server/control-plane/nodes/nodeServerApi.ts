@@ -392,12 +392,20 @@ export async function getNodeDbInfo(nodeId: string): Promise<NodeDbInfo> {
  * exists at all, so the admin card can offer "Set up" rather than a broken
  * "Start".
  */
+/** How much of an existing database to throw away first. See the agent's docs. */
+export type NodeDbRecreate = "container" | "all";
+
 export interface NodeDbStatus {
   exists: boolean;
   /** Docker's status string ("running", "exited", …); null when absent. */
   state: string | null;
   /** True once MariaDB answered a ping, so "running" means "usable". */
   ready: boolean;
+  /**
+   * Why `ready` is false. `"denied"` is the actionable one: the database is up
+   * and refusing the panel's account, which waiting never fixes.
+   */
+  probe: "alive" | "unreachable" | "denied" | null;
   host: string | null;
   port: number;
   containerName: string;
@@ -455,10 +463,11 @@ function adminHeaders(admin: NodeDbAdmin): Record<string, string> {
 export async function setUpNodeDb(
   nodeId: string,
   admin: NodeDbAdmin,
+  recreate?: NodeDbRecreate,
 ): Promise<NodeDbStatus> {
   return nodeRequest(nodeId, "/v1/database/setup", {
     method: "POST",
-    body: { adminUser: admin.user, adminPassword: admin.password },
+    body: { adminUser: admin.user, adminPassword: admin.password, recreate },
     timeoutMs: 300_000,
   });
 }
@@ -493,10 +502,11 @@ export async function setUpNodeDbUnregistered(
   apiUrl: string,
   apiToken: string,
   admin: NodeDbAdmin,
+  recreate?: NodeDbRecreate,
 ): Promise<NodeDbStatus> {
   return nodeRequestFor(unregisteredNode(apiUrl, apiToken), "/v1/database/setup", {
     method: "POST",
-    body: { adminUser: admin.user, adminPassword: admin.password },
+    body: { adminUser: admin.user, adminPassword: admin.password, recreate },
     timeoutMs: 300_000,
   });
 }

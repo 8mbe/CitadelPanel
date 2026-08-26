@@ -23,6 +23,7 @@
 import { requireAdmin } from "../auth/middleware";
 import { sql } from "../db/client";
 import {
+  badRequest,
   conflict,
   json,
   notFound,
@@ -37,6 +38,7 @@ import {
   startNodeDb,
   stopNodeDb,
   type NodeDbAdmin,
+  type NodeDbRecreate,
   type NodeDbStatus,
 } from "../nodes/nodeServerApi";
 import {
@@ -155,6 +157,38 @@ export async function handleGetNodeDatabase(
   }
 }
 
+/**
+ * The requested destroy-first mode, or undefined for an ordinary setup.
+ *
+ * An unrecognised value is refused rather than ignored: the difference between
+ * the two accepted ones is whether a node's databases survive.
+ */
+function parseRecreate(body: Record<string, unknown>): NodeDbRecreate | undefined {
+  const value = body.recreate;
+  if (value === undefined || value === null) return undefined;
+  if (value === "container" || value === "all") return value;
+  throw badRequest('"recreate" must be "container" or "all".');
+}
+
+/**
+ * Refuse a volume delete that the operator did not type out.
+ *
+ * A dialog button is one misclick; typing the node's name is a decision. This is
+ * the only irreversible action in the feature (every database on the node goes
+ * with the volume), so it is the only one that asks for more than a click, and
+ * the check lives server-side so it cannot be skipped by calling the API
+ * directly.
+ */
+function assertConfirmedWipe(body: Record<string, unknown>, nodeName: string): void {
+  const typed = typeof body.confirm === "string" ? body.confirm.trim() : "";
+  if (typed !== nodeName) {
+    throw badRequest(
+      `Deleting the data volume destroys every database on this node. To ` +
+        `confirm, send "confirm" with the node's name ("${nodeName}").`,
+    );
+  }
+}
+
 /** The stored credential, or undefined when the panel holds none. */
 function storedAdmin(node: {
   db: { user?: string | null; password?: string | null };
@@ -200,6 +234,7 @@ export async function handleSetUpNodeDatabase(
   const node = await requireNodeWithSecrets(id);
   const body = await parseJsonBody(request).catch(() => ({}) as Record<string, unknown>);
   const replaceEndpoint = body.replaceEndpoint === true;
+  const recreate = parseRecreate(body);
 
   // Guard the one case where creating a container is the wrong answer: the node
   // is already pointed at a database this agent does not run. That happens when
@@ -224,6 +259,12 @@ export async function handleSetUpNodeDatabase(
     }
   }
 
+  // Deleting the volume destroys every database on the node, so the count is
+  // read while they still exist (for the audit row) and the request must carry
+  // the typed confirmation the dialog collected.
+  const destroyedCount = recreate === "all" ? await countServerDatabases(id) : 0;
+  if (recreate === "all") assertConfirmedWipe(body, node.name);
+
   // Reuse the stored credential when there is one; only mint an account the
   // first time. See the note above on why this must not be regenerated.
   const stored =
@@ -236,7 +277,7 @@ export async function handleSetUpNodeDatabase(
   // Written before the agent is called, so a timeout leaves recoverable state.
   await stageNodeDbCredentials(id, credential.user, credential.password);
 
-  const status = await setUpNodeDb(id, credential);
+  const status = await setUpNodeDb(id, credential, recreate);
 
   if (!status.host) {
     throw conflict(
@@ -261,6 +302,10 @@ export async function handleSetUpNodeDatabase(
       // the credential itself.
       credentialCreated: created,
       ...(replaceEndpoint ? { replacedEndpoint: true } : {}),
+      // The one metadata field worth reading months later: whether this setup
+      // deleted the node's databases.
+      ...(recreate ? { recreate } : {}),
+      ...(recreate === "all" ? { databasesDestroyed: destroyedCount } : {}),
     },
   });
 

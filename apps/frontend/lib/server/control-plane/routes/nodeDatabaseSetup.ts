@@ -74,13 +74,30 @@ export async function handleProvisionNodeDatabase(
   // credential can), so without this the operator waits out an image pull and a
   // first boot only to be told the container was already there. Same answer, one
   // second instead of one minute.
+  // "Delete it and start over" is the only way past an existing database whose
+  // credential the panel does not hold (MariaDB keeps its accounts in the data
+  // volume, so recreating the container changes nothing). It destroys whatever
+  // is in there, so it needs the operator's typed confirmation, checked here
+  // rather than only in the dialog.
+  const recreate = body.recreate === "all" ? "all" : undefined;
+
   const existing = await getNodeDbStatusUnregistered(apiUrl, token);
-  if (existing.exists) {
+  if (existing.exists && !recreate) {
     throw conflict(await alreadyHasDatabaseMessage(apiUrl, existing.containerName));
+  }
+  if (recreate) {
+    const typed = typeof body.confirm === "string" ? body.confirm.trim() : "";
+    if (typed !== existing.containerName) {
+      throw badRequest(
+        `Deleting the existing database destroys every database inside it. To ` +
+          `confirm, send "confirm" with the container's name ` +
+          `("${existing.containerName}").`,
+      );
+    }
   }
 
   const credential = mintAdmin();
-  const status = await setUpNodeDbUnregistered(apiUrl, token, credential);
+  const status = await setUpNodeDbUnregistered(apiUrl, token, credential, recreate);
 
   if (!status.host) {
     throw conflict(
@@ -101,6 +118,7 @@ export async function handleProvisionNodeDatabase(
       containerName: status.containerName,
       image: status.image,
       preRegistration: true,
+      ...(recreate ? { recreate, deletedExistingData: true } : {}),
     },
   });
 
@@ -203,12 +221,13 @@ async function alreadyHasDatabaseMessage(
   }
 
   return (
-    `This machine already runs a database container ("${containerName}"), so a ` +
+    `This machine already runs a database container ("${containerName}"), and a ` +
     `newly generated account cannot be added to it: only whoever holds its ` +
-    `existing credential can. Either enter that credential in the fields below, ` +
-    `or remove the container on the node ("docker rm -f ${containerName}") and ` +
-    `set it up again. Its data volume is kept either way, so an existing ` +
-    `database is not lost by removing the container.`
+    `existing credential can. Recreating the container would not help either, ` +
+    `because MariaDB keeps its accounts in the data volume, not the container. ` +
+    `So there are two ways forward: enter that database's credentials in the ` +
+    `fields below, or delete it and create a new one, which destroys every ` +
+    `database inside it.`
   );
 }
 
