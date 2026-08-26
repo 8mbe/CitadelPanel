@@ -245,14 +245,13 @@ points at the admin area rather than showing a form that cannot work.
 
 ### Then, optionally, a database
 
-Under the port pool the step offers one button that gives the node its own
-MariaDB (see [node-database.md](node-database.md)). Unlike the pool, this is
-genuinely optional: a node without a database hosts servers fine, it just cannot
-hand them a MySQL database. Nothing blocks the wizard, and it can be done later
-from `/admin/nodes`.
+Under the port pool the step repeats the database offer, for an operator who left
+the switch on the form alone (see [node-database.md](node-database.md)). Unlike
+the pool, this is genuinely optional: a node without a database hosts servers
+fine, it just cannot hand them a MySQL database. Nothing blocks the wizard, and
+it can be done later from `/admin/nodes`.
 
-It is here anyway because this is the moment the operator is thinking about what
-the node can do. The failure mode without it is silent: months later, a plugin
+It is offered twice because the failure mode is silent: months later, a plugin
 needs MySQL, a server cannot have one, and nobody knew the feature existed.
 
 Two states the block reads off the node instead of offering the button:
@@ -272,11 +271,18 @@ Two states the block reads off the node instead of offering the button:
 - CPU and memory are probed from the agent automatically when it is reachable,
   and fall back to defaults when it is not, so an offline node still registers.
   Only disk is asked for.
-- The shared-database credential fields (`dbAdminHost` and friends) are behind a
-  switch, and are no longer the normal way to get a database: they are for
-  *adopting* a MariaDB this panel did not create. The button after registration
-  is the normal way. The three fields are all-or-nothing; the backend rejects a
-  partial triple.
+- The shared-database fields (`dbAdminHost` and friends) are behind a switch, and
+  the switch leads with **Set it up for me**: one click creates the database on
+  the agent whose URL and token were typed above, then fills all four fields from
+  the answer (`POST /api/admin/nodes/database/provision`, see
+  [node-database.md](node-database.md)). The user and password are generated,
+  never invented by the operator, and are posted straight back to be stored
+  encrypted. Typing the fields by hand is still there, for adopting a MariaDB
+  this panel did not create; the three credential fields are all-or-nothing, as
+  the backend rejects a partial triple.
+  The button needs a token for the same reason the connection test does: it has
+  to authenticate to the agent, and a token the panel is about to generate cannot
+  be used until the operator sets it on the node.
 
 ## Step 6: First server
 

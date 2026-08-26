@@ -16,14 +16,14 @@
  *      server containers on it can reach MariaDB. Tenant isolation comes from
  *      MariaDB's per-database user grants, not the bridge.
  *   2. A named volume for the data directory, so the container is disposable.
- *   3. A MariaDB container on that network with a random root password and no
- *      published host ports: reachable only from `node_db_net`.
+ *   3. A MariaDB container with no published host ports, reachable only from
+ *      `node_db_net`, plus the panel's own admin account inside it.
  *
- * Idempotent, with one caveat: this script generates a fresh password each run,
+ * Idempotent, with one caveat: this script generates a fresh account each run,
  * and an existing container will not accept it. Re-running against a container
  * this script already created therefore reports the mismatch and tells you what
  * to do, rather than recreating anything. (The panel's button does not have that
- * problem: it presents the password it already stored.)
+ * problem: it presents the credential it already stored.)
  *
  * Usage:
  *   bun run scripts/setup-node-db.ts
@@ -35,6 +35,7 @@
  *   NODE_DB_IMAGE      (default: mariadb:11)           Image to pull
  */
 
+import { randomBytes } from "node:crypto";
 import { config } from "../src/config";
 import { generateRootPassword, setUpNodeDb } from "../src/docker/nodeDb";
 
@@ -46,8 +47,13 @@ async function main(): Promise<void> {
   console.log(`Image:     ${config.nodeDbImage}\n`);
   console.log("Creating (first boot initialises MariaDB, ~20s)…");
 
-  const rootPassword = generateRootPassword(32);
-  const status = await setUpNodeDb(rootPassword);
+  // A generated account rather than root, matching what the panel's button
+  // creates. The name carries randomness so two nodes never share one.
+  const admin = {
+    user: `citadel_${randomBytes(4).toString("hex")}`,
+    password: generateRootPassword(32),
+  };
+  const status = await setUpNodeDb(admin);
 
   console.log("\n=== Node database ready ===\n");
   console.log("Enter these values when registering the node in the panel:\n");
@@ -58,8 +64,8 @@ async function main(): Promise<void> {
     }`,
   );
   console.log(`  dbAdminPort:     ${status.port}`);
-  console.log(`  dbAdminUser:     root`);
-  console.log(`  dbAdminPassword: ${rootPassword}`);
+  console.log(`  dbAdminUser:     ${admin.user}`);
+  console.log(`  dbAdminPassword: ${admin.password}`);
   console.log("\n  ⚠  Copy the password now. It is NOT stored by this script and");
   console.log("     cannot be recovered. The panel encrypts it on registration.");
   console.log("");

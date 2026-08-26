@@ -20,29 +20,68 @@ Admin → Nodes → *(a node)* → **Shared database**:
   enables the Databases tab for every server on the node.
 - **Start** / **Stop**: the container's power buttons.
 
-The first-time-setup wizard offers the same button right after the first node is
-registered, next to its port pool (see
-[first-time-setup.md](first-time-setup.md)), so a fresh install does not have to
-discover the feature later.
+The register-node form offers it too, inside the **Shared database** toggle:
+**Set it up for me** creates the database on the agent whose URL and token are
+typed above, then fills the form's four fields from the answer. The wizard also
+repeats the offer after registration, next to the port pool (see
+[first-time-setup.md](first-time-setup.md)), for an operator who skipped the
+toggle.
 
 `bun run setup-db` still exists, as a thin CLI over the same functions
 (`apps/backend/src/docker/nodeDb.ts`), for bringing a node up before it is
 registered. The register-node form's database fields also remain, but they are
 now for *adopting* a MariaDB the panel did not create, not the normal path.
 
+## The credential is generated, and it is not root
+
+Nobody types or invents a database user or password. The panel mints both:
+
+- **user** `citadel_<8 hex>`, so two nodes never share an account name and a
+  credential from one node's row is recognisably not another's;
+- **password** 32 alphanumeric characters (~190 bits), from the same generator as
+  every other panel secret.
+
+The agent creates that account inside MariaDB, then **forgets the image's root
+password**: it generates one to get through first-boot initialisation and returns
+it nowhere. So the panel's own account is the only credential anyone holds. A
+second root-equivalent secret that nobody has is one fewer thing to leak, and the
+recovery path if the panel's copy is lost is the Docker socket (recreate the
+container against the kept volume), not a spare password.
+
+This is *not* least privilege, and pretending otherwise would be dishonest: the
+grant is `ALL PRIVILEGES ON *.* … WITH GRANT OPTION`, because the account's job is
+to create a database and a user per server and grant that user rights (see
+`provisionServerDatabase`). An account that creates accounts is root-equivalent.
+What the named account buys is ownership: it is the panel's, it shows up as
+itself in `SHOW PROCESSLIST`, and it can be replaced without touching root.
+
+Alphanumeric is load-bearing, not cosmetic. The user and password are the only
+values interpolated into a `CREATE USER … IDENTIFIED BY` literal, so restricting
+their alphabet removes the quoting question instead of answering it. The agent
+re-validates both shapes before any SQL runs
+(`apps/backend/src/docker/nodeDb.test.ts` covers quotes, backslashes, spaces and
+semicolons), because the agent is root-equivalent on this database and does not
+take the panel's word for it.
+
+`adminUser: "root"` is still accepted, and means "no extra account": that is the
+arrangement on nodes set up before this, and their setup/start/stop keep working
+unchanged.
+
 ## Flow
 
 ```
 browser ──> POST /api/admin/nodes/:id/database/setup   (admin only)
                 │
-                │  panel generates the MariaDB root password (32 chars)
-                │  and stores it ENCRYPTED on the node row FIRST
+                │  panel mints citadel_<hex> + a 32-char password and stores
+                │  them ENCRYPTED on the node row FIRST
                 ▼
-          agent POST /v1/database/setup { rootPassword }
+          agent POST /v1/database/setup { adminUser, adminPassword }
                 │  ensure node_db_net (ICC on)
                 │  ensure the data volume
                 │  pull mariadb:11, create + start the container
+                │    (root password generated here, then forgotten)
                 │  poll `mariadb-admin ping` until it answers
+                │  CREATE USER + GRANT the panel's account
                 ▼
           { exists, state, ready, host, port, … }
                 │
@@ -53,6 +92,25 @@ browser ──> POST /api/admin/nodes/:id/database/setup   (admin only)
 
 Start and stop are the same shape without the create.
 
+### Before the node row exists
+
+`POST /api/admin/nodes/database/provision` is the same operation addressed by a
+raw `{ apiUrl, token }` instead of a node id, for the register form's button: at
+that moment the four database fields are part of the create-node request, so
+there is no node to address. It returns `{ host, port, user, password }` and
+persists nothing.
+
+That is the one path where a database credential is returned to a browser. It has
+to be: the value's destination is a form field that posts straight back to
+`POST /api/admin/nodes`, which stores it encrypted. The alternative, stashing it
+server-side for create-node to collect, means inventing a second place to keep a
+root-equivalent secret, which is worse than a value that lives in one admin's
+page for one minute.
+
+An operator who provisions and then abandons the form leaves a running database
+and no credential in the panel. The node page reports exactly that (container
+exists, panel has no credential) with the commands to clear it.
+
 ## Why the password is stored before the container exists
 
 Setup can take minutes on a cold node: an image pull, then MariaDB's first-boot
@@ -60,8 +118,8 @@ initialisation. That is long enough to time out. If the password were only
 persisted *after* the agent answered, a timed-out setup would leave a running
 database whose root password nobody knows, and no way back except destroying it.
 
-So the panel generates the password, writes it encrypted, and only then calls the
-agent. Retrying presents the **same** password, and `setUpNodeDb` treats a
+So the panel generates the credential, writes it encrypted, and only then calls
+the agent. Retrying presents the **same** credential, and `setUpNodeDb` treats a
 container that accepts it as success. The whole operation is idempotent as a
 result: pressing the button again after a timeout finishes the job.
 
@@ -85,7 +143,7 @@ recreate. It means another panel install (or a hand-run of the script) owns this
 node's database, and recreating it would destroy every tenant's data. The panel
 says so and names the two ways out.
 
-Until the container is up, the row holds a user and password but no host.
+Until the container is up, the row holds the account but no host.
 `hasDatabaseServer` is `host AND user`, so a half-finished setup never offers
 owners a database that does not exist.
 
@@ -146,6 +204,9 @@ The card distinguishes them because the difference is what an operator acts on:
 | Starting | running, not answering yet | (wait) |
 | Running | answering `mariadb-admin ping` | Stop |
 | Unknown | the node's agent did not answer | (fix the node) |
+
+`ready` means the ping succeeded **as the panel's own account**, not merely that
+some database is listening, so it also proves the account survived.
 
 "Starting" earns its own state because Docker reports a container as running for
 the ~20s MariaDB spends initialising, and a green badge over a database that

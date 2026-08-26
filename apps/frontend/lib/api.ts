@@ -2112,6 +2112,34 @@ export async function adminGetNodeDatabase(
   return request<NodeDatabaseView>(`/api/admin/nodes/${nodeId}/database`);
 }
 
+/** The connection details a pre-registration provision hands back to the form. */
+export interface ProvisionedNodeDatabase {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+}
+
+/**
+ * POST /api/admin/nodes/database/provision. Creates a database on an agent that
+ * is not registered yet, and returns the details to fill the register form with.
+ *
+ * Slow: the node pulls MariaDB and waits out its first boot. This is the only
+ * call that returns a database credential to the browser, because its
+ * destination is a form field that posts straight back to
+ * `POST /api/admin/nodes` (see `routes/nodeDatabase.ts` for why that beats
+ * stashing it server-side).
+ */
+export async function adminProvisionNodeDatabase(payload: {
+  apiUrl: string;
+  token: string;
+}): Promise<ProvisionedNodeDatabase> {
+  return request<ProvisionedNodeDatabase>("/api/admin/nodes/database/provision", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 /**
  * POST /api/admin/nodes/:id/database/setup. Creates the node's MariaDB.
  *

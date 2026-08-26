@@ -139,6 +139,35 @@ const serverIdOf = (request: Request): string =>
 const queryOf = (request: Request) => new URL(request.url).searchParams;
 
 /**
+ * The panel's database credential from a request body.
+ *
+ * `adminUser` defaults to `root` for nodes whose database predates the panel
+ * minting its own account. The shape of both values is enforced in
+ * `docker/nodeDb.ts`, next to the SQL that interpolates them.
+ */
+function parseAdminBody(body: Record<string, unknown>): {
+  user: string;
+  password: string;
+} {
+  const password = body.adminPassword;
+  if (typeof password !== "string" || password.length === 0) {
+    throw badRequest('"adminPassword" is required.');
+  }
+  const user = body.adminUser;
+  if (user !== undefined && (typeof user !== "string" || user.length === 0)) {
+    throw badRequest('"adminUser" must be a non-empty string when supplied.');
+  }
+  return { user: (user as string) ?? "root", password };
+}
+
+/** The same credential from the status route's headers. */
+function adminOf(request: Request): { user: string; password: string } | undefined {
+  const password = request.headers.get("x-db-password");
+  if (!password) return undefined;
+  return { user: request.headers.get("x-db-user") || "root", password };
+}
+
+/**
  * Pick a safe filename for a Content-Disposition header.
  *
  * The panel may suggest a name, but the agent owns the final value to prevent
@@ -511,18 +540,15 @@ const server = Bun.serve<ConsoleSocket, never>({
      * container exists at all and whether it is running, which is what the
      * panel's admin card needs to decide between "Set up", "Start" and "Stop".
      *
-     * `?probe=1` with the admin password in the `X-Db-Password` header also
-     * pings MariaDB, so "running" can be reported as "running and accepting
-     * connections". The password travels in a header rather than the query
-     * string because query strings land in access logs.
+     * `?probe=1` with the panel's credential in the `X-Db-User` /
+     * `X-Db-Password` headers also pings MariaDB, so "running" can be reported
+     * as "running and accepting connections". The credential travels in headers
+     * rather than the query string because query strings land in access logs.
      */
     "/v1/database/status": {
       GET: route(async (request) => {
         const probe = queryOf(request).get("probe") === "1";
-        const password = request.headers.get("x-db-password");
-        return json(
-          await getNodeDbStatus(probe && password ? password : undefined),
-        );
+        return json(await getNodeDbStatus(probe ? adminOf(request) : undefined));
       }),
     },
 
@@ -530,39 +556,38 @@ const server = Bun.serve<ConsoleSocket, never>({
      * POST /v1/database/setup. Creates the network, volume and MariaDB
      * container, and waits until it accepts connections.
      *
-     * Body: { rootPassword }
+     * Body: { adminUser, adminPassword }
      *
-     * The password is generated and stored by the *panel*, not here: the panel
+     * The credential is generated and stored by the *panel*, not here: the panel
      * has to hold it encrypted either way, and generating it there means a
-     * retry after a timeout can present the same password and be recognised
+     * retry after a timeout can present the same credential and be recognised
      * rather than starting a second, orphaned database. Idempotent for that
      * reason; see `setUpNodeDb`.
+     *
+     * A non-root `adminUser` is created inside MariaDB with a throwaway root
+     * password that is then forgotten, so the panel's account is the only
+     * credential anyone holds.
      */
     "/v1/database/setup": {
       POST: route(async (request) => {
-        const body = await parseJsonBody(request);
-        const rootPassword = body.rootPassword;
-        if (typeof rootPassword !== "string" || rootPassword.length < 16) {
-          throw badRequest('"rootPassword" must be at least 16 characters.');
-        }
-        return json(await setUpNodeDb(rootPassword));
+        return json(await setUpNodeDb(parseAdminBody(await parseJsonBody(request))));
       }),
     },
 
     /**
      * POST /v1/database/start. Starts the node DB container.
      *
-     * Body: { rootPassword? }. With a password the agent waits until MariaDB
-     * answers, so a 200 means usable rather than merely started.
+     * Body: { adminUser?, adminPassword? }. With a credential the agent waits
+     * until MariaDB answers as that account, so a 200 means usable rather than
+     * merely started.
      */
     "/v1/database/start": {
       POST: route(async (request) => {
         const body = await parseJsonBody(request);
-        const rootPassword =
-          typeof body.rootPassword === "string" && body.rootPassword.length > 0
-            ? body.rootPassword
-            : undefined;
-        return json(await startNodeDb(rootPassword));
+        // Optional here: an admin can start a container whose credential the
+        // panel does not hold, they just do not get the readiness guarantee.
+        const admin = body.adminPassword === undefined ? undefined : parseAdminBody(body);
+        return json(await startNodeDb(admin));
       }),
     },
 

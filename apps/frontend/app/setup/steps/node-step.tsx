@@ -7,6 +7,7 @@ import {
   ApiError,
   adminCreateNode,
   adminProbeNodeConnection,
+  adminProvisionNodeDatabase,
   type NodeHealthResult,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -28,7 +29,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 
 import { ProbeResult, RegisteredView } from "./node-result";
-import { BlockingIssues, ErrorNote, StepNav } from "./wizard-ui";
+import { BlockingIssues, ErrorNote, StepNav, SuccessNote } from "./wizard-ui";
 
 /**
  * Step 5: register the machine that will actually run the game servers.
@@ -88,6 +89,12 @@ export function NodeStep({
   const [error, setError] = React.useState<string | null>(null);
   const [generatedToken, setGeneratedToken] = React.useState<string | null>(null);
 
+  // "Set it up for me": create the database on the node now and fill the four
+  // fields below from the result, so nothing has to be typed or copied.
+  const [provisioning, setProvisioning] = React.useState(false);
+  const [provisioned, setProvisioned] = React.useState(false);
+  const [provisionError, setProvisionError] = React.useState<string | null>(null);
+
   const issues: string[] = [];
   if (name.trim() === "") issues.push("Give the node a display name.");
   if (hostname.trim() === "") issues.push("Add the hostname players connect to.");
@@ -126,6 +133,38 @@ export function NodeStep({
       );
     } finally {
       setProbing(false);
+    }
+  };
+
+  /**
+   * Create the database on the node, then fill the form from the answer.
+   *
+   * Runs before the node row exists, so it addresses the agent by the URL and
+   * token typed above, the same way the connection test does. The credential is
+   * generated panel-side; the operator never sees a password prompt, and what
+   * lands in the fields is posted straight back to be stored encrypted.
+   */
+  const provisionDatabase = async () => {
+    setProvisioning(true);
+    setProvisionError(null);
+    try {
+      const result = await adminProvisionNodeDatabase({
+        apiUrl: apiUrl.trim(),
+        token: token.trim(),
+      });
+      setDbHost(result.host);
+      setDbPort(String(result.port));
+      setDbUser(result.user);
+      setDbPassword(result.password);
+      setProvisioned(true);
+    } catch (err) {
+      setProvisionError(
+        err instanceof ApiError
+          ? err.message
+          : "The database could not be created on the node.",
+      );
+    } finally {
+      setProvisioning(false);
     }
   };
 
@@ -314,10 +353,9 @@ export function NodeStep({
               Shared database server on this node
             </FieldLabel>
             <FieldDescription>
-              Optional, and only for a database this panel did not create. To
-              give the node one, skip this and use <em>Set up database</em> on the
-              node&apos;s page afterwards: the agent creates the container and the
-              panel keeps the credentials.
+              Optional. Lets servers on this node each be given their own MySQL
+              database. Turn it on and the panel can create it for you, on the
+              node, in one click.
             </FieldDescription>
           </div>
           <Switch
@@ -329,6 +367,52 @@ export function NodeStep({
 
         {enableDb && (
           <FieldGroup>
+            {/*
+              The offer comes before the fields, because taking it means never
+              reading them. The panel asks the node's agent to run MariaDB,
+              generates the account itself, and fills everything in below.
+            */}
+            {provisioned ? (
+              <SuccessNote>
+                Database created on the node. The fields below were filled in for
+                you, including a generated account and password; they are stored
+                encrypted when you register the node.
+              </SuccessNote>
+            ) : (
+              <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={provisionDatabase}
+                    disabled={provisioning || !canProbe}
+                  >
+                    {provisioning ? <Spinner /> : <Database />}
+                    {provisioning ? "Setting up…" : "Set it up for me"}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    {provisioning
+                      ? "Pulling MariaDB and waiting for its first boot. About a minute; leave this page open."
+                      : canProbe
+                        ? "Runs MariaDB on the node and fills in the fields below. Takes about a minute."
+                        : "Needs the agent URL and token above: the panel has to reach the node to create it."}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Or fill the fields in by hand, for a database this panel did not
+                  create.
+                </p>
+              </div>
+            )}
+            {provisionError && (
+              <ErrorNote
+                title="Could not create the database"
+                onRetry={provisionDatabase}
+                retrying={provisioning}
+              >
+                {provisionError}
+              </ErrorNote>
+            )}
             <Field>
               <FieldLabel htmlFor="node-db-host">Database host</FieldLabel>
               <Input
@@ -338,8 +422,8 @@ export function NodeStep({
                 placeholder="172.18.0.2"
               />
               <FieldDescription>
-                The address the node reaches its database server on, from the
-                setup script&apos;s output.
+                The address the node reaches its database server on. Filled in by
+                the button above, or from a setup script&apos;s output.
               </FieldDescription>
             </Field>
             <Field>
@@ -374,6 +458,9 @@ export function NodeStep({
               <FieldDescription>
                 Stored encrypted. Used only to create per-server databases and
                 their scoped users.
+                {provisioned
+                  ? " Generated for you; there is nothing to write down."
+                  : ""}
               </FieldDescription>
             </Field>
           </FieldGroup>

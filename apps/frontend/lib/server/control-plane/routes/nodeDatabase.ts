@@ -20,18 +20,23 @@
 import { requireAdmin } from "../auth/middleware";
 import { sql } from "../db/client";
 import {
+  badRequest,
   conflict,
   json,
   notFound,
   parseJsonBody,
+  requireString,
   requireUuidParam,
 } from "../lib/http";
+import { randomBytes } from "node:crypto";
 import { generateStrongPassword } from "../lib/crypto";
 import {
   getNodeDbStatus,
   setUpNodeDb,
+  setUpNodeDbUnregistered,
   startNodeDb,
   stopNodeDb,
+  type NodeDbAdmin,
   type NodeDbStatus,
 } from "../nodes/nodeServerApi";
 import {
@@ -41,8 +46,24 @@ import {
 } from "../nodes/nodeRegistry";
 import { recordAuditFromRequest } from "../services/auditLog";
 
-/** The admin user MariaDB's own image creates on first boot. */
-const DB_ADMIN_USER = "root";
+/**
+ * Mint the account the panel will use on a node's database.
+ *
+ * Not `root`: the agent creates this account inside MariaDB and forgets the
+ * image's root password, so the panel's own credential is the only one anyone
+ * holds. The random suffix means two nodes never share an account name, so a
+ * credential leaked from one node's row is recognisably not another's.
+ *
+ * The privileges are necessarily broad (it creates databases and users per
+ * server), so this is not least privilege; it is a credential the panel owns,
+ * can rotate by recreating, and never asks an operator to type.
+ */
+function mintAdmin(): NodeDbAdmin {
+  return {
+    user: `citadel_${randomBytes(4).toString("hex")}`,
+    password: generateStrongPassword(32),
+  };
+}
 
 /**
  * What the admin card renders.
@@ -113,7 +134,7 @@ export async function handleGetNodeDatabase(
   const databaseCount = await countServerDatabases(id);
 
   try {
-    const status = await getNodeDbStatus(id, node.db.password ?? undefined);
+    const status = await getNodeDbStatus(id, storedAdmin(node));
     return json({
       reachable: true,
       status,
@@ -134,11 +155,92 @@ export async function handleGetNodeDatabase(
   }
 }
 
+/** The stored credential, or undefined when the panel holds none. */
+function storedAdmin(node: {
+  db: { user?: string | null; password?: string | null };
+}): NodeDbAdmin | undefined {
+  return node.db.user && node.db.password
+    ? { user: node.db.user, password: node.db.password }
+    : undefined;
+}
+
 /** The stored provisioning address, or null when the node has none. */
 function configuredEndpoint(node: {
   db: { host?: string | null; port?: number | null };
 }): { host: string; port: number } | null {
   return node.db.host ? { host: node.db.host, port: node.db.port ?? 3306 } : null;
+}
+
+/**
+ * POST /api/admin/nodes/database/provision
+ *
+ * The register-node form's "set it up for me": create the database on an agent
+ * that has **no node row yet**, and hand the connection details back so the form
+ * can fill its own fields.
+ *
+ * Why this is a separate endpoint rather than the one below: the four database
+ * fields are part of the create-node request, so at the moment the operator wants
+ * them filled there is nothing to address by node id. The connection details come
+ * from the form, exactly as the pre-registration health probe already works.
+ *
+ * This is the one path where a database credential is **returned** to the
+ * browser. It has to be: the value's destination is a form field that will be
+ * posted straight back to `POST /api/admin/nodes`, which stores it encrypted.
+ * The alternative (stash it server-side and have create-node pick it up) means
+ * inventing a second place to keep a root-equivalent secret, which is strictly
+ * worse than a value that lives in one admin's page for one minute. Admin-only,
+ * like everything else here.
+ *
+ * Nothing is persisted by this call. An operator who provisions and then
+ * abandons the form leaves a running database on the node and no credential in
+ * the panel; the node page's setup then reports the container exists but does
+ * not accept the panel's credentials, with the commands to clear it.
+ */
+export async function handleProvisionNodeDatabase(
+  request: Request,
+): Promise<Response> {
+  const actor = await requireAdmin(request);
+  const body = await parseJsonBody(request);
+
+  const apiUrl = requireString(body, "apiUrl", { max: 512 });
+  if (!/^https?:\/\//.test(apiUrl)) {
+    throw badRequest('"apiUrl" must start with http:// or https://.');
+  }
+  // As with the probe: an agent call needs a token, and the generate-one-for-me
+  // path cannot be used until that token is set on the agent.
+  const token = requireString(body, "token", { min: 1, max: 512 });
+
+  const credential = mintAdmin();
+  const status = await setUpNodeDbUnregistered(apiUrl, token, credential);
+
+  if (!status.host) {
+    throw conflict(
+      `The database container started but has no address on ` +
+        `"${status.networkName}". Check the network with ` +
+        `"docker network inspect ${status.networkName}" on the node.`,
+    );
+  }
+
+  // Audited without a node id: there is no node yet. The agent URL is what
+  // identifies the machine a database was just created on.
+  await recordAuditFromRequest(request, {
+    userId: actor.id,
+    action: "node.database.setup",
+    targetType: "node",
+    metadata: {
+      apiUrl,
+      containerName: status.containerName,
+      image: status.image,
+      preRegistration: true,
+    },
+  });
+
+  return json({
+    host: status.host,
+    port: status.port,
+    user: credential.user,
+    password: credential.password,
+  });
 }
 
 /**
@@ -182,7 +284,7 @@ export async function handleSetUpNodeDatabase(
   // thing to want to fix, so this is a confirmation rather than a refusal: the
   // UI shows the configured address and asks before sending `replaceEndpoint`.
   if (node.db.host && !replaceEndpoint) {
-    const status = await getNodeDbStatus(id, node.db.password ?? undefined);
+    const status = await getNodeDbStatus(id, storedAdmin(node));
     if (!status.exists) {
       throw conflict(
         `This node is already configured to use a database at ` +
@@ -194,15 +296,19 @@ export async function handleSetUpNodeDatabase(
     }
   }
 
-  // Reuse the stored credential when there is one; only mint a password the
+  // Reuse the stored credential when there is one; only mint an account the
   // first time. See the note above on why this must not be regenerated.
-  const rootPassword = node.db.password ?? generateStrongPassword(32);
-  const created = !node.db.password;
+  const stored =
+    node.db.user && node.db.password
+      ? { user: node.db.user, password: node.db.password }
+      : null;
+  const credential = stored ?? mintAdmin();
+  const created = stored === null;
 
   // Written before the agent is called, so a timeout leaves recoverable state.
-  await stageNodeDbCredentials(id, DB_ADMIN_USER, rootPassword);
+  await stageNodeDbCredentials(id, credential.user, credential.password);
 
-  const status = await setUpNodeDb(id, rootPassword);
+  const status = await setUpNodeDb(id, credential);
 
   if (!status.host) {
     throw conflict(
@@ -249,7 +355,7 @@ export async function handleStartNodeDatabase(
   const id = requireUuidParam(nodeId, "nodeId");
 
   const node = await requireNodeWithSecrets(id);
-  const status = await startNodeDb(id, node.db.password ?? undefined);
+  const status = await startNodeDb(id, storedAdmin(node));
 
   if (status.host) await setNodeDbEndpoint(id, status.host, status.port);
 

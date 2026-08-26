@@ -100,6 +100,7 @@ import {
   handleUpdateNode,
 } from "@/lib/server/control-plane/routes/nodes";
 import {
+  handleProvisionNodeDatabase,
   handleGetNodeDatabase,
   handleSetUpNodeDatabase,
   handleStartNodeDatabase,
@@ -220,6 +221,10 @@ const exact = new Map<string, Partial<Record<string, Handler>>>([
   ["admin/nodes", { GET: handleListNodes, POST: handleCreateNode }],
   ["admin/nodes/health", { GET: handleAllNodesHealth }],
   ["admin/nodes/probe", { POST: handleProbeNode }],
+  // Create a node's database before the node row exists, for the register form's
+  // "set it up for me" (see routes/nodeDatabase.ts). Exact-match, so it is found
+  // before the `admin/nodes/:id` pattern could read "database" as an id.
+  ["admin/nodes/database/provision", { POST: handleProvisionNodeDatabase }],
   ["admin/suspicious-activity", { GET: handleListSuspicious }],
   ["admin/scan", { POST: handleTriggerScan }],
   ["admin/servers", { GET: handleListAdminServers, POST: handleAdminCreateServer }],

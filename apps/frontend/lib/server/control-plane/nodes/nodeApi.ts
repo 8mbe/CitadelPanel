@@ -410,8 +410,25 @@ export async function probeAgent(
   apiUrl: string,
   apiToken: string,
 ): Promise<NodeHealth> {
-  return checkNodeHealth({
-    id: "probe",
+  return checkNodeHealth(unregisteredNode(apiUrl, apiToken));
+}
+
+/**
+ * A node-shaped value for an agent that has no row yet.
+ *
+ * Registration does two things before it writes anything: probe the agent, and
+ * (optionally) ask it to create the node's database. Both need
+ * {@link nodeRequestFor}, which is addressed by a stored node, so the connection
+ * details from the form are wrapped in the same shape. Every other field is a
+ * placeholder and must stay unused: this value is never persisted, and its `id`
+ * only ever appears in an error message.
+ */
+export function unregisteredNode(
+  apiUrl: string,
+  apiToken: string,
+): NodeWithSecrets {
+  return {
+    id: "unregistered",
     name: apiUrl,
     hostname: apiUrl,
     apiUrl,
@@ -427,7 +444,7 @@ export async function probeAgent(
     db: { host: null, port: null, user: null, password: null },
     isActive: true,
     lastHeartbeatAt: null,
-  });
+  };
 }
 
 /**

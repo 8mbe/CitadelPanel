@@ -12,6 +12,7 @@ import {
   generateRootPassword,
   nodeDbContainerConfig,
   nodeDbNetworkConfig,
+  setUpNodeDb,
 } from "./nodeDb";
 
 /** A throwaway credential for the pure config builders; never a real one. */
@@ -77,6 +78,47 @@ describe("nodeDbNetworkConfig", () => {
       "true",
     );
     expect(config.Labels?.["citadel.managed"]).toBe("true");
+  });
+});
+
+describe("setUpNodeDb credential validation", () => {
+  // The user and password are interpolated into CREATE USER / GRANT literals, so
+  // the shape check is the thing standing between the panel and SQL injection
+  // into a root-equivalent account. Rejection happens before any Docker call,
+  // which is why it is testable without a daemon.
+  const pw = "a".repeat(32);
+
+  test.each([
+    ["a space", "citadel x1"],
+    ["a quote", "citadel'x"],
+    ["a backslash", "citadel\\x"],
+    ["a semicolon", "citadel;drop"],
+    ["a leading digit", "1citadel"],
+    ["too short", "ab"],
+    ["too long", `c${"x".repeat(32)}`],
+    ["empty", ""],
+  ])("rejects a user with %s", async (_label, user) => {
+    await expect(setUpNodeDb({ user, password: pw })).rejects.toThrow(
+      /Invalid database admin user/,
+    );
+  });
+
+  test.each([
+    ["too short", "a".repeat(15)],
+    ["a quote", `${"a".repeat(20)}'`],
+    ["a backslash", `${"a".repeat(20)}\\`],
+    ["a space", `${"a".repeat(20)} b`],
+    ["empty", ""],
+  ])("rejects a password that is %s", async (_label, password) => {
+    await expect(setUpNodeDb({ user: "citadel_abcd1234", password })).rejects.toThrow(
+      /adminPassword/,
+    );
+  });
+
+  test("accepts what the panel actually mints", () => {
+    // citadel_ + 8 hex chars, and a 32-char alphanumeric password.
+    expect("citadel_8b8c3252").toMatch(/^[a-z][a-z0-9_]{2,31}$/);
+    expect(generateRootPassword(32)).toMatch(/^[A-Za-z0-9]{16,128}$/);
   });
 });
 

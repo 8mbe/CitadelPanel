@@ -7,7 +7,12 @@
  * or send container ids or host paths (see `apps/backend/src/servers.ts`).
  */
 
-import { nodeRequest, nodeRequestRaw } from "./nodeApi";
+import {
+  nodeRequest,
+  nodeRequestFor,
+  nodeRequestRaw,
+  unregisteredNode,
+} from "./nodeApi";
 
 /** A port the game needs published on the host. */
 export interface PortBinding {
@@ -402,29 +407,45 @@ export interface NodeDbStatus {
 }
 
 /**
- * GET /v1/database/status. The node DB container's state.
+ * The credential the panel holds for a node's database.
  *
- * The admin password (when the panel has one stored) is sent so the agent can
- * also ping MariaDB and report `ready`. It travels in a header, not the query
- * string, because query strings end up in access logs.
+ * `root` on nodes set up before the panel minted its own account; a generated
+ * `citadel_<hex>` since. See `apps/backend/src/docker/nodeDb.ts`.
  */
-export async function getNodeDbStatus(
-  nodeId: string,
-  adminPassword?: string,
-): Promise<NodeDbStatus> {
-  return nodeRequest(
-    nodeId,
-    adminPassword ? "/v1/database/status?probe=1" : "/v1/database/status",
-    adminPassword ? { headers: { "X-Db-Password": adminPassword } } : undefined,
-  );
+export interface NodeDbAdmin {
+  user: string;
+  password: string;
 }
 
 /**
- * POST /v1/database/setup. Creates the node's MariaDB container.
+ * GET /v1/database/status. The node DB container's state.
  *
- * The panel generates and stores `rootPassword` before calling, so a retry
- * after a timeout presents the same password and is recognised rather than
- * creating a second, orphaned database (see `setUpNodeDb` on the agent).
+ * The credential (when the panel has one) is sent so the agent can also ping
+ * MariaDB as that account and report `ready`. It travels in headers, not the
+ * query string, because query strings end up in access logs.
+ */
+export async function getNodeDbStatus(
+  nodeId: string,
+  admin?: NodeDbAdmin,
+): Promise<NodeDbStatus> {
+  return nodeRequest(
+    nodeId,
+    admin ? "/v1/database/status?probe=1" : "/v1/database/status",
+    admin ? { headers: adminHeaders(admin) } : undefined,
+  );
+}
+
+/** The status route reads the credential from headers; this builds them. */
+function adminHeaders(admin: NodeDbAdmin): Record<string, string> {
+  return { "X-Db-User": admin.user, "X-Db-Password": admin.password };
+}
+
+/**
+ * POST /v1/database/setup. Creates the node's MariaDB and the panel's account.
+ *
+ * The panel generates and stores the credential before calling, so a retry
+ * after a timeout presents the same one and is recognised rather than creating a
+ * second, orphaned database (see `setUpNodeDb` on the agent).
  *
  * The timeout is generous because a cold node pulls the MariaDB image and then
  * runs its first-boot initialisation. The agent's own readiness wait is 120s,
@@ -433,11 +454,30 @@ export async function getNodeDbStatus(
  */
 export async function setUpNodeDb(
   nodeId: string,
-  rootPassword: string,
+  admin: NodeDbAdmin,
 ): Promise<NodeDbStatus> {
   return nodeRequest(nodeId, "/v1/database/setup", {
     method: "POST",
-    body: { rootPassword },
+    body: { adminUser: admin.user, adminPassword: admin.password },
+    timeoutMs: 300_000,
+  });
+}
+
+/**
+ * Same, for an agent with no node row yet.
+ *
+ * The register-node form offers "set it up for me", which has to reach the agent
+ * before anything is persisted. The connection details come straight from the
+ * form, exactly as the pre-registration health probe works.
+ */
+export async function setUpNodeDbUnregistered(
+  apiUrl: string,
+  apiToken: string,
+  admin: NodeDbAdmin,
+): Promise<NodeDbStatus> {
+  return nodeRequestFor(unregisteredNode(apiUrl, apiToken), "/v1/database/setup", {
+    method: "POST",
+    body: { adminUser: admin.user, adminPassword: admin.password },
     timeoutMs: 300_000,
   });
 }
@@ -445,17 +485,17 @@ export async function setUpNodeDb(
 /**
  * POST /v1/database/start. Starts the container and waits until it answers.
  *
- * Passing the password makes a 200 mean "accepting connections" rather than
- * "container started", which is the distinction an admin who just clicked Start
- * actually cares about.
+ * Passing the credential makes a 200 mean "accepting connections as the panel's
+ * account" rather than "container started", which is the distinction an admin
+ * who just clicked Start actually cares about.
  */
 export async function startNodeDb(
   nodeId: string,
-  rootPassword?: string,
+  admin?: NodeDbAdmin,
 ): Promise<NodeDbStatus> {
   return nodeRequest(nodeId, "/v1/database/start", {
     method: "POST",
-    body: rootPassword ? { rootPassword } : {},
+    body: admin ? { adminUser: admin.user, adminPassword: admin.password } : {},
     timeoutMs: 180_000,
   });
 }
