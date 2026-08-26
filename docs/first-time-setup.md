@@ -283,6 +283,11 @@ Two states the block reads off the node instead of offering the button:
   The button needs a token for the same reason the connection test does: it has
   to authenticate to the agent, and a token the panel is about to generate cannot
   be used until the operator sets it on the node.
+  While it runs it reports the phase it polled off the node plus elapsed seconds,
+  because the call takes 30-90 seconds and a silent spinner reads as a hang. If
+  the machine already has a database container the button refuses immediately,
+  naming the node it is already registered as, rather than spending a minute to
+  fail (see [node-database.md](node-database.md)).
 
 ## Step 6: First server
 

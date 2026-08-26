@@ -30,6 +30,10 @@ import {
   adminStopNodeDatabase,
   ApiError,
 } from "@/lib/api";
+import {
+  nodeDatabasePhaseLabel,
+  useNodeDatabaseProgress,
+} from "@/lib/node-database-progress";
 import type { NodeDatabaseView } from "@/lib/types";
 
 /**
@@ -76,6 +80,15 @@ export function NodeDatabaseCard({
     }
   }, [nodeId]);
 
+  // Setup and start are slow enough (image pull, then MariaDB's first boot) that
+  // a bare spinner reads as a hang, so they run through the shared progress
+  // hook: it polls this same endpoint and reports the phase the node is in.
+  const {
+    phase,
+    elapsed,
+    run: withProgress,
+  } = useNodeDatabaseProgress(async () => (await adminGetNodeDatabase(nodeId)).status);
+
   React.useEffect(() => {
     // Wrapped rather than called bare, matching the setup wizard's blocks: the
     // read is an external fetch, so its state updates belong after the await.
@@ -96,7 +109,8 @@ export function NodeDatabaseCard({
     setAction(kind);
     setError(null);
     try {
-      setView(await call());
+      // Stop is quick; only the two waiting actions get the progress line.
+      setView(kind === "stop" ? await call() : await withProgress(call));
       await onChanged?.();
     } catch (err) {
       setError(
@@ -208,6 +222,24 @@ export function NodeDatabaseCard({
             the internal network and a data volume, and starts the container.
             Takes about a minute on a cold node.
           </p>
+        )}
+
+        {/* What the node is doing, while it does it. The phase is polled, the
+          seconds are the proof it has not hung. */}
+        {(action === "setup" || action === "start") && (
+          <div
+            className="flex flex-col gap-1 rounded-lg border bg-muted/30 p-3"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="text-xs text-foreground">
+              {nodeDatabasePhaseLabel(phase)}
+            </span>
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {elapsed}s elapsed. Leave this page open; a node that has never run
+              MariaDB usually takes 30-90 seconds.
+            </span>
+          </div>
         )}
 
         {error && <p className="text-sm text-destructive">{error}</p>}

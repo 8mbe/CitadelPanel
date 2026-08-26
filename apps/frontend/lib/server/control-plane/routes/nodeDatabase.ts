@@ -7,8 +7,11 @@
  * register-node form" ritual was never a technical requirement: it was a missing
  * button. These four routes are that button, plus start and stop.
  *
- * Admin-only, without exception. The database's root credential is
+ * Admin-only, without exception. The database's admin credential is
  * root-equivalent on every tenant database on the node.
+ *
+ * The register form's pre-registration variant (no node row yet) lives in
+ * `nodeDatabaseSetup.ts`.
  *
  * Where the secret lives: the panel generates the MariaDB root password, stores
  * it encrypted on the node row, and hands it to the agent per request. The agent
@@ -20,12 +23,10 @@
 import { requireAdmin } from "../auth/middleware";
 import { sql } from "../db/client";
 import {
-  badRequest,
   conflict,
   json,
   notFound,
   parseJsonBody,
-  requireString,
   requireUuidParam,
 } from "../lib/http";
 import { randomBytes } from "node:crypto";
@@ -33,7 +34,6 @@ import { generateStrongPassword } from "../lib/crypto";
 import {
   getNodeDbStatus,
   setUpNodeDb,
-  setUpNodeDbUnregistered,
   startNodeDb,
   stopNodeDb,
   type NodeDbAdmin,
@@ -58,7 +58,7 @@ import { recordAuditFromRequest } from "../services/auditLog";
  * server), so this is not least privilege; it is a credential the panel owns,
  * can rotate by recreating, and never asks an operator to type.
  */
-function mintAdmin(): NodeDbAdmin {
+export function mintAdmin(): NodeDbAdmin {
   return {
     user: `citadel_${randomBytes(4).toString("hex")}`,
     password: generateStrongPassword(32),
@@ -169,78 +169,6 @@ function configuredEndpoint(node: {
   db: { host?: string | null; port?: number | null };
 }): { host: string; port: number } | null {
   return node.db.host ? { host: node.db.host, port: node.db.port ?? 3306 } : null;
-}
-
-/**
- * POST /api/admin/nodes/database/provision
- *
- * The register-node form's "set it up for me": create the database on an agent
- * that has **no node row yet**, and hand the connection details back so the form
- * can fill its own fields.
- *
- * Why this is a separate endpoint rather than the one below: the four database
- * fields are part of the create-node request, so at the moment the operator wants
- * them filled there is nothing to address by node id. The connection details come
- * from the form, exactly as the pre-registration health probe already works.
- *
- * This is the one path where a database credential is **returned** to the
- * browser. It has to be: the value's destination is a form field that will be
- * posted straight back to `POST /api/admin/nodes`, which stores it encrypted.
- * The alternative (stash it server-side and have create-node pick it up) means
- * inventing a second place to keep a root-equivalent secret, which is strictly
- * worse than a value that lives in one admin's page for one minute. Admin-only,
- * like everything else here.
- *
- * Nothing is persisted by this call. An operator who provisions and then
- * abandons the form leaves a running database on the node and no credential in
- * the panel; the node page's setup then reports the container exists but does
- * not accept the panel's credentials, with the commands to clear it.
- */
-export async function handleProvisionNodeDatabase(
-  request: Request,
-): Promise<Response> {
-  const actor = await requireAdmin(request);
-  const body = await parseJsonBody(request);
-
-  const apiUrl = requireString(body, "apiUrl", { max: 512 });
-  if (!/^https?:\/\//.test(apiUrl)) {
-    throw badRequest('"apiUrl" must start with http:// or https://.');
-  }
-  // As with the probe: an agent call needs a token, and the generate-one-for-me
-  // path cannot be used until that token is set on the agent.
-  const token = requireString(body, "token", { min: 1, max: 512 });
-
-  const credential = mintAdmin();
-  const status = await setUpNodeDbUnregistered(apiUrl, token, credential);
-
-  if (!status.host) {
-    throw conflict(
-      `The database container started but has no address on ` +
-        `"${status.networkName}". Check the network with ` +
-        `"docker network inspect ${status.networkName}" on the node.`,
-    );
-  }
-
-  // Audited without a node id: there is no node yet. The agent URL is what
-  // identifies the machine a database was just created on.
-  await recordAuditFromRequest(request, {
-    userId: actor.id,
-    action: "node.database.setup",
-    targetType: "node",
-    metadata: {
-      apiUrl,
-      containerName: status.containerName,
-      image: status.image,
-      preRegistration: true,
-    },
-  });
-
-  return json({
-    host: status.host,
-    port: status.port,
-    user: credential.user,
-    password: credential.password,
-  });
 }
 
 /**

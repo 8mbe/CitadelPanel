@@ -6,10 +6,15 @@ import { Database, PlugZap } from "lucide-react";
 import {
   ApiError,
   adminCreateNode,
+  adminGetUnregisteredNodeDatabase,
   adminProbeNodeConnection,
   adminProvisionNodeDatabase,
   type NodeHealthResult,
 } from "@/lib/api";
+import {
+  nodeDatabasePhaseLabel,
+  useNodeDatabaseProgress,
+} from "@/lib/node-database-progress";
 import { Button } from "@/components/ui/button";
 import {
   CardContent,
@@ -91,9 +96,23 @@ export function NodeStep({
 
   // "Set it up for me": create the database on the node now and fill the four
   // fields below from the result, so nothing has to be typed or copied.
-  const [provisioning, setProvisioning] = React.useState(false);
   const [provisioned, setProvisioned] = React.useState(false);
   const [provisionError, setProvisionError] = React.useState<string | null>(null);
+  // Live progress for that minute-long call: the phase the node is actually in,
+  // plus a second counter. Without both, a slow image pull is indistinguishable
+  // from a hang, which is exactly how it read before.
+  const {
+    running: provisioning,
+    phase,
+    elapsed,
+    run: withProgress,
+  } = useNodeDatabaseProgress(async () => {
+    const view = await adminGetUnregisteredNodeDatabase({
+      apiUrl: apiUrl.trim(),
+      token: token.trim(),
+    });
+    return view.status;
+  });
 
   const issues: string[] = [];
   if (name.trim() === "") issues.push("Give the node a display name.");
@@ -145,13 +164,14 @@ export function NodeStep({
    * lands in the fields is posted straight back to be stored encrypted.
    */
   const provisionDatabase = async () => {
-    setProvisioning(true);
     setProvisionError(null);
     try {
-      const result = await adminProvisionNodeDatabase({
-        apiUrl: apiUrl.trim(),
-        token: token.trim(),
-      });
+      const result = await withProgress(() =>
+        adminProvisionNodeDatabase({
+          apiUrl: apiUrl.trim(),
+          token: token.trim(),
+        }),
+      );
       setDbHost(result.host);
       setDbPort(String(result.port));
       setDbUser(result.user);
@@ -163,8 +183,6 @@ export function NodeStep({
           ? err.message
           : "The database could not be created on the node.",
       );
-    } finally {
-      setProvisioning(false);
     }
   };
 
@@ -390,18 +408,36 @@ export function NodeStep({
                     {provisioning ? <Spinner /> : <Database />}
                     {provisioning ? "Setting up…" : "Set it up for me"}
                   </Button>
-                  <span className="text-xs text-muted-foreground">
-                    {provisioning
-                      ? "Pulling MariaDB and waiting for its first boot. About a minute; leave this page open."
-                      : canProbe
+                  {!provisioning && (
+                    <span className="text-xs text-muted-foreground">
+                      {canProbe
                         ? "Runs MariaDB on the node and fills in the fields below. Takes about a minute."
                         : "Needs the agent URL and token above: the panel has to reach the node to create it."}
-                  </span>
+                    </span>
+                  )}
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Or fill the fields in by hand, for a database this panel did not
-                  create.
-                </p>
+                {/*
+                  A minute of spinner with no words is indistinguishable from a
+                  hang. The phase comes from polling the node, so it is what is
+                  actually happening; the seconds are what prove it is still
+                  happening.
+                */}
+                {provisioning ? (
+                  <div className="flex flex-col gap-1" role="status" aria-live="polite">
+                    <span className="text-xs text-foreground">
+                      {nodeDatabasePhaseLabel(phase)}
+                    </span>
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {elapsed}s elapsed. Leave this page open; it usually takes
+                      30-90 seconds on a node that has never run MariaDB.
+                    </span>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Or fill the fields in by hand, for a database this panel did
+                    not create.
+                  </p>
+                )}
               </div>
             )}
             {provisionError && (

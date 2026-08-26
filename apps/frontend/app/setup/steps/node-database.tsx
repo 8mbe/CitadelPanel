@@ -9,6 +9,10 @@ import {
   adminSetUpNodeDatabase,
 } from "@/lib/api";
 import type { NodeDatabaseView } from "@/lib/types";
+import {
+  nodeDatabasePhaseLabel,
+  useNodeDatabaseProgress,
+} from "@/lib/node-database-progress";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
@@ -41,8 +45,16 @@ export function NodeDatabaseSetup({
 }) {
   const [view, setView] = React.useState<NodeDatabaseView | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
-  const [creating, setCreating] = React.useState(false);
   const [createError, setCreateError] = React.useState<string | null>(null);
+
+  // Same slow call as everywhere else, same progress treatment: the phase is
+  // polled off the node, the seconds prove the page is alive.
+  const {
+    running: creating,
+    phase,
+    elapsed,
+    run: withProgress,
+  } = useNodeDatabaseProgress(async () => (await adminGetNodeDatabase(nodeId)).status);
 
   const load = React.useCallback(async () => {
     setLoadError(null);
@@ -68,18 +80,15 @@ export function NodeDatabaseSetup({
   }, [agentReachable, load]);
 
   const create = async () => {
-    setCreating(true);
     setCreateError(null);
     try {
-      setView(await adminSetUpNodeDatabase(nodeId));
+      setView(await withProgress(() => adminSetUpNodeDatabase(nodeId)));
     } catch (err) {
       setCreateError(
         err instanceof ApiError
           ? err.message
           : "The database could not be created on the node.",
       );
-    } finally {
-      setCreating(false);
     }
   };
 
@@ -142,13 +151,23 @@ export function NodeDatabaseSetup({
           {creating ? "Setting up…" : "Set up a database"}
         </Button>
       </div>
-      {/* Said before the click, not after: a minute of no visible progress is
-        how operators conclude a button is broken and reload the page. */}
-      <p className="text-xs text-muted-foreground">
-        {creating
-          ? "Pulling MariaDB and waiting for its first boot. This takes about a minute; leave this page open."
-          : "Takes about a minute the first time, while the node downloads MariaDB. You can also do this later from Admin → Nodes."}
-      </p>
+      {/* Said before the click, and kept live during it: a minute of no visible
+        progress is how operators conclude a button is broken and reload. */}
+      {creating ? (
+        <div className="flex flex-col gap-1" role="status" aria-live="polite">
+          <span className="text-xs text-foreground">
+            {nodeDatabasePhaseLabel(phase)}
+          </span>
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {elapsed}s elapsed. Leave this page open.
+          </span>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Takes about a minute the first time, while the node downloads MariaDB.
+          You can also do this later from Admin → Nodes.
+        </p>
+      )}
 
       {loadError && (
         <ErrorNote title="Could not read the database state" onRetry={load}>

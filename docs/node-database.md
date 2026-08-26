@@ -92,13 +92,62 @@ browser ──> POST /api/admin/nodes/:id/database/setup   (admin only)
 
 Start and stop are the same shape without the create.
 
+## A minute-long button has to say something
+
+Setup is one blocking call that takes 30-90 seconds on a node that has never run
+MariaDB: Docker pulls the image, MariaDB initialises its system tables, then the
+panel's account is created. A spinner for that long reads as a hang, and the
+first version of this feature proved it.
+
+So all three entry points run the call through `useNodeDatabaseProgress`
+(`apps/frontend/lib/node-database-progress.ts`), which shows two things:
+
+- **the phase**, polled off the node every 3 seconds rather than guessed from a
+  timer, so the sentence on screen is what is actually happening. The phases are
+  exactly the transitions the status endpoint can distinguish: no container yet
+  (still pulling), container not running (starting), running but not answering
+  (first-boot initialisation), answering (done). The last two are deliberately
+  not split further, because from outside they are indistinguishable and both
+  mean "wait";
+- **elapsed seconds**, which is the part that proves the page is alive.
+
+A failed poll is swallowed. The setup call owns the outcome, and a missed tick is
+not news worth putting on screen.
+
+## Refusing before the wait, not after it
+
+A machine that already has a `citadel-node-db` container cannot accept a
+*newly generated* account: only whoever holds the existing credential can open
+that database. The register form therefore reads the node's status **before**
+minting anything, and refuses in milliseconds instead of after a full image
+pull.
+
+The refusal names the real cause, which depends on whether this panel already
+knows the machine:
+
+- **It does** (an agent URL matching a registered node): the operator is
+  registering the same agent twice, and the database they are looking for is on
+  that node's page. Only the credential stored on that node can open it.
+- **It does not**: the container is from somewhere else. Enter its credential in
+  the form's fields, or remove the container (`docker rm -f citadel-node-db`) and
+  set it up again. The data volume is kept, so an existing database is not lost
+  by removing the container.
+
+"Another panel install" was the only explanation the first version offered, which
+was misleading in the most common case: one machine registered twice during a
+local test.
+
 ### Before the node row exists
 
 `POST /api/admin/nodes/database/provision` is the same operation addressed by a
 raw `{ apiUrl, token }` instead of a node id, for the register form's button: at
 that moment the four database fields are part of the create-node request, so
 there is no node to address. It returns `{ host, port, user, password }` and
-persists nothing.
+persists nothing. Its sibling `POST /api/admin/nodes/database/status` is the
+status read with the same addressing, used for the preflight above and for
+progress polling. Both live in `routes/nodeDatabaseSetup.ts`, split from the
+node-id lifecycle routes in `routes/nodeDatabase.ts` because the addressing is
+the whole difference.
 
 That is the one path where a database credential is returned to a browser. It has
 to be: the value's destination is a form field that posts straight back to

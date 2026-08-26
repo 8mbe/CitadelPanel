@@ -12,6 +12,7 @@ import type {
   DirectoryListing,
   NodeAbuseSummary,
   NodeAllocation,
+  NodeDatabaseStatus,
   NodeDatabaseView,
   NodeDetail,
   NodePortPoolEntry,
@@ -2118,6 +2119,34 @@ export interface ProvisionedNodeDatabase {
   port: number;
   user: string;
   password: string;
+}
+
+/** What a pre-registration status read reports about a machine's database. */
+export interface UnregisteredNodeDatabaseView {
+  reachable: boolean;
+  status: NodeDatabaseStatus | null;
+  error: string | null;
+  /** The node already registered against this agent URL, when there is one. */
+  registeredAs: string | null;
+}
+
+/**
+ * POST /api/admin/nodes/database/status. A machine's database state, by raw
+ * connection details.
+ *
+ * Used before offering to create one, and polled while a creation runs so the
+ * form can say what is happening instead of spinning for a minute. An
+ * unreachable agent is a 200 with `reachable: false`, not an `ApiError`, because
+ * a polled endpoint must not turn a blip into a failure.
+ */
+export async function adminGetUnregisteredNodeDatabase(payload: {
+  apiUrl: string;
+  token: string;
+}): Promise<UnregisteredNodeDatabaseView> {
+  return request<UnregisteredNodeDatabaseView>("/api/admin/nodes/database/status", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 /**

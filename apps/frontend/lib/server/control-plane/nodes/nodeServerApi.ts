@@ -464,6 +464,25 @@ export async function setUpNodeDb(
 }
 
 /**
+ * GET /v1/database/status on an agent with no node row yet.
+ *
+ * Two jobs, both in the register-node form: check whether the machine already
+ * has a database *before* offering to create one, and report progress while a
+ * creation is in flight. No credential is sent, so `ready` is always false; the
+ * caller only needs existence and container state.
+ */
+export async function getNodeDbStatusUnregistered(
+  apiUrl: string,
+  apiToken: string,
+): Promise<NodeDbStatus> {
+  return nodeRequestFor(unregisteredNode(apiUrl, apiToken), "/v1/database/status", {
+    // Short: this is polled every few seconds during setup, so a slow answer
+    // must not queue up behind the previous one.
+    timeoutMs: 10_000,
+  });
+}
+
+/**
  * Same, for an agent with no node row yet.
  *
  * The register-node form offers "set it up for me", which has to reach the agent
