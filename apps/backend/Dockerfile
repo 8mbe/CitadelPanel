@@ -22,7 +22,13 @@ RUN bun install --frozen-lockfile --production --filter=backend
 FROM base AS runtime
 ENV NODE_ENV=production
 
-COPY --from=deps /app/node_modules ./node_modules
+# The whole install tree, not just /app/node_modules. A filtered install does
+# not hoist to the workspace root: bun puts the agent's dependencies in
+# /app/apps/backend/node_modules and leaves the root empty, so copying only the
+# root produced an image whose every `import "ssh2"` failed at runtime. Copying
+# /app is layout-agnostic, and the deps stage holds nothing but manifests and
+# the lockfile besides.
+COPY --from=deps /app ./
 COPY package.json ./
 COPY apps/backend/package.json apps/backend/tsconfig.json ./apps/backend/
 COPY apps/backend/src ./apps/backend/src

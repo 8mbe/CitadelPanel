@@ -26,7 +26,11 @@ services:
     networks:
       - panel_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-citadel}"]
+      # -d is not optional: pg_isready defaults the database name to the user
+      # name, so whenever POSTGRES_DB differs from POSTGRES_USER every probe
+      # logs a FATAL "database does not exist". The server is up either way, so
+      # the check still passed and the only symptom was the log filling up.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-citadel} -d ${POSTGRES_DB:-citadel}"]
       interval: 10s
       timeout: 5s
       retries: 5

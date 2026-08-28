@@ -69,6 +69,14 @@ window where a new image serves requests against an old schema.
 The container waits for `postgres` to be healthy (`depends_on` +
 `pg_isready`), so the migration is not racing the database's first boot.
 
+That probe passes `-d` as well as `-U`. `pg_isready` defaults the database name
+to the user name, so an operator whose `POSTGRES_DB` differs from their
+`POSTGRES_USER` — which the setup script's generated credentials make likely —
+got a `FATAL: database "…" does not exist` in the postgres log every ten
+seconds forever. Nothing was broken: the server answering "that database is not
+here" is still a server that is up, so the check returned healthy and the only
+symptom was a log nobody could read.
+
 ### What the wizard still owns
 
 No account exists in a fresh image. `/setup` claims the first admin, sets the
@@ -93,6 +101,21 @@ Each image copies the root manifest + lockfile + both workspace manifests
 first, so a source-only change reuses the dependency layer. The agent's install
 is scoped (`--filter=backend --production`) so a node never carries the panel's
 Next.js tree.
+
+That scoping changes *where* the packages land, which the runtime stage has to
+respect. A filtered install does not hoist to the workspace root: bun writes
+the agent's dependencies to `apps/backend/node_modules` and leaves the root
+`node_modules` empty. A runtime stage that copies only `/app/node_modules`
+therefore builds and pushes cleanly and then dies on its first import:
+
+```
+error: Cannot find package 'ssh2' from '/app/apps/backend/src/sftp.ts'
+```
+
+So the agent's runtime stage copies the whole `/app` tree from the deps stage
+rather than one directory inside it. The deps stage holds nothing but the
+manifests and the lockfile besides, and copying the tree keeps the image
+correct whichever way a future bun decides to hoist.
 
 The control-plane image keeps `devDependencies` on purpose: it runs the
 migration scripts from source at boot and loads a TypeScript `next.config.ts`,
