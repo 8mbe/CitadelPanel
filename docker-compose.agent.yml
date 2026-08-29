@@ -50,8 +50,9 @@ services:
     ports:
       # Bind to a private interface in production, e.g. "10.0.0.5:8081:8081".
       # For browser-direct console on a public node, put a TLS proxy in front
-      # and expose that instead.
-      - "8081:8081"
+      # and expose that instead. The published side is a variable so a host that
+      # already uses 8081 can move it; the listener inside stays 8081.
+      - "${AGENT_PUBLIC_PORT:-8081}:8081"
       # SFTP. Expose only where clients can reach it. Keep behind a firewall or
       # TLS tunnel in production; SFTP auth is delegated to the panel but the
       # traffic itself is unencrypted without a host key + TLS proxy in front.

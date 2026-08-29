@@ -66,7 +66,14 @@ services:
       SUSPICION_AUTO_SUSPEND: ${SUSPICION_AUTO_SUSPEND:-false}
       SUSPICION_AUTO_SUSPEND_THRESHOLD: ${SUSPICION_AUTO_SUSPEND_THRESHOLD:-115}
     ports:
-      - "3000:3000"
+      # Published host port is a variable because 3000 is not always free: a
+      # PaaS may already be sitting on it (Dokploy serves its own dashboard
+      # there, and its installer requires 3000 free), and the failure is a
+      # daemon-level "port is already allocated" that aborts the deploy. The
+      # container's listener is fixed at 3000; move the host side instead, or
+      # drop this mapping entirely and route to the service through the
+      # platform's proxy. See docs/docker.md.
+      - "${PANEL_PORT:-3000}:3000"
     networks:
       panel_net:
         aliases:
@@ -102,7 +109,9 @@ services:
       # Published so browsers can open the direct console WebSocket. In a homelab
       # this is fine on localhost/LAN; in production put it behind a TLS-
       # terminating reverse proxy (Caddy/Nginx) rather than exposing 8081 bare.
-      - "8081:8081"
+      # Variable for the same reason as the panel port above; the agent's
+      # listener stays 8081 inside the container.
+      - "${AGENT_PUBLIC_PORT:-8081}:8081"
       # SFTP. Reachable by the operator's SFTP clients, so keep it on a trusted
       # interface. Auth is delegated to the panel, but the transport has no TLS
       # proxy in front of it here.

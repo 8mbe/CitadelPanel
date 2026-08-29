@@ -221,8 +221,26 @@ have to be real host paths:
 | 8081 | agent HTTP/WS | browsers reach it for the direct console, behind a TLS proxy or `AGENT_TLS_*` |
 | 8022 | agent SFTP | operators' SFTP clients; keep it on a trusted network |
 
-The agent's listen ports are fixed inside the container (`AGENT_PORT=8081`,
-`SFTP_PORT=8022`); remap the published side if the host has a conflict.
+Every listener is fixed *inside* its container (`3000` for the panel,
+`AGENT_PORT=8081`, `SFTP_PORT=8022`). Only the published host side moves, via
+`PANEL_PORT`, `AGENT_PUBLIC_PORT` and `SFTP_PORT`. Keeping the inside fixed is
+what lets `PANEL_URL`, the healthchecks and the agent's own callbacks name a
+constant port regardless of what the host had free.
+
+A taken host port is not a subtle failure. The daemon refuses the container
+outright and the deploy stops:
+
+```
+Bind for 0.0.0.0:3000 failed: port is already allocated
+```
+
+This is the usual first result of deploying the panel onto a PaaS, because
+**Dokploy serves its own dashboard on 3000** — its installer requires 80, 443
+and 3000 to be free. Set `PANEL_PORT` to something else, or, better, publish
+nothing and let the platform's proxy reach the container on 3000 directly:
+add a domain pointing at the `frontend` service and put it on
+`dokploy-network`. Publishing a host port and routing through Traefik are
+alternatives, not a pair.
 
 If the panel is served over HTTPS, the agent **must** be reachable as `wss://`.
 A browser blocks a `ws://` connection from an `https://` page as mixed content.
