@@ -24,7 +24,14 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - panel_net
+      # Aliased, not bare. A platform that renames services (Dokploy's
+      # "Randomize", which rewrites every service to <name>-<suffix>) takes the
+      # hostname `postgres` with it, and DATABASE_URL below still asks for
+      # `postgres`. Aliases are the one thing those transforms copy through
+      # untouched, so naming the host here is what keeps the URL true.
+      panel_net:
+        aliases:
+          - postgres
     healthcheck:
       # -d is not optional: pg_isready defaults the database name to the user
       # name, so whenever POSTGRES_DB differs from POSTGRES_USER every probe
@@ -61,8 +68,14 @@ services:
     ports:
       - "3000:3000"
     networks:
-      - panel_net
-      - node_net
+      panel_net:
+        aliases:
+          - frontend
+      # The agent resolves this one: PANEL_URL is how it calls back to validate
+      # console tokens and write audit entries, and it does that from node_net.
+      node_net:
+        aliases:
+          - frontend
 
   backend:
     build:
@@ -109,7 +122,12 @@ services:
     networks:
       node_net:
         aliases:
+          # `agent` is the name the panel is pointed at; `backend` is the
+          # service name, which an operator may well have typed into the node's
+          # API URL at registration. Both are free, and a node address stored in
+          # the database is not something a redeploy gets to invalidate.
           - agent
+          - backend
     healthcheck:
       test: ["CMD", "bun", "--eval", "await fetch('http://localhost:8081/v1/health', { headers: { authorization: 'Bearer ' + process.env.NODE_TOKEN } }).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s

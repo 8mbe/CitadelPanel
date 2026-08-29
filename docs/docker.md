@@ -230,6 +230,52 @@ Either terminate TLS in a proxy in front of 8081 or give the agent
 `AGENT_TLS_CERT`/`AGENT_TLS_KEY` and mount the material. See
 [direct-console.md](direct-console.md) and [sftp.md](sftp.md).
 
+### Service names are aliases, because a PaaS may rename them
+
+Three hostnames hold this stack together: `postgres` in `DATABASE_URL`,
+`frontend` in the agent's `PANEL_URL`, and the node's API URL stored in the
+database at registration. All three are resolved by Docker's embedded DNS, and
+under plain `docker compose` a service's name *is* its hostname, so they need
+nothing.
+
+A PaaS deploying this file may not leave the names alone. Dokploy is the case
+that surfaced it: its **Randomize** option rewrites every service to
+`<name>-<suffix>` (and every network and volume with it) so two projects on one
+host cannot collide. The panel then looks up `postgres`, gets NXDOMAIN, and the
+symptom is a control plane that cannot find a database that is running fine two
+containers away.
+
+So every service declares an explicit **network alias** rather than relying on
+its service name:
+
+```yaml
+    networks:
+      panel_net:
+        aliases:
+          - postgres
+```
+
+Aliases are the one part of the specification those transforms copy through
+untouched — Dokploy's network rewriter suffixes the keys around them and
+special-cases `aliases` to leave the values alone. The alias is therefore a
+hostname the deployment platform has promised not to touch, which is exactly
+what an environment variable pointing at it needs. `backend` carries two
+(`agent` and its own service name) because a node's address is typed by an
+operator at registration and stored in the database, where a later redeploy has
+no opportunity to correct it.
+
+Note which Dokploy feature does what, because the names mislead: **Isolated
+Deployment** does *not* rename services (it only attaches them to a
+per-project external network), so only **Randomize** ever needed this. The
+aliases are harmless either way, and plain `docker compose up` is unaffected.
+
+Two things this file deliberately does *not* do for Dokploy's sake. It sets no
+`container_name` — Dokploy breaks on that, and Compose's generated names are
+what its logs and metrics key on. And it does not join `dokploy-network`, which
+would have to be declared `external: true` and would then break every plain
+`docker compose up` on a host that has no such network; an operator routing
+Traefik to the panel adds that network to the `frontend` service themselves.
+
 ## Upgrading
 
 ```bash
