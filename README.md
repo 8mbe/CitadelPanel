@@ -458,3 +458,7 @@ Tests live next to the code they test. Run `bun run typecheck` and `bun run
 test` before you open a pull request.
 
 Repository: <https://github.com/8mbe/CitadelPanel>
+
+## License
+
+MIT. See [LICENSE](LICENSE).

@@ -1,6 +1,7 @@
 {
   "name": "citadelpanel",
   "private": true,
+  "license": "MIT",
   "workspaces": [
     "apps/*"
   ],
