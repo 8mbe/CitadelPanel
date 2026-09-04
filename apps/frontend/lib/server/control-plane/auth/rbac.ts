@@ -9,7 +9,17 @@
 import { sql } from "../db/client";
 import type { Role } from "./betterAuth";
 
-/** Permission flags a server owner can delegate to a subuser. */
+/**
+ * Permission flags a server owner can delegate to a subuser.
+ *
+ * `schedules` is the odd one out and worth reading `docs/scheduler.md` about: it
+ * gates the schedules tab and the schedule CRUD, but it is deliberately *not*
+ * sufficient on its own to schedule anything. A schedule's tasks are power
+ * actions, backups and console commands, so writing one additionally requires
+ * the flag each of its task kinds would need if performed by hand. Otherwise
+ * this one grant would be a way to run arbitrary console commands without
+ * `console`.
+ */
 export const SUBUSER_PERMISSIONS = [
   "console",
   "files",
@@ -17,6 +27,7 @@ export const SUBUSER_PERMISSIONS = [
   "settings",
   "backups",
   "database",
+  "schedules",
 ] as const;
 
 export type SubuserPermission = (typeof SUBUSER_PERMISSIONS)[number];

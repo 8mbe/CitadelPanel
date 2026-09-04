@@ -1160,7 +1160,7 @@ async function withMissingContainerRecovery<T>(
 
 export async function startServer(
   serverId: string,
-  actorId: string,
+  actorId: string | null,
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
   assertNotSuspended(server);
@@ -1193,7 +1193,7 @@ export async function startServer(
 
 export async function stopServer(
   serverId: string,
-  actorId: string,
+  actorId: string | null,
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
   assertHasContainer(server);
@@ -1230,7 +1230,7 @@ export async function stopServer(
  */
 export async function killServer(
   serverId: string,
-  actorId: string,
+  actorId: string | null,
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
   assertHasContainer(server);
@@ -1258,7 +1258,7 @@ export async function killServer(
 
 export async function restartServer(
   serverId: string,
-  actorId: string,
+  actorId: string | null,
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
   assertNotSuspended(server);

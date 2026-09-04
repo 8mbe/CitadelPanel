@@ -44,6 +44,10 @@ const PERMISSION_OPTIONS = [
   { key: "settings", label: "Edit settings" },
   { key: "backups", label: "Backups" },
   { key: "database", label: "Database" },
+  // Opens the schedules tab. Note that it is not sufficient on its own: saving a
+  // schedule also needs the flag for each task kind in it, so "schedules" plus
+  // "start_stop" is what a nightly restart takes (docs/scheduler.md).
+  { key: "schedules", label: "Schedules" },
 ];
 
 export function SubusersTab({ serverId }: { serverId: string }) {

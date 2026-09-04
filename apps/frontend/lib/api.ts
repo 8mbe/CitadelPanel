@@ -544,6 +544,196 @@ export interface ServerPort {
   label: string | null;
 }
 
+// --- Schedules ------------------------------------------------------------------
+
+/** What a scheduled task does. Mirrors the backend's closed set. */
+export type ScheduleTaskAction =
+  | "power.start"
+  | "power.stop"
+  | "power.restart"
+  | "power.kill"
+  | "backup"
+  | "command";
+
+export type ScheduleRunStatus = "running" | "succeeded" | "failed";
+export type ScheduleTrigger = "manual" | "scheduled";
+
+export interface ScheduleTask {
+  action: ScheduleTaskAction;
+  /** The console command, for `command` tasks. Null for every other action. */
+  command: string | null;
+  /** Seconds to wait *before* this task runs, so one schedule can stage its tasks. */
+  delaySeconds: number;
+  /** Whether a failure here lets the remaining tasks proceed. */
+  continueOnFailure: boolean;
+}
+
+/** One task's outcome inside a run. */
+export interface ScheduleStep {
+  position: number;
+  action: ScheduleTaskAction;
+  status: "succeeded" | "failed" | "skipped";
+  error?: string;
+  startedAt: string;
+  finishedAt: string;
+}
+
+export interface ScheduleRun {
+  id: string;
+  scheduleId: string | null;
+  trigger: ScheduleTrigger;
+  status: ScheduleRunStatus;
+  steps: ScheduleStep[];
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface Schedule {
+  id: string;
+  serverId: string;
+  name: string;
+  cron: string;
+  enabled: boolean;
+  /** When true, the schedule is skipped unless the server is running. */
+  onlyWhenRunning: boolean;
+  tasks: ScheduleTask[];
+  /**
+   * When it next fires, as an ISO instant, computed by the panel in the panel's
+   * timezone. Null when the schedule is disabled.
+   */
+  nextRun: string | null;
+  lastRunAt: string | null;
+  lastStatus: ScheduleRunStatus | null;
+  createdAt: string;
+}
+
+export interface ScheduleListView {
+  schedules: Schedule[];
+  /** The panel's timezone; every cron expression is evaluated in it. */
+  timezone: string;
+  /** Ready-made expressions, so nobody has to write cron. */
+  presets: readonly { label: string; value: string }[];
+}
+
+/** The body the create/replace endpoints accept. */
+export interface ScheduleWrite {
+  name: string;
+  cron: string;
+  enabled: boolean;
+  onlyWhenRunning: boolean;
+  tasks: ScheduleTask[];
+}
+
+/** GET /api/servers/:id/schedules. The tab's whole payload in one round trip. */
+export async function getServerSchedules(id: string): Promise<ScheduleListView> {
+  return request<ScheduleListView>(`/api/servers/${id}/schedules`);
+}
+
+/** POST /api/servers/:id/schedules. */
+export async function createServerSchedule(
+  id: string,
+  payload: ScheduleWrite,
+): Promise<Schedule> {
+  const data = await request<{ schedule: Schedule }>(`/api/servers/${id}/schedules`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return data.schedule;
+}
+
+/**
+ * PATCH /api/servers/:id/schedules/:scheduleId. Replaces the schedule.
+ *
+ * A whole replace, because the tasks are an ordered list: patching "task 2" is
+ * meaningless once task 1 has been removed.
+ */
+export async function updateServerSchedule(
+  id: string,
+  scheduleId: string,
+  payload: ScheduleWrite,
+): Promise<Schedule> {
+  const data = await request<{ schedule: Schedule }>(
+    `/api/servers/${id}/schedules/${scheduleId}`,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  );
+  return data.schedule;
+}
+
+/**
+ * PATCH with only `enabled`. Flips the switch without resending the tasks, which
+ * is what lets the list view toggle a schedule it has not opened for editing.
+ */
+export async function setScheduleEnabled(
+  id: string,
+  scheduleId: string,
+  enabled: boolean,
+): Promise<Schedule> {
+  const data = await request<{ schedule: Schedule }>(
+    `/api/servers/${id}/schedules/${scheduleId}`,
+    { method: "PATCH", body: JSON.stringify({ enabled }) },
+  );
+  return data.schedule;
+}
+
+/** DELETE /api/servers/:id/schedules/:scheduleId. */
+export async function deleteServerSchedule(
+  id: string,
+  scheduleId: string,
+): Promise<void> {
+  await request<void>(`/api/servers/${id}/schedules/${scheduleId}`, {
+    method: "DELETE",
+  });
+}
+
+/**
+ * POST /api/servers/:id/schedules/:scheduleId/run. Runs it now.
+ *
+ * Awaited server-side, so the response carries the finished run. A schedule with
+ * long task delays therefore holds this request open for as long as it takes.
+ */
+export async function runServerSchedule(
+  id: string,
+  scheduleId: string,
+): Promise<{ status: ScheduleRunStatus; run: ScheduleRun | null }> {
+  return request(`/api/servers/${id}/schedules/${scheduleId}/run`, {
+    method: "POST",
+  });
+}
+
+/** GET /api/servers/:id/schedules/:scheduleId/runs. Recent runs, newest first. */
+export async function getScheduleRuns(
+  id: string,
+  scheduleId: string,
+): Promise<ScheduleRun[]> {
+  const data = await request<{ runs: ScheduleRun[] }>(
+    `/api/servers/${id}/schedules/${scheduleId}/runs`,
+  );
+  return data.runs;
+}
+
+/**
+ * POST /api/servers/:id/schedules/preview. Validates an expression.
+ *
+ * Server-side so the preview uses the panel's timezone and the same parser the
+ * runner does; a schedule can never preview one thing and then do another.
+ * Throws `ApiError` (400) with the parser's own message for a bad expression.
+ */
+export async function previewSchedule(
+  id: string,
+  cron: string,
+): Promise<{
+  valid: boolean;
+  description: string;
+  nextRuns: string[];
+  timezone: string;
+}> {
+  return request(`/api/servers/${id}/schedules/preview`, {
+    method: "POST",
+    body: JSON.stringify({ cron }),
+  });
+}
+
 // --- Backups --------------------------------------------------------------------
 
 export type BackupKind = "backup" | "restore";

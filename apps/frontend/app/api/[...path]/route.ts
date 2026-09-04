@@ -79,6 +79,16 @@ import {
   handleWriteFile,
 } from "@/lib/server/control-plane/routes/files";
 import {
+  handleCreateSchedule,
+  handleDeleteSchedule,
+  handleGetSchedule,
+  handleListScheduleRuns,
+  handleListSchedules,
+  handlePreviewSchedule,
+  handleRunSchedule,
+  handleUpdateSchedule,
+} from "@/lib/server/control-plane/routes/schedules";
+import {
   handleCreateSftpCredential,
   handleDeleteSftpCredential,
   handleGetSftpConnection,
@@ -316,6 +326,14 @@ const patterns: Array<{
   { pattern: /^servers\/([^/]+)\/backups\/([^/]+)\/logs$/, methods: { GET: handleGetServerBackupLogs } },
   { pattern: /^servers\/([^/]+)\/backups\/([^/]+)\/restore$/, methods: { POST: handleRestoreServerBackup } },
   { pattern: /^servers\/([^/]+)\/backups\/([^/]+)$/, methods: { GET: handleGetServerBackup, DELETE: handleDeleteServerBackup } },
+  // Schedules (see routes/schedules.ts). `preview` is a literal segment and must
+  // come before the bare `:scheduleId` pattern, otherwise POST /schedules/preview
+  // is captured as a schedule id and 405s on the GET-only route.
+  { pattern: /^servers\/([^/]+)\/schedules$/, methods: { GET: handleListSchedules, POST: handleCreateSchedule } },
+  { pattern: /^servers\/([^/]+)\/schedules\/preview$/, methods: { POST: handlePreviewSchedule } },
+  { pattern: /^servers\/([^/]+)\/schedules\/([^/]+)\/run$/, methods: { POST: handleRunSchedule } },
+  { pattern: /^servers\/([^/]+)\/schedules\/([^/]+)\/runs$/, methods: { GET: handleListScheduleRuns } },
+  { pattern: /^servers\/([^/]+)\/schedules\/([^/]+)$/, methods: { GET: handleGetSchedule, PATCH: handleUpdateSchedule, DELETE: handleDeleteSchedule } },
   { pattern: /^servers\/([^/]+)\/subusers$/, methods: { GET: handleListSubusers, POST: handleInviteSubuser } },
   { pattern: /^servers\/([^/]+)\/subusers\/([^/]+)$/, methods: { PATCH: handleUpdateSubuser, DELETE: handleRemoveSubuser } },
   { pattern: /^servers\/([^/]+)\/sftp\/connection$/, methods: { GET: handleGetSftpConnection } },

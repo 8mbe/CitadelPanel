@@ -11,7 +11,9 @@ Both run asynchronously on the node, report live progress, keep a durable log, a
 can be driven by an admin-configured cron schedule. Both go to the same
 S3-compatible bucket, in separate encrypted restic repositories.
 
-Related: `database-explorer.md` (where per-database credentials come from),
+Related: `scheduler.md` (the per-server schedule an owner can point at a file
+backup, which is a different thing from the admin backup cron below),
+`database-explorer.md` (where per-database credentials come from),
 `subusers.md` (the `backups` flag), `ports.md` and `server-links.md` (the other
 per-server owner surfaces), `first-time-setup.md` (backups are configured after
 setup, not during it).

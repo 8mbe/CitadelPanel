@@ -135,6 +135,15 @@ Existing docs:
   forces that split, why restic in a throwaway container, the FIFO snapshot
   quota enforced before the new snapshot, the async job/reconciler split, the
   storage accounting, and why TLS is a field rather than part of the endpoint.
+- `docs/scheduler.md`: per-server task schedules. Why a schedule is an ordered
+  *list* of tasks rather than one action (and what `delay_seconds` and
+  `continue_on_failure` buy), why the three task kinds are the three the panel
+  already has a privileged path for and why a "run a shell command" task must
+  never join them, the two-gate permission model that stops `schedules` being
+  an escalation to arbitrary console access, why runs are started detached and
+  what the `running` run row therefore has to pay for, the minute-window
+  double-fire guard, and the boot/tick sweep that keeps one lost run from
+  silencing a schedule forever.
 - `docs/legal-pages.md`: operator-authored terms and privacy policy. Why the
   panel ships drafts rather than defaults, the "what this codebase stores"
   privacy inventory, and why Markdown is rendered to React nodes.

@@ -24,6 +24,7 @@ feed and nothing else.
 | `database` | Database list, create, delete, password reset, **including the list** |
 | `settings` | Env view/edit, ports view/add/remove, connected-servers list |
 | `backups` | Backup list, status, logs, and taking a backup. **Not** restore or delete, which are owner-only (`backups.md`) |
+| `schedules` | The schedules tab and schedule CRUD. **Not sufficient on its own** to schedule anything — see below (`scheduler.md`) |
 
 Two design rules keep this coherent:
 
@@ -41,6 +42,14 @@ Two design rules keep this coherent:
   overwrites a world and every database in the snapshot, and a delete destroys
   the only copy of a point in time, so both sit behind `requireServerOwner`
   while the rest of the tab sits under the flag.
+- **A grant may require other grants.** `schedules` is the one flag that gates
+  a surface without gating what that surface does. A schedule's tasks are power
+  actions, backups and console commands, so writing one additionally requires
+  the flag each of its task kinds would need by hand: `schedules` + `start_stop`
+  for a nightly restart, `schedules` + `console` to put a command in one.
+  Otherwise this single grant would be the most powerful in the set, because
+  "run this command every minute" is strictly more than "run this command"
+  (`scheduler.md`).
 
 ## Enforcement: API first, UI second
 
@@ -62,7 +71,8 @@ in `permissions.test.ts`):
 
 - `components/server/server-tabs.tsx` lists only sections the viewer may use
   (Subusers tab: owner/admin only; Ports and Settings: `settings`; Database:
-  `database`; Files: `files`; Console + Activity: any access).
+  `database`; Files: `files`; Schedules: `schedules`; Console + Activity: any
+  access).
 - The server layout (`app/(panel)/servers/[id]/layout.tsx`) guards the
   section routes themselves. Every section has its own URL, so navigating
   straight to `/servers/:id/files` without the grant renders a "no access"

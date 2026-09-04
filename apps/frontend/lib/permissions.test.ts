@@ -72,6 +72,31 @@ test("plugins ride the files grant because installing a plugin is a file write",
   expect(sectionAllowed("plugins", owner)).toBe(true);
 });
 
+test("the schedules flag opens the tab and nothing else", () => {
+  // The anti-escalation rule from `docs/scheduler.md`, as the UI sees it: the
+  // flag reaches the tab, but the task kinds a schedule can hold are still
+  // gated on their own flags, which is what the form disables on.
+  const scheduler: ServerViewerAccess = {
+    kind: "subuser",
+    permissions: { console: true, schedules: true },
+  };
+
+  expect(sectionAllowed("schedules", scheduler)).toBe(true);
+  expect(sectionAllowed("schedules", consoleOnly)).toBe(false);
+  expect(sectionAllowed("schedules", owner)).toBe(true);
+
+  // Holding `schedules` grants none of the task kinds' own permissions.
+  expect(viewerAllows(scheduler, "start_stop")).toBe(false);
+  expect(viewerAllows(scheduler, "backups")).toBe(false);
+  // ...and holding a task kind's permission does not open the tab.
+  expect(
+    sectionAllowed("schedules", {
+      kind: "subuser",
+      permissions: { console: true, start_stop: true },
+    }),
+  ).toBe(false);
+});
+
 test("managing subusers is never delegable", () => {
   expect(sectionAllowed("subusers", fullSubuser)).toBe(false);
   expect(sectionAllowed("subusers", owner)).toBe(true);

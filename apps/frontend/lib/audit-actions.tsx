@@ -3,6 +3,7 @@
 import * as React from "react";
 import {
   Boxes,
+  CalendarClock,
   Cog,
   Database,
   FileCog,
@@ -109,6 +110,14 @@ export function actionMeta(action: string): ActionMeta {
       return { label: "Database removed", category: "databases", icon: Database };
     case "server.database.reset_password":
       return { label: "Database password reset", category: "databases", icon: KeyRound };
+
+    // Schedules
+    case "server.schedule.create":
+      return { label: "Schedule created", category: "config", icon: CalendarClock };
+    case "server.schedule.update":
+      return { label: "Schedule updated", category: "config", icon: CalendarClock };
+    case "server.schedule.delete":
+      return { label: "Schedule deleted", category: "config", icon: CalendarClock };
 
     // Console
     case "server.console.command":
@@ -307,6 +316,26 @@ function describeActionMetadata(
       const version = str(meta.version);
       if (plugin && version) return `${plugin} ${version}`;
       return plugin;
+    }
+    case "server.schedule.create":
+    case "server.schedule.update":
+    case "server.schedule.delete": {
+      // The name is what a reader recognises; the cron and task list are what
+      // tell them whether this is the edit they are looking for.
+      const name = str(meta.name);
+      const cron = str(meta.cron);
+      const tasks = meta.tasks;
+      const taskList =
+        Array.isArray(tasks) && tasks.length > 0
+          ? tasks.filter((t): t is string => typeof t === "string").join(" → ")
+          : null;
+      const enabled =
+        typeof meta.enabled === "boolean" ? (meta.enabled ? "enabled" : "disabled") : null;
+      return (
+        [name, cron ? `"${cron}"` : null, taskList, enabled]
+          .filter((part): part is string => Boolean(part))
+          .join(" · ") || null
+      );
     }
     case "server.plugin.remove": {
       const plugin = str(meta.plugin);

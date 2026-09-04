@@ -15,6 +15,7 @@ export const SERVER_SECTION_KEYS = [
   "plugins",
   "database",
   "backups",
+  "schedules",
   "ports",
   "subusers",
   "settings",
@@ -39,6 +40,13 @@ export type ServerSectionKey = (typeof SERVER_SECTION_KEYS)[number];
  * restore and delete *actions* are owner-only server-side, because each destroys
  * a world or the only copy of a point in time, so the tab renders them disabled
  * for a subuser.
+ *
+ * `schedules` is the same story, more so. The flag opens the tab, but the backend
+ * additionally requires the permission each of a schedule's *tasks* would need by
+ * hand, so a subuser with `schedules` but not `console` sees the tab and cannot
+ * save a schedule that runs a console command. The tab uses `viewerAllows` on
+ * those flags to disable the task kinds it knows would be refused, rather than
+ * letting the save fail (`docs/scheduler.md`).
  */
 export const SECTION_PERMISSIONS = {
   console: null,
@@ -46,6 +54,7 @@ export const SECTION_PERMISSIONS = {
   plugins: "files",
   database: "database",
   backups: "backups",
+  schedules: "schedules",
   ports: "settings",
   subusers: "owner",
   settings: "settings",

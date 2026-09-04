@@ -10,12 +10,14 @@ export async function register() {
     { startBackupScheduler },
     { failInterruptedProvisions },
     { startStatusSweeper },
+    { failAbandonedScheduleRuns, startScheduleRunner },
   ] = await Promise.all([
     import("./lib/server/control-plane/blueprints/registry"),
     import("./lib/server/control-plane/security/watcher"),
     import("./lib/server/control-plane/nodes/backupScheduler"),
     import("./lib/server/control-plane/services/serverManager"),
     import("./lib/server/control-plane/services/statusSweeper"),
+    import("./lib/server/control-plane/nodes/scheduleRunner"),
   ]);
 
   await syncBlueprintsToDatabase();
@@ -24,6 +26,11 @@ export async function register() {
   // when the previous one stopped has nobody working on it now. Fail those rows
   // before serving a request, or they claim to be installing forever.
   await failInterruptedProvisions();
+
+  // Schedule runs execute in this process too, so a `running` run row from the
+  // previous one has no owner. Closed out before serving a request, because
+  // until it is, that schedule cannot fire again (see nodes/scheduleRunner.ts).
+  await failAbandonedScheduleRuns();
 
   // Containers are created with no restart policy, so a node that rebooted
   // brings none of them back and every row on it still claims to be running.
@@ -36,4 +43,8 @@ export async function register() {
   // runs against their nodes, so it has to run even on a panel with no schedule
   // configured. Otherwise a manual backup would never leave "running".
   startBackupScheduler();
+  // Independent of the backup scheduler even though a schedule can take a
+  // backup: this one fires whatever an owner configured per server, on its own
+  // cron, and must keep ticking on a panel with no S3 destination at all.
+  startScheduleRunner();
 }

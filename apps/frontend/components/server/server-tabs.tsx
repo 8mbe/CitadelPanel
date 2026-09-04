@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Archive,
+  CalendarClock,
   Database,
   FolderOpen,
   History,
@@ -25,6 +26,7 @@ export const SERVER_SECTIONS = [
   { key: "plugins", label: "Plugins", icon: Puzzle },
   { key: "database", label: "Database", icon: Database },
   { key: "backups", label: "Backups", icon: Archive },
+  { key: "schedules", label: "Schedules", icon: CalendarClock },
   { key: "ports", label: "Ports", icon: Network },
   { key: "subusers", label: "Subusers", icon: UserCog },
   { key: "settings", label: "Settings", icon: Settings2 },

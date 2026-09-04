@@ -194,7 +194,8 @@ export type ServerPermission =
   | "start_stop"
   | "settings"
   | "backups"
-  | "database";
+  | "database"
+  | "schedules";
 
 /**
  * What the current caller can do on a server, as reported by the server
