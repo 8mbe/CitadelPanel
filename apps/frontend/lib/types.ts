@@ -17,7 +17,9 @@ export type ServerStatus =
   | "stopping"
   | "suspended"
   | "error"
-  | "deleting";
+  | "deleting"
+  /** Being moved to another node; see docs/server-migration.md. */
+  | "migrating";
 
 // Matches apps/backend/src/nodes/nodeRegistry.ts `PublicNode`.
 export interface NodeView {

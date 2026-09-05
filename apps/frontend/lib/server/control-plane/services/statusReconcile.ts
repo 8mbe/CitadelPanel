@@ -80,6 +80,17 @@ export function reconcileStatus(
   // An administrative decision, not an observation of the node.
   if (stored === "suspended") return "suspended";
 
+  // A status the migration owns, for the same reason: it is a decision the
+  // panel is holding, not a thing it is observing. And the observation here is
+  // actively misleading rather than merely uninformative -- for most of a
+  // migration the SOURCE node truthfully reports the container as exited,
+  // because it was stopped on purpose so its files would stop changing. A
+  // reconcile that believed it would write `stopped` over a move in progress,
+  // taking the migration's own progress reporting off the server page with it.
+  // `services/serverMigration.ts` is the only thing that moves this status, and
+  // `failInterruptedMigrations` is what releases it if that process dies.
+  if (stored === "migrating") return "migrating";
+
   const observed = statusFromContainerState(state);
 
   if (

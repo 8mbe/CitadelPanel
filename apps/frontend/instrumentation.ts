@@ -11,6 +11,7 @@ export async function register() {
     { failInterruptedProvisions },
     { startStatusSweeper },
     { failAbandonedScheduleRuns, startScheduleRunner },
+    { failInterruptedMigrations },
   ] = await Promise.all([
     import("./lib/server/control-plane/blueprints/registry"),
     import("./lib/server/control-plane/security/watcher"),
@@ -18,6 +19,7 @@ export async function register() {
     import("./lib/server/control-plane/services/serverManager"),
     import("./lib/server/control-plane/services/statusSweeper"),
     import("./lib/server/control-plane/nodes/scheduleRunner"),
+    import("./lib/server/control-plane/services/serverMigration"),
   ]);
 
   await syncBlueprintsToDatabase();
@@ -31,6 +33,14 @@ export async function register() {
   // previous one has no owner. Closed out before serving a request, because
   // until it is, that schedule cannot fire again (see nodes/scheduleRunner.ts).
   await failAbandonedScheduleRuns();
+
+  // A migration runs in this process too, and it holds its server in
+  // `migrating`, a status nothing else is allowed to correct. A restart
+  // mid-move would otherwise leave that server unreachable by every recovery
+  // path the panel has. This closes the row out and releases the status; it
+  // deliberately does not resume or undo anything on either node, because it
+  // cannot know how far the previous process got.
+  await failInterruptedMigrations();
 
   // Containers are created with no restart policy, so a node that rebooted
   // brings none of them back and every row on it still claims to be running.

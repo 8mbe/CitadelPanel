@@ -151,6 +151,13 @@ Existing docs:
   must never call `docker stats` with `stream: false`, and why panel read
   endpoints are shaped around the number of database round trips (read the row
   once, batch across rows, and the two caches whose writers must invalidate).
+- `docs/server-migration.md`: moving a server between nodes. Why the whole
+  thing is a copy that keeps the source until the destination is proved (and
+  what that buys on every failure), the preflight's checks and why real free
+  disk is a different question from the scheduler's bookkeeping, why the port
+  rows move only in the cutover transaction, why the transfer streams through
+  the panel rather than node-to-node, the `migrating` status nothing reconciles,
+  and the one server that cannot be migrated yet.
 - `docs/node-hardening.md`: keeping a compromised server from becoming a
   compromised node. The per-container controls (`hardening.ts`), user-namespace
   remapping and the uid-offset bookkeeping it forces on every agent write, the

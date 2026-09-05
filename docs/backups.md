@@ -598,3 +598,11 @@ up by ordinary means, and it must be: without it, the snapshots in S3 cannot be 
 | `components/server/backups-tab.tsx` | Owner-facing tab: status, progress, log tail, history, quota |
 | `components/admin/backup-settings.tsx` | Destination, server schedule, storage |
 | `components/admin/database-backups-card.tsx` | Database schedule and the per-node list |
+
+## The safety backup a migration takes
+
+Moving a server between nodes takes an ordinary server-scope backup first and
+refuses to continue without one, so a world that arrives subtly wrong is still
+recoverable days later, past every rollback the migration itself can perform. It
+is taken before the server is stopped, so a failed backup costs no outage. See
+[server-migration.md](server-migration.md).

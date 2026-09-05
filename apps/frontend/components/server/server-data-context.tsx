@@ -62,11 +62,17 @@ export function ServerDataProvider({
   // A stop is seconds, and it is the window in which the power controls offer
   // Kill, and a page that opened during someone else's stop has to see the stop
   // land, or it sits on a Kill button for a server that is already down.
-  const recordPollMs = isProvisioning(status)
-    ? 5000
-    : status === "starting" || status === "stopping"
-      ? 2000
-      : null;
+  //
+  // `migrating` is the longest case of all -- a world being copied to another
+  // node takes as long as it takes -- and it is polled on the provisioning
+  // cadence for the same reason: this poll is what lifts the shell's migrating
+  // gate when the move finishes, without anyone reloading.
+  const recordPollMs =
+    isProvisioning(status) || status === "migrating"
+      ? 5000
+      : status === "starting" || status === "stopping"
+        ? 2000
+        : null;
 
   React.useEffect(() => {
     if (recordPollMs === null) return;

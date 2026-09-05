@@ -10,8 +10,8 @@ the whole thing away and starts again.
 
 `servers.status` is what the panel last observed or intended
 (`creating`, `installing`, `stopped`, `starting`, `running`, `stopping`,
-`suspended`, `error`, `deleting`). It is written before the node is asked to do
-anything and corrected after. That is the ordering principle in
+`suspended`, `error`, `deleting`, `migrating`). It is written before the node is
+asked to do anything and corrected after. That is the ordering principle in
 `services/serverManager.ts`: a DB row with no container is recoverable, a
 container with no DB row is an orphan nobody can see.
 
@@ -19,7 +19,10 @@ Because the status is a record rather than an observation, it can be wrong: a
 game that crashes on its own leaves `running` behind. `reconcileServerStatus`
 is the correction. It asks the agent for the container's real state and maps
 it back onto the stored status. Suspended servers are never reconciled away;
-that state is an administrative decision, not an observation of the node.
+that state is an administrative decision, not an observation of the node. Nor
+are `migrating` ones, for a sharper version of the same reason: the row still
+names the *source* node, which is honestly reporting a container the migration
+stopped on purpose (see [server-migration.md](server-migration.md)).
 
 ### Something has to go and look
 

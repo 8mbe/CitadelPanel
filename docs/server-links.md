@@ -95,3 +95,11 @@ network.
 Deleting a server detaches all its links first (`detachAllServerLinks`) while
 both containers still exist; the rows then cascade away with the server
 record.
+
+## When a server changes node
+
+A link's mechanism is decided entirely by whether the two servers share a node,
+so moving one flips that answer for every link it has. `rewireServerLinks` tears
+down the pair network on the node the server left and builds one on the node it
+arrived at, at cutover, while both containers still exist. See
+[server-migration.md](server-migration.md).

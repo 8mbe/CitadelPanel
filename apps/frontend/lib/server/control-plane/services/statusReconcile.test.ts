@@ -41,6 +41,20 @@ describe("reconcileStatus", () => {
     expect(reconcileStatus("suspended", "exited", STALE)).toBe("suspended");
   });
 
+  // The observation here is not merely uninformative, it is actively wrong:
+  // the row still names the SOURCE node, and that node truthfully reports the
+  // container as exited because the migration stopped it on purpose so the
+  // files would stop changing. Believing it writes `stopped` over a move in
+  // progress. Unlike `starting`/`stopping`, there is no age at which the node
+  // wins: a migration can legitimately run for hours, and only
+  // `failInterruptedMigrations` releases the status.
+  test("a migrating server is never corrected, at any age", () => {
+    expect(reconcileStatus("migrating", "exited", FRESH)).toBe("migrating");
+    expect(reconcileStatus("migrating", "exited", STALE)).toBe("migrating");
+    expect(reconcileStatus("migrating", "running", STALE)).toBe("migrating");
+    expect(reconcileStatus("migrating", "missing", STALE)).toBe("migrating");
+  });
+
   // The bug this rule exists for: docker reports `running` for the whole grace
   // period of a graceful stop, so believing it turned every in-flight stop back
   // into "running" and took the Kill button away with it.
@@ -119,8 +133,9 @@ describe("statusCorrections", () => {
       [
         settled("suspended", "suspended"),
         { id: "stopping", status: "stopping", updatedAt: new Date(NOW - FRESH) },
+        { id: "migrating", status: "migrating", updatedAt: new Date(NOW - STALE) },
       ],
-      { suspended: "running", stopping: "running" },
+      { suspended: "running", stopping: "running", migrating: "exited" },
       NOW,
     );
 

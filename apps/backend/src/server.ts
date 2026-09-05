@@ -67,6 +67,14 @@ import { removeOrphanedToolContainers } from "./backup/toolContainer";
 import { createSftpServer } from "./sftp";
 import type { Server as SshServer } from "ssh2";
 import {
+  dataRootSpace,
+  exportServerData,
+  importServerData,
+  measureServerData,
+  parseCompress,
+  transferToolsAvailable,
+} from "./transfer";
+import {
   copyPath,
   createDirectory,
   deletePath,
@@ -427,9 +435,17 @@ const server = Bun.serve<ConsoleSocket, never>({
         // with "Internal agent error", the least useful of the possible
         // diagnoses. A node whose Docker is unreachable is degraded, not
         // broken, and it can still say exactly what to fix (see `socket.ts`).
-        const [dockerSocket, dataRoot] = await Promise.all([
+        // `disk` and `transferTools` are here rather than on a route of their
+        // own because the panel already calls health before it places a server
+        // anywhere, and a migration's preflight asks the same question one step
+        // harder: not "can this node store data" but "can it store *this much*
+        // more, and does it have the tools to receive it" (see
+        // `docs/server-migration.md`).
+        const [dockerSocket, dataRoot, disk, transferTools] = await Promise.all([
           probeDockerSocket(),
           probeDataRoot(),
+          dataRootSpace(),
+          transferToolsAvailable(),
         ]);
 
         const info = dockerSocket.reachable ? await readDaemonInfo() : undefined;
@@ -441,6 +457,8 @@ const server = Bun.serve<ConsoleSocket, never>({
           capacity: info ? { ncpu: info.ncpu, memTotalMb: info.memTotalMb } : undefined,
           serverDataRoot: config.serverDataRoot,
           dataRoot,
+          disk,
+          transferTools,
           dockerSocket,
         });
       }),
@@ -1089,6 +1107,70 @@ const server = Bun.serve<ConsoleSocket, never>({
 
         const result = await pullFromUrl(serverId, body.path, body.url);
         return json(result, 201);
+      }),
+    },
+
+    // --- Migration: move a server's data between nodes ------------------------
+    //
+    // Three narrow routes the panel drives during a migration (see
+    // `transfer.ts` and `docs/server-migration.md`). None of them is a
+    // migration: the source only knows how to hand over a copy of a directory
+    // it keeps, and the destination only knows how to receive one. Deciding
+    // that the two together constitute a move, and that the source's copy may
+    // finally be deleted, stays with the panel.
+
+    /**
+     * GET /v1/servers/:id/transfer/size. The data directory's size in bytes.
+     *
+     * Asked of the *source* before anything is stopped, so the panel can
+     * refuse a migration the destination has no room for while the server is
+     * still happily running.
+     */
+    "/v1/servers/:id/transfer/size": {
+      GET: route(async (request) => {
+        const serverId = serverIdOf(request);
+        return json({ sizeBytes: await measureServerData(serverId) });
+      }),
+    },
+
+    /**
+     * GET /v1/servers/:id/transfer/export. Streams the data directory as tar.
+     *
+     * Read-only: this is the half of a migration that must never damage the
+     * node the server is currently working on. The panel pipes the body
+     * straight into the destination's import without buffering.
+     */
+    "/v1/servers/:id/transfer/export": {
+      GET: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const compress = parseCompress(queryOf(request).get("compress"));
+        const { body, contentType } = await exportServerData(serverId, { compress });
+        return new Response(body, {
+          headers: {
+            "content-type": contentType,
+            // No content-length: the archive is produced as it is sent, and a
+            // length would have to be a guess. The panel verifies the transfer
+            // by re-measuring the destination instead.
+            "cache-control": "no-store",
+          },
+        });
+      }),
+    },
+
+    /**
+     * POST /v1/servers/:id/transfer/import. Extracts a tar into the data root.
+     *
+     * 409s rather than merging when this node already holds data for the
+     * server, so a retried migration cannot silently interleave two copies of
+     * somebody's world.
+     */
+    "/v1/servers/:id/transfer/import": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        if (!request.body) throw badRequest("Request body is required.");
+        const compressed = parseCompress(queryOf(request).get("compress"));
+        const result = await importServerData(serverId, request.body, { compressed });
+        return json({ sizeBytes: result.sizeBytes }, 201);
       }),
     },
 

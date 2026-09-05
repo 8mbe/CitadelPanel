@@ -333,3 +333,12 @@ All shared between the agent and the CLI script (`apps/backend/src/config.ts`):
 `node.database.setup`, `node.database.start`, `node.database.stop`, all against
 the node. Setup records whether it minted the credential or reused the stored
 one; stop records how many server databases it affected. Never the credential.
+
+## Why a server with a database cannot be migrated
+
+A provisioned database lives on *this* node's MariaDB, at this node's internal
+address, under a credential that ends up in config files the panel does not own.
+Moving the server's container to another node without it produces a server that
+starts, looks healthy and cannot reach its data. So migration refuses such a
+server outright rather than half-moving it. See
+[server-migration.md](server-migration.md).

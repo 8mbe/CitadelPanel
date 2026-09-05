@@ -10,10 +10,12 @@ import {
   Search,
   Trash2,
   TriangleAlert,
+  Truck,
 } from "lucide-react";
 
 import { CreateServerDialog } from "@/components/admin/create-server-dialog";
 import { EditResourcesDialog } from "@/components/admin/edit-resources-dialog";
+import { MigrateServerDialog } from "@/components/admin/migrate-server-dialog";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -89,6 +91,8 @@ export default function AdminServersPage() {
   const [loadedQuery, setLoadedQuery] = React.useState("");
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [editTarget, setEditTarget] = React.useState<AdminServerSummary | null>(null);
+  const [migrateTarget, setMigrateTarget] =
+    React.useState<AdminServerSummary | null>(null);
   const [suspendTarget, setSuspendTarget] =
     React.useState<AdminServerSummary | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<AdminServerSummary | null>(
@@ -283,6 +287,17 @@ export default function AdminServersPage() {
                               <Pencil />
                               Edit resources
                             </DropdownMenuItem>
+                            {/*
+                              Offered on every server, including one already
+                              migrating: opening the dialog on that server is
+                              how an admin follows the move that is running.
+                            */}
+                            <DropdownMenuItem onClick={() => setMigrateTarget(server)}>
+                              <Truck />
+                              {server.status === "migrating"
+                                ? "Follow migration"
+                                : "Move to another node"}
+                            </DropdownMenuItem>
                             {server.status === "suspended" ? (
                               <DropdownMenuItem
                                 onClick={() =>
@@ -331,6 +346,25 @@ export default function AdminServersPage() {
             setEditTarget(null);
             refresh();
           }}
+        />
+      )}
+
+      {migrateTarget && (
+        <MigrateServerDialog
+          serverId={migrateTarget.id}
+          serverName={migrateTarget.name}
+          currentNodeId={migrateTarget.nodeId}
+          currentNodeName={migrateTarget.nodeHostname}
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setMigrateTarget(null);
+              // A move that finished while the dialog was open changed the
+              // server's node and possibly its ports, so the table is stale.
+              refresh();
+            }
+          }}
+          onChanged={refresh}
         />
       )}
 

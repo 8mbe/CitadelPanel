@@ -69,7 +69,15 @@ export type ServerStatus =
   | "stopping"
   | "suspended"
   | "error"
-  | "deleting";
+  | "deleting"
+  /**
+   * The server is being moved to another node
+   * (`services/serverMigration.ts`). Like `suspended`, and unlike every other
+   * transitional status, this one is never reconciled away: for most of a
+   * migration the source node honestly reports the container as exited, and
+   * believing it would rewrite the row to `stopped` mid-move.
+   */
+  | "migrating";
 
 interface ServerRow {
   id: string;
@@ -375,7 +383,10 @@ export async function getServer(serverId: string): Promise<ServerSummary> {
   return { ...summary, pluginSupport };
 }
 
-async function setStatus(serverId: string, status: ServerStatus): Promise<void> {
+export async function setStatus(
+  serverId: string,
+  status: ServerStatus,
+): Promise<void> {
   await sql`
     UPDATE servers SET status = ${status}, updated_at = now() WHERE id = ${serverId}
   `;
@@ -432,7 +443,7 @@ export async function writeEnvValues(
 }
 
 /** Persist resolved env vars, encrypting the ones the preset marks secret. */
-async function storeEnv(
+export async function storeEnv(
   serverId: string,
   values: Record<string, string>,
   secretKeys: string[],
@@ -1070,6 +1081,31 @@ export async function createServer(
 
 // --- Lifecycle ----------------------------------------------------------------
 
+/**
+ * A server that is being moved between nodes must not be operated on.
+ *
+ * The migration holds the row in `migrating` for the whole run and owns both
+ * nodes' state while it does (`services/serverMigration.ts`). Anything else
+ * that touches the server in that window races it in a way with no good
+ * outcome: a start would boot the game on the node whose files are being
+ * copied, a port change would recreate the container the migration is about to
+ * rebuild elsewhere, and a delete would leave the migration provisioning for a
+ * row that no longer exists.
+ *
+ * Refused rather than queued, and refused with the reason, because the wait is
+ * minutes to hours and the caller is a person who should be told to come back
+ * when the move has finished.
+ */
+function assertNotMigrating(server: ServerRow): void {
+  if (server.status === "migrating") {
+    throw conflict(
+      "This server is being moved to another node. Wait for the migration to " +
+        "finish, or cancel it, before doing anything else with the server.",
+    );
+  }
+}
+
+
 /** A suspended server must not be startable by its owner. */
 function assertNotSuspended(server: ServerRow): void {
   if (server.status === "suspended") {
@@ -1163,6 +1199,7 @@ export async function startServer(
   actorId: string | null,
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
+  assertNotMigrating(server);
   assertNotSuspended(server);
   assertHasContainer(server);
 
@@ -1196,6 +1233,7 @@ export async function stopServer(
   actorId: string | null,
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
+  assertNotMigrating(server);
   assertHasContainer(server);
 
   await setStatus(serverId, "stopping");
@@ -1233,6 +1271,7 @@ export async function killServer(
   actorId: string | null,
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
+  assertNotMigrating(server);
   assertHasContainer(server);
 
   await setStatus(serverId, "stopping");
@@ -1261,6 +1300,7 @@ export async function restartServer(
   actorId: string | null,
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
+  assertNotMigrating(server);
   assertNotSuspended(server);
   assertHasContainer(server);
 
@@ -1303,6 +1343,7 @@ export async function suspendServer(
   reason: string,
 ): Promise<void> {
   const server = await loadServerRow(serverId);
+  assertNotMigrating(server);
 
   if (server.container_id) {
     try {
@@ -1337,6 +1378,7 @@ export async function unsuspendServer(
   actorId: string,
 ): Promise<void> {
   const server = await loadServerRow(serverId);
+  assertNotMigrating(server);
   if (server.status !== "suspended") {
     throw conflict("Server is not suspended");
   }
@@ -1388,6 +1430,7 @@ export async function deleteServer(
   force = false,
 ): Promise<void> {
   const server = await loadServerRow(serverId);
+  assertNotMigrating(server);
   const previousStatus = server.status;
   const cleanupMustSucceed =
     !force && (server.container_id !== null || deleteData);
@@ -1584,6 +1627,7 @@ export async function reinstallServer(
   actorId: string,
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
+  assertNotMigrating(server);
 
   if (server.status === "suspended") {
     throw conflict(
@@ -1779,7 +1823,9 @@ async function rebuildServerFromBlueprint(
  * Used by {@link recreateServerContainer}, which must hand the agent the same env
  * the server originally booted with, minus the masking the display path applies.
  */
-async function loadEnvForContainer(serverId: string): Promise<Record<string, string>> {
+export async function loadEnvForContainer(
+  serverId: string,
+): Promise<Record<string, string>> {
   const rows = (await sql`
     SELECT key, value, is_secret FROM server_env
     WHERE server_id = ${serverId}
@@ -1790,6 +1836,75 @@ async function loadEnvForContainer(serverId: string): Promise<Record<string, str
     env[row.key] = row.is_secret ? decryptSecret(row.value) : row.value;
   }
   return env;
+}
+
+/**
+ * Create this server's container on a **named node**, publishing a **given** set
+ * of port numbers.
+ *
+ * Factored out of {@link recreateServerContainer} for the migration
+ * (`services/serverMigration.ts`), which is the one caller that needs those two
+ * things to be arguments rather than reads of the server's row: it builds the
+ * destination's container while the row still says the server lives on the
+ * source node, and it publishes ports that are not in `server_ports` yet
+ * because the port cutover has not happened.
+ *
+ * Everything else is derived exactly the way a recreate derives it: the
+ * blueprint's image, the server's stored env, the interpolated startup command,
+ * the resource limits off the row, and the extra networks. That sameness is the
+ * point. A migrated server must come up as the same container it would have
+ * been if it had been provisioned on the destination in the first place, or the
+ * migration has quietly changed the server.
+ *
+ * `envOverrides` is how the new primary port reaches the game
+ * (`primaryPortEnv`, see [ports.md]) without being persisted first: a migration
+ * that fails after this point must not leave `server_env` naming a port on a
+ * node the server is not on. The caller persists it at cutover.
+ *
+ * Writes nothing. The row's `container_id` and `node_id` are the caller's to
+ * move, and only once it knows the container is really there.
+ */
+export async function buildServerContainerOn(
+  serverId: string,
+  nodeId: string,
+  hostPorts: { port: number; isPrimary: boolean }[],
+  envOverrides: Record<string, string> = {},
+): Promise<{ containerId: string }> {
+  if (hostPorts.length === 0) {
+    throw badRequest("Server has no ports to publish");
+  }
+
+  const server = await loadServerRow(serverId);
+  const blueprintKey = await getBlueprintKeyById(server.blueprint_id);
+  if (!blueprintKey) throw badRequest("Server blueprint is not available");
+  const blueprint = await getBlueprintByKey(blueprintKey);
+  if (!blueprint) throw badRequest("Server blueprint is not available");
+
+  const env = { ...(await loadEnvForContainer(serverId)), ...envOverrides };
+
+  // Same construction as the create path: one number, published on TCP and UDP
+  // both, host N bound to container N.
+  const ports: PortBinding[] = hostPorts.flatMap((entry) =>
+    portBindingsFor(entry.port),
+  );
+
+  const command = blueprint.startupCommand
+    ? ["/bin/sh", "-c", interpolateCommand(blueprint.startupCommand, env)]
+    : undefined;
+
+  return createServerContainer(nodeId, serverId, {
+    image: blueprint.dockerImage,
+    containerDataPath: blueprint.dataPath,
+    env,
+    ports,
+    cpuLimit: Number(server.cpu_limit),
+    memoryLimitMb: server.memory_limit_mb,
+    readOnlyRootFilesystem: blueprint.supportsReadOnlyRoot === true,
+    command,
+    user: blueprint.user,
+    tty: blueprint.tty === true,
+    extraNetworks: await extraNetworksForServer(serverId),
+  });
 }
 
 /**
@@ -1970,6 +2085,7 @@ export async function addServerPort(
   input: AddServerPortInput,
 ): Promise<ServerSummary> {
   const server = await loadServerRow(input.serverId);
+  assertNotMigrating(server);
 
   const label =
     input.label !== undefined && input.label !== null
@@ -2034,6 +2150,11 @@ export async function removeServerPort(
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw badRequest("port must be an integer between 1 and 65535");
   }
+
+  // Checked before the DELETE, not after: this function's first act is
+  // destructive, and a migration is in the middle of planning the destination's
+  // port set from exactly these rows.
+  assertNotMigrating(await loadServerRow(serverId));
 
   const rows = (await sql`
     DELETE FROM server_ports
@@ -2190,7 +2311,7 @@ async function generateDbIdentifiers(
  * Server links each contribute their pairwise network, so a recreate restores
  * the link's connectivity. See `serverLinks.ts`.
  */
-async function extraNetworksForServer(serverId: string): Promise<string[]> {
+export async function extraNetworksForServer(serverId: string): Promise<string[]> {
   const networks: string[] = [];
   if ((await countServerDatabases(serverId)) > 0) {
     networks.push("node_db_net");
@@ -2223,6 +2344,7 @@ export async function addServerDatabase(
   input: AddServerDatabaseInput,
 ): Promise<ServerDatabaseSummary> {
   const server = await loadServerRow(input.serverId);
+  assertNotMigrating(server);
 
   // Enforce the per-server database limit before generating anything.
   const limits = await getServerLimits();
@@ -2327,6 +2449,8 @@ export async function removeServerDatabase(
   databaseId: string,
   actorId: string,
 ): Promise<void> {
+  assertNotMigrating(await loadServerRow(serverId));
+
   const rows = (await sql`
     DELETE FROM server_databases
     WHERE id = ${databaseId} AND server_id = ${serverId}

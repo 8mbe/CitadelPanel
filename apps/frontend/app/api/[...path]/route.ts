@@ -110,6 +110,14 @@ import {
   handleUpdateNode,
 } from "@/lib/server/control-plane/routes/nodes";
 import {
+  handleCancelServerMigration,
+  handleGetServerMigration,
+  handleGetServerMigrationLogs,
+  handleListServerMigrations,
+  handlePreflightServerMigration,
+  handleStartServerMigration,
+} from "@/lib/server/control-plane/routes/migrations";
+import {
   handleGetNodeDatabase,
   handleSetUpNodeDatabase,
   handleStartNodeDatabase,
@@ -363,6 +371,16 @@ const patterns: Array<{
   { pattern: /^admin\/nodes\/ports\/([^/]+)$/, methods: { DELETE: handleDeleteNodePortPoolEntry } },
   { pattern: /^admin\/suspicious-activity\/([^/]+)$/, methods: { GET: handleGetSuspicious } },
   { pattern: /^admin\/suspicious-activity\/([^/]+)\/review$/, methods: { POST: handleReviewSuspicious } },
+  // Moving a server between nodes (see routes/migrations.ts). The literal
+  // `preflight` segment comes before the bare `:migrationId` pattern, otherwise
+  // POST /migrations/preflight is captured as a migration id and 405s on the
+  // GET-only route -- the same ordering rule the schedules and backups blocks
+  // above document.
+  { pattern: /^admin\/servers\/([^/]+)\/migrations$/, methods: { GET: handleListServerMigrations, POST: handleStartServerMigration } },
+  { pattern: /^admin\/servers\/([^/]+)\/migrations\/preflight$/, methods: { POST: handlePreflightServerMigration } },
+  { pattern: /^admin\/servers\/([^/]+)\/migrations\/([^/]+)\/logs$/, methods: { GET: handleGetServerMigrationLogs } },
+  { pattern: /^admin\/servers\/([^/]+)\/migrations\/([^/]+)\/cancel$/, methods: { POST: handleCancelServerMigration } },
+  { pattern: /^admin\/servers\/([^/]+)\/migrations\/([^/]+)$/, methods: { GET: handleGetServerMigration } },
   { pattern: /^admin\/servers\/([^/]+)$/, methods: { PATCH: handleUpdateServerResources } },
   { pattern: /^admin\/blueprints\/([^/]+)$/, methods: { GET: handleAdminGetBlueprint, PATCH: handleAdminUpdateBlueprint, DELETE: handleAdminDeleteBlueprint } },
   { pattern: /^admin\/servers\/([^/]+)\/suspend$/, methods: { POST: handleSuspendServer } },

@@ -355,3 +355,120 @@ export async function detachAllServerLinks(serverId: string): Promise<void> {
     }
   }
 }
+
+/** What {@link rewireServerLinks} did to one of a server's links. */
+export interface RewiredLink {
+  peerId: string;
+  peerName: string;
+  /** How the pair is connected now that the server has moved. */
+  mode: "internal" | "external";
+}
+
+/**
+ * Rebuild a server's link networks after it has changed node.
+ *
+ * A link's *mechanism* depends entirely on whether the two servers share a
+ * node: same node means a private, ICC-enabled Docker network holding exactly
+ * those two containers; different nodes means no Docker network at all, just
+ * the peer's public hostname and published port. Moving a server flips that
+ * answer for every link it has, and nothing else in the panel would notice.
+ * Left alone, the result is the worst kind of broken: the link row still exists
+ * and the UI still shows it, while the network behind it holds one container
+ * on a node the other one left.
+ *
+ * So both directions are handled, per link:
+ *
+ *   - **was internal, now external.** The old pair network on the *previous*
+ *     node is torn down, which also detaches the peer that is still sitting in
+ *     it. This has to happen while the migrated server's old container is still
+ *     there, which is why the migration calls this at cutover and deletes the
+ *     source container afterwards.
+ *   - **was external, now internal.** A pair network is created on the new
+ *     shared node and both containers join it, exactly as
+ *     {@link createServerLink} would have done had they always been neighbours.
+ *
+ * A link between two peers that neither shared a node with before nor shares
+ * one with now needs nothing done: it was addresses, and it still is.
+ *
+ * Every link is attempted independently and failures are collected rather than
+ * thrown, because this runs *after* the server has already changed hands. A
+ * peer whose node is unreachable must not turn a completed migration into a
+ * failed one; it produces a link the owner can remove and re-add, and the
+ * caller logs that.
+ */
+export async function rewireServerLinks(
+  serverId: string,
+  previousNodeId: string,
+): Promise<RewiredLink[]> {
+  const rows = (await sql`
+    SELECT sl.server_id, sl.target_id,
+           src.node_id AS source_node_id, src.name AS source_name,
+           src.container_id AS source_container_id,
+           tgt.node_id AS target_node_id, tgt.name AS target_name,
+           tgt.container_id AS target_container_id
+    FROM server_links sl
+    JOIN servers src ON src.id = sl.server_id
+    JOIN servers tgt ON tgt.id = sl.target_id
+    WHERE sl.server_id = ${serverId} OR sl.target_id = ${serverId}
+  `) as {
+    server_id: string;
+    target_id: string;
+    source_node_id: string;
+    source_name: string;
+    source_container_id: string | null;
+    target_node_id: string;
+    target_name: string;
+    target_container_id: string | null;
+  }[];
+
+  const rewired: RewiredLink[] = [];
+
+  for (const row of rows) {
+    const peerIsTarget = row.server_id === serverId;
+    const peerId = peerIsTarget ? row.target_id : row.server_id;
+    const peerName = peerIsTarget ? row.target_name : row.source_name;
+    const peerNodeId = peerIsTarget ? row.target_node_id : row.source_node_id;
+    const peerContainerId = peerIsTarget
+      ? row.target_container_id
+      : row.source_container_id;
+    // The migrated server's own row, whichever side of the link it is on.
+    const selfNodeId = peerIsTarget ? row.source_node_id : row.target_node_id;
+
+    const wasInternal = peerNodeId === previousNodeId;
+    const isInternal = peerNodeId === selfNodeId;
+
+    if (wasInternal && !isInternal) {
+      try {
+        await unlinkServerContainers(previousNodeId, row.server_id, row.target_id);
+      } catch (error) {
+        console.error(
+          `[serverLinks] tearing down the old pair network for ${serverId}/${peerId} failed (continuing):`,
+          error,
+        );
+      }
+    }
+
+    if (isInternal) {
+      if (!peerContainerId) {
+        console.warn(
+          `[serverLinks] peer ${peerId} has no container; its link to ${serverId} ` +
+            "will be attached when it is next built.",
+        );
+      } else {
+        try {
+          await linkServerContainers(selfNodeId, row.server_id, row.target_id);
+        } catch (error) {
+          console.error(
+            `[serverLinks] attaching the new pair network for ${serverId}/${peerId} failed (continuing):`,
+            error,
+          );
+          continue;
+        }
+      }
+    }
+
+    rewired.push({ peerId, peerName, mode: isInternal ? "internal" : "external" });
+  }
+
+  return rewired;
+}

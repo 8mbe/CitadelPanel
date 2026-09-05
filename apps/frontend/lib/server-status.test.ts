@@ -21,6 +21,10 @@ const OPERABLE: ServerStatus[] = [
   "suspended",
   "error",
   "deleting",
+  // Migrating locks the owner out too, but through its own gate in
+  // `ServerShell`, not through this predicate: the two are different
+  // situations, and the notice each one shows says a different thing.
+  "migrating",
 ];
 
 test("the two build statuses are provisioning", () => {

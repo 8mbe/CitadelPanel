@@ -18,6 +18,11 @@ export type AuditAction =
   | "server.kill"
   | "server.reinstall"
   | "server.delete"
+  // Moving a server between nodes (see docs/server-migration.md). Recorded on
+  // acceptance, like `server.create`: the decision is the admin's action and it
+  // happened. Whether the move then succeeded is the migration row's story.
+  | "server.migrate"
+  | "server.migrate.cancel"
   | "server.suspend"
   | "server.unsuspend"
   | "server.env.update"

@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Loader2, Lock, OctagonPause } from "lucide-react";
+import { Loader2, Lock, OctagonPause, Truck } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -70,10 +70,20 @@ export function ServerShell({ children }: { children: React.ReactNode }) {
     return <InstallingNotice server={server} />;
   }
 
+  // And again for a server being moved to another node. The same reasoning one
+  // step further: not only is there nothing to operate, the sections would be
+  // operating on the *wrong node*, since the record still names the source
+  // until the cutover. Admins keep the shell because an admin is who started
+  // the migration and who has to watch it.
+  if (status === "migrating" && !isAdmin) {
+    return <MigratingNotice server={server} />;
+  }
+
   return (
     <div className="flex flex-col gap-6">
       {status === "suspended" && <SuspendedBanner server={server} />}
       {isProvisioning(status) && <InstallingBanner />}
+      {status === "migrating" && <MigratingBanner />}
       <ServerHeader server={server} />
       <ServerTabs serverId={server.id} />
       {sectionGranted ? children : <SectionDenied />}
@@ -105,6 +115,56 @@ function SectionDenied() {
         </Button>
       </Empty>
     </div>
+  );
+}
+
+/**
+ * Full-page migrating notice, the owner's whole view while their server moves.
+ *
+ * Says the one thing the owner actually needs and the panel can actually
+ * promise: the files are safe, because the original node keeps everything until
+ * the move has been verified (see `docs/server-migration.md`). No progress bar,
+ * for the same reason the installing notice has none — the panel cannot say how
+ * long copying a world across a network will take, and an honest "this is
+ * happening" beats a bar that stalls at 60%.
+ */
+function MigratingNotice({ server }: { server: ServerView }) {
+  return (
+    <div className="flex flex-1 items-center justify-center py-20">
+      <Empty className="max-w-md">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Truck />
+          </EmptyMedia>
+          <EmptyTitle>Server is being moved…</EmptyTitle>
+          <EmptyDescription>
+            &ldquo;{server.name}&rdquo; is being migrated to another machine by
+            an administrator. It is offline while its files are copied, and it
+            will start again on the new machine when the move is done.
+          </EmptyDescription>
+        </EmptyHeader>
+        <p className="text-muted-foreground max-w-sm text-center text-sm">
+          Nothing is deleted from the original machine until the new one has
+          been checked, so your world is safe either way. This page updates
+          itself when the move finishes.
+        </p>
+      </Empty>
+    </div>
+  );
+}
+
+/** Compact migrating banner for admins, who keep the shell during a move. */
+function MigratingBanner() {
+  return (
+    <Alert>
+      <Loader2 className="animate-spin" />
+      <AlertTitle>This server is being moved to another node</AlertTitle>
+      <AlertDescription>
+        Its owner sees a &ldquo;being moved&rdquo; notice until the migration
+        finishes, and every action on the server is refused while it runs.
+        Follow the migration from the admin servers list.
+      </AlertDescription>
+    </Alert>
   );
 }
 

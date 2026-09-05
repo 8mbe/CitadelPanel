@@ -51,6 +51,14 @@ const STATUS_META: Record<
     dot: "bg-destructive animate-pulse",
     badge: "bg-destructive/10 text-destructive",
   },
+  // Sky, like creating/installing: the server is being built somewhere, and
+  // the pulse says a long operation owns it. Not amber, which this palette
+  // reserves for the seconds-long power transitions.
+  migrating: {
+    label: "Migrating",
+    dot: "bg-sky-500 animate-pulse",
+    badge: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
+  },
 };
 
 export function StatusBadge({

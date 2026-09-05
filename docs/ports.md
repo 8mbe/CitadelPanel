@@ -151,6 +151,12 @@ an inbound RCON listener would be a second, password-gated way into the server
 with no panel use case. Owners who want a port for a plugin's own listener use
 the publish-a-port flow instead.
 
+A migration between nodes keeps a server's port numbers whenever the
+destination can offer them, and falls back to the same random draw when it
+cannot; the `primaryPortEnv` re-sync above is what makes a reassigned number
+reach the game without anybody editing a config file. See
+[server-migration.md](server-migration.md).
+
 The identity mapping is also what makes server-to-server links simple
 (`server-links.md`): a peer's published port number is valid on the internal
 link network too, so the link address is just `container-name:port`.

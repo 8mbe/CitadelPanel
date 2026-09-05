@@ -81,17 +81,24 @@ export interface StatusSweepResult {
  *     same guard `reconcileRowStatus` applies;
  *   - `suspended`: an administrative decision, never overwritten by an
  *     observation;
- *   - `creating`/`installing`/`deleting`: a task in this process owns the row
- *     and is mid-way through changing the node to match it. Anything left over
- *     from a *previous* process is already handled at boot by
- *     `failInterruptedProvisions`.
+ *   - `creating`/`installing`/`deleting`/`migrating`: a task in this process
+ *     owns the row and is mid-way through changing the node to match it.
+ *     `migrating` is the sharpest case, because the row still names the SOURCE
+ *     node and that node is honestly reporting a container it was told to stop:
+ *     a sweep that believed it would write `stopped` over a move in progress.
+ *     Anything left over from a *previous* process is handled at boot, by
+ *     `failInterruptedProvisions` and `failInterruptedMigrations`.
+ *
+ * Excluded in the query rather than only in `reconcileStatus`, so a migrating
+ * server costs the sweep nothing at all: it is not even in the batch its node
+ * is asked about.
  */
 async function loadSweepableServers(): Promise<SweepableRow[]> {
   const rows = (await sql`
     SELECT id, status, updated_at, node_id
     FROM servers
     WHERE container_id IS NOT NULL
-      AND status NOT IN ('suspended', 'creating', 'installing', 'deleting')
+      AND status NOT IN ('suspended', 'creating', 'installing', 'deleting', 'migrating')
   `) as {
     id: string;
     status: ServerStatus;

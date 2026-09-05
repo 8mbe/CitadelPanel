@@ -337,6 +337,24 @@ export interface NodeHealth {
    * when the agent predates this field.
    */
   dockerSocket?: NodeDockerSocketStatus;
+  /**
+   * Real free/total bytes on the filesystem holding the agent's data root.
+   *
+   * Deliberately distinct from `nodes.disk_total_mb`, which is a number an
+   * admin typed at registration so the scheduler has something to bin-pack
+   * against. This is what the filesystem says right now, and it is what a
+   * migration's preflight has to ask: "does a 40 GB world fit on that machine"
+   * is not answerable from the panel's bookkeeping. Absent when the agent
+   * predates this field.
+   */
+  disk?: NodeDiskSpace;
+  /**
+   * Whether the agent has the `tar`/`du` binaries a node-to-node transfer
+   * shells out to. Present so a migration can be refused during preflight
+   * rather than discovered as a failed spawn after the server has been
+   * stopped. Absent when the agent predates this field.
+   */
+  transferTools?: boolean;
   error?: string;
   /**
    * The agent rejected the bearer token (401/403). Distinct from `reachable`
@@ -344,6 +362,12 @@ export interface NodeHealth {
    * credential is not. Only ever true when `reachable` is false.
    */
   unauthorized?: boolean;
+}
+
+/** Live filesystem space where the agent stores server data. Null when unmeasurable. */
+export interface NodeDiskSpace {
+  totalBytes: number | null;
+  freeBytes: number | null;
 }
 
 /** The agent's verdict on its own data root, with the fix when it is broken. */
@@ -369,6 +393,8 @@ interface AgentHealthResponse {
   capacity?: { ncpu: number; memTotalMb: number };
   dataRoot?: NodeDataRootStatus;
   dockerSocket?: NodeDockerSocketStatus;
+  disk?: NodeDiskSpace;
+  transferTools?: boolean;
 }
 
 /**
@@ -392,6 +418,8 @@ export async function checkNodeHealth(node: NodeWithSecrets): Promise<NodeHealth
       capacity: health.capacity,
       dataRoot: health.dataRoot,
       dockerSocket: health.dockerSocket,
+      disk: health.disk,
+      transferTools: health.transferTools,
     };
   } catch (error) {
     // The agent answered but refused the token: the host is reachable, the

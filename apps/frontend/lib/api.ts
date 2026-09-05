@@ -3423,5 +3423,188 @@ export async function saveLegalDocument(
   });
 }
 
+// --- Server migration (admin) ---------------------------------------------------
+//
+// Moving a server from one node to another (see docs/server-migration.md).
+// Admin-only end to end, reads included: which machine a tenant's game runs on
+// is an operator decision, and the preflight and log name other tenants'
+// capacity, node hostnames and free disk.
+
+export type MigrationStatus =
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelling"
+  | "cancelled";
+
+export type MigrationPhase =
+  | "queued"
+  | "preflight"
+  | "backup"
+  | "stopping"
+  | "transferring"
+  | "allocating_ports"
+  | "building"
+  | "verifying"
+  | "cutover"
+  | "cleanup"
+  | "rollback"
+  | "finished";
+
+/** What a failed migration's rollback managed to put back. */
+export type MigrationRollback = "not_needed" | "restored" | "partial";
+
+/** One published port, before and after the move. */
+export interface MigratedPort {
+  port: number;
+  isPrimary: boolean;
+  isAdditional: boolean;
+  label: string | null;
+}
+
+export interface ServerMigration {
+  id: string;
+  serverId: string;
+  sourceNodeId: string;
+  sourceNodeName: string | null;
+  destinationNodeId: string;
+  destinationNodeName: string | null;
+  status: MigrationStatus;
+  phase: MigrationPhase;
+  percent: number;
+  bytesTotal: number | null;
+  bytesTransferred: number;
+  sourcePorts: MigratedPort[];
+  destinationPorts: MigratedPort[];
+  wasRunning: boolean;
+  backupRunId: string | null;
+  error: string | null;
+  failedPhase: MigrationPhase | null;
+  rollback: MigrationRollback | null;
+  requestedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+}
+
+/** One thing checked before a migration is allowed to start. */
+export interface MigrationPreflightCheck {
+  id: string;
+  label: string;
+  status: "ok" | "warn" | "fail";
+  detail: string;
+}
+
+export interface MigrationPreflight {
+  serverId: string;
+  serverName: string;
+  sourceNodeId: string;
+  sourceNodeName: string;
+  destinationNodeId: string;
+  destinationNodeName: string;
+  dataSizeBytes: number | null;
+  destinationFreeBytes: number | null;
+  checks: MigrationPreflightCheck[];
+  canMigrate: boolean;
+  requiresNoBackupAcknowledgement: boolean;
+  plannedPorts: { from: number; to: number }[];
+}
+
+export interface MigrationLogLine {
+  seq: number;
+  level: "info" | "warn" | "error";
+  message: string;
+  createdAt: string;
+}
+
+/** GET /api/admin/servers/:id/migrations. History plus whatever is in flight. */
+export async function adminListServerMigrations(serverId: string): Promise<{
+  migrations: ServerMigration[];
+  active: ServerMigration | null;
+}> {
+  return request(`/api/admin/servers/${serverId}/migrations`);
+}
+
+/**
+ * POST /api/admin/servers/:id/migrations/preflight.
+ *
+ * Changes nothing: it exists so the dialog can show the verdict, with every
+ * problem in it rather than the first one, before the admin commits to a move.
+ */
+export async function adminPreflightServerMigration(
+  serverId: string,
+  destinationNodeId: string,
+): Promise<MigrationPreflight> {
+  const data = await request<{ preflight: MigrationPreflight }>(
+    `/api/admin/servers/${serverId}/migrations/preflight`,
+    { method: "POST", body: JSON.stringify({ destinationNodeId }) },
+  );
+  return data.preflight;
+}
+
+/**
+ * POST /api/admin/servers/:id/migrations. Starts one.
+ *
+ * Returns immediately with the migration in `pending`/`running`; the move
+ * happens across two nodes and is followed by polling
+ * {@link adminGetServerMigrationLogs}.
+ */
+export async function adminStartServerMigration(
+  serverId: string,
+  payload: {
+    destinationNodeId: string;
+    /** Required when no backup destination is configured. */
+    acknowledgeNoBackup?: boolean;
+    compress?: boolean;
+  },
+): Promise<ServerMigration> {
+  const data = await request<{ migration: ServerMigration }>(
+    `/api/admin/servers/${serverId}/migrations`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+  return data.migration;
+}
+
+/**
+ * GET /api/admin/servers/:id/migrations/:migrationId/logs?afterSeq=.
+ *
+ * Pass the highest `seq` already displayed and only newer lines come back,
+ * which is what keeps a two-second poll cheap across an hour-long move. The
+ * migration's own progress rides along so the dialog needs one poll, not two.
+ */
+export async function adminGetServerMigrationLogs(
+  serverId: string,
+  migrationId: string,
+  afterSeq = 0,
+): Promise<{
+  logs: MigrationLogLine[];
+  status: MigrationStatus;
+  phase: MigrationPhase;
+  percent: number;
+  bytesTotal: number | null;
+  bytesTransferred: number;
+  error: string | null;
+  failedPhase: MigrationPhase | null;
+  rollback: MigrationRollback | null;
+  destinationPorts: MigratedPort[];
+}> {
+  return request(
+    `/api/admin/servers/${serverId}/migrations/${migrationId}/logs?afterSeq=${afterSeq}`,
+  );
+}
+
+/** POST /api/admin/servers/:id/migrations/:migrationId/cancel. */
+export async function adminCancelServerMigration(
+  serverId: string,
+  migrationId: string,
+): Promise<ServerMigration> {
+  const data = await request<{ migration: ServerMigration }>(
+    `/api/admin/servers/${serverId}/migrations/${migrationId}/cancel`,
+    { method: "POST" },
+  );
+  return data.migration;
+}
+
 // Re-export initials for callers that import it from the api module.
 export { initials };
