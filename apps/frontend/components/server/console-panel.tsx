@@ -9,6 +9,7 @@ import {
   ApiError,
   consoleStreamUrl,
   getPublicSettings,
+  getServerLogs,
   requestConsoleSession,
   revokeConsoleSession,
   sendConsoleCommand,
@@ -343,13 +344,44 @@ export function ConsolePanel({
     // only actually connects while the server is running, so a stopped server
     // doesn't thrash. This also covers the stopped→start case: the pending
     // retry fires once `running` is true again.
+    // Whether the stopped server's last output has already been loaded. Docker
+    // keeps a container's log after it exits, so "offline" is not the same as
+    // "nothing to show" -- and the output of the run that just ended is exactly
+    // what someone opening the console of a stopped server came to read
+    // (a crash trace, the last lines before a shutdown). Loaded once per
+    // stopped period rather than on every retry tick.
+    let backlogLoaded = false;
+
+    const showStoppedBacklog = async () => {
+      if (backlogLoaded || closed) return;
+      backlogLoaded = true;
+      try {
+        const logs = await getServerLogs(serverId, 200);
+        if (closed) return;
+        resetView();
+        if (logs.trim().length > 0) {
+          append(logs.endsWith("\n") ? logs : `${logs}\n`);
+        }
+      } catch {
+        // The node may be unreachable, or the container already removed. Let
+        // the next tick try again rather than leaving the console blank for
+        // good.
+        backlogLoaded = false;
+      }
+    };
+
     const connect = async () => {
       if (closed) return;
       if (!runningRef.current) {
-        // Not running yet. Re-arm and wait for the server to come up.
+        // Not running. Show what the last run left behind, then wait for the
+        // server to come up.
+        void showStoppedBacklog();
         reconnect = setTimeout(connect, RECONNECT_MS);
         return;
       }
+      // Live output supersedes the stopped backlog; arm it to load again for
+      // the next time this server stops.
+      backlogLoaded = false;
 
       // Already decided this node isn't directly reachable: don't re-probe it
       // on every reconnect, just stay on the proxy.

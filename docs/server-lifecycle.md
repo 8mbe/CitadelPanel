@@ -383,6 +383,15 @@ The reason rides every server summary (`startFailure`); the captured output is
 a separate read (`GET /api/servers/:id/start-failure`, gated on `console`)
 because it can be tens of kilobytes and is only wanted when someone opens it.
 
+### The console of a stopped server
+
+Related, and the other half of the same complaint: Docker keeps a container's
+output after it exits, so "the server is offline" was never the same as "there
+is nothing to show". The console now loads the last run's tail when the server
+is not running, so opening the console of a stopped server shows the crash
+trace or the shutdown lines it ended on, rather than an empty panel and an
+invitation to start it.
+
 ## When the container is gone from the node
 
 The panel addresses containers by server id, but it also stores the container
