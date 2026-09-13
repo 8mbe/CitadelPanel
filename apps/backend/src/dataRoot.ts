@@ -145,22 +145,24 @@ export async function ensureServerDataDir(serverId: string): Promise<string> {
     `the data directory for server ${serverId}`,
   );
 
-  // Under userns-remap the directory must be owned by the *shifted* data uid
-  // (offset + 1000) or the container cannot write into its own bind mount.
-  // Healed here rather than only chowned at first create because this runs on
-  // every provision, install and rebuild: a node that turns remapping on gets
-  // its pre-existing trees migrated the first time each container is rebuilt
-  // (which enabling remap forces anyway, since the daemon starts with a fresh
-  // container store). Recursive only on mismatch, so the steady state is one
-  // stat per call, not a walk of a fifty-gigabyte world.
+  // The directory must be owned by the container-side data uid (offset + 1000)
+  // or the container cannot write into its own bind mount. This is not only a
+  // userns-remap concern: the shipped agent runs as root (see
+  // apps/backend/Dockerfile), so a freshly created dir is owned by uid 0 while
+  // the game container runs as 1000, and without this heal it crash-loops on
+  // the first write (e.g. eula.txt). Healed here rather than only chowned at
+  // first create because this runs on every provision, install and rebuild: a
+  // node that turns remapping on gets its pre-existing trees migrated the first
+  // time each container is rebuilt (which enabling remap forces anyway, since
+  // the daemon starts with a fresh container store). Recursive only on
+  // mismatch, so the steady state is one stat per call, not a walk of a
+  // fifty-gigabyte world.
   const offsets = await usernsOffsets(docker);
-  if (offsets.uid !== 0 || offsets.gid !== 0) {
-    const expectedUid = offsets.uid + CONTAINER_DATA_UID;
-    const expectedGid = offsets.gid + CONTAINER_DATA_GID;
-    const info = await stat(path).catch(() => null);
-    if (info && (info.uid !== expectedUid || info.gid !== expectedGid)) {
-      await alignOwnership(docker, path, { recursive: true });
-    }
+  const expectedUid = offsets.uid + CONTAINER_DATA_UID;
+  const expectedGid = offsets.gid + CONTAINER_DATA_GID;
+  const info = await stat(path).catch(() => null);
+  if (info && (info.uid !== expectedUid || info.gid !== expectedGid)) {
+    await alignOwnership(docker, path, { recursive: true });
   }
 
   return path;

@@ -84,7 +84,14 @@ container sees, the agent:
   boot.
 - owns server data as `offset + 1000` (the canonical `CONTAINER_DATA_UID`, the
   uid every shipped blueprint already pins), and re-owns a directory only when
-  it finds a mismatch. Steady state is one `stat`, not a walk.
+  it finds a mismatch. Steady state is one `stat`, not a walk. This is not a
+  remap-only concern: the shipped agent runs as **root** (`apps/backend/Dockerfile`),
+  so even with no remapping (offset 0) a freshly created data dir is owned by
+  uid 0 while the container runs as 1000 — the re-own fires whenever the
+  agent's own uid differs from the target owner, not only when the offset is
+  nonzero, or the container crash-loops on its first write (e.g. `eula.txt`).
+  The heal runs on provision, install, rebuild **and start**, so a container
+  already stuck in that loop recovers on the next start.
 - re-owns every file it writes on the tenant's behalf (editor save, upload,
   `pull-from-url`, SFTP write, rename/copy destinations) to that same owner, so
   the game can read and modify what the panel created. Backup/restic staging is

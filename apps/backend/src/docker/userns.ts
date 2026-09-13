@@ -261,10 +261,22 @@ export async function alignOwnership(
   } = {},
 ): Promise<void> {
   const offsets = await usernsOffsets(client);
-  if (offsets.uid === 0 && offsets.gid === 0) return;
 
   const uid = offsets.uid + (options.containerUid ?? CONTAINER_DATA_UID);
   const gid = offsets.gid + (options.containerGid ?? CONTAINER_DATA_GID);
+
+  // Skip only when the target host owner already equals what the agent creates
+  // files as. Gating on `offset === 0` instead was wrong: it assumed a zero
+  // offset implied the agent runs as the container data uid (1000), which holds
+  // only for a uid-1000 agent. The shipped deployment runs the agent as root
+  // (see apps/backend/Dockerfile) with no remapping, so every data dir it
+  // creates is owned by uid 0 while the game container runs as 1000 — and the
+  // container cannot write its own bind mount (eula.txt fails, boot crash-loops).
+  // Comparing owners covers both: no-op for a uid-1000 agent or a root-owned
+  // tool file (containerUid 0), chown for the root-agent/uid-1000-game case.
+  const selfUid = process.getuid?.() ?? 0;
+  const selfGid = process.getgid?.() ?? 0;
+  if (uid === selfUid && gid === selfGid) return;
 
   try {
     if (options.recursive) {

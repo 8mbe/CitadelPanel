@@ -292,6 +292,12 @@ export async function getServerInstallLogs(
 }
 
 export async function startServerContainer(serverId: string): Promise<void> {
+  // Heal data-dir ownership before starting, not only on provision/install/
+  // rebuild. A container that already exists but crash-loops (e.g. a dir left
+  // root-owned by an older agent that skipped the chown at offset 0) is never
+  // rebuilt, so start is the only path that touches it again. The check is one
+  // stat when ownership already matches, and recursive only on mismatch.
+  await ensureServerDataDir(serverId);
   await startContainer(docker, await requireContainerId(serverId));
 }
 
