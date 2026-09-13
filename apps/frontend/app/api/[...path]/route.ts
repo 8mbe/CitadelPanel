@@ -64,6 +64,7 @@ import {
   handleConsoleAudit,
   handleConsoleRevoke,
   handleConsoleSession,
+  handleConsoleStream,
   handleConsoleSessionValidate,
 } from "@/lib/server/control-plane/routes/console";
 import {
@@ -301,6 +302,9 @@ const patterns: Array<{
   { pattern: /^servers\/([^/]+)\/activity$/, methods: { GET: handleListServerActivity } },
   { pattern: /^servers\/([^/]+)\/command$/, methods: { POST: handleConsoleCommand } },
   { pattern: /^servers\/([^/]+)\/console\/session$/, methods: { POST: handleConsoleSession } },
+  // Panel-proxied console output (SSE), for nodes the browser cannot reach
+  // directly over wss://. See routes/console.ts.
+  { pattern: /^servers\/([^/]+)\/console\/stream$/, methods: { GET: handleConsoleStream } },
   { pattern: /^servers\/([^/]+)\/console\/revoke$/, methods: { POST: handleConsoleRevoke } },
   // AI console helper (see routes/aiHelper.ts). Panel-composed prompt; the
   // browser only supplies the free-text question, never the logs or context.

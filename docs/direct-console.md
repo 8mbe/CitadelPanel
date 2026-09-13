@@ -82,6 +82,86 @@ If the panel is HTTPS and the derived/supplied console URL is `ws://` (no TLS),
 the session-mint endpoint returns a clear error instead of handing the browser a
 URL that would fail silently.
 
+## The panel-proxied fallback
+
+Everything above needs one thing the panel cannot provide for the node: an
+address the **browser** can open a socket to. Two ordinary deployments have no
+such address at all.
+
+- The agent is published only on the panel's own Docker network
+  (`api_url: http://backend:8081`, which is what the bundled compose produces).
+  The hostname does not resolve outside the network, so there is nothing to
+  point a browser at.
+- The agent has no TLS certificate and the panel is HTTPS, which is the
+  mixed-content refusal above.
+
+In both the direct console is not "misconfigured", it is *unavailable*, and the
+console falls back to streaming through the panel:
+
+- **Output**: `GET /api/servers/:id/console/stream`, a Server-Sent Events route
+  that proxies the agent's own `GET /v1/servers/:id/logs/stream`. Chunks are
+  forwarded as they arrive, never accumulated, so a log line reaches the browser
+  when the container writes it. It is push, like the socket — not polling.
+- **Input**: the pre-existing `POST /api/servers/:id/command`. SSE is
+  one-directional, so a typed command is its own request. It checks the same
+  `console` permission and writes the same `server.console.command` audit row.
+
+This *inverts* the trade the direct socket exists to make: the panel is back in
+the data path and holds one upstream connection per viewer. That cost is
+accepted only where the alternative is no console at all, which is why it is a
+fallback rather than the default. Attribution, on the other hand, gets simpler:
+the command transits the panel, so nothing has to be resolved from a capability
+token handed to an agent.
+
+### How the console chooses
+
+The browser never has to be told which transport to use, because the panel
+cannot always know either — whether a `wss://` URL actually works is a fact only
+the browser can discover. So the client tries the socket and demotes itself:
+
+- A **4xx from the mint** is a verdict, not a hiccup (the panel has already
+  concluded there is no usable address), so it switches immediately. A 5xx or a
+  network failure is transient and just backs off.
+- A socket that **opens and dies without ever reaching `ready`**, twice in a
+  row, means the URL does not work from this browser. The mint succeeded, so the
+  panel believes the node is reachable; the browser is told nothing beyond the
+  close, so counting silent failures is the only signal available. One failure
+  proves nothing (an agent restarting does that), which is why it takes two.
+
+The decision is sticky for the life of the console view: a reconnect does not
+re-probe a node already known to be unreachable.
+
+### One protocol, two wire formats
+
+The two transports carry the same logical frames, but not the same bytes, and
+the client bridges the difference:
+
+- Over the WebSocket, *everything* is JSON (`ready`, `output`, `closed`,
+  `error`).
+- Over SSE, a log line is a **nameless** event whose data is the raw line, with
+  no JSON wrapper (that is what `sseWrap` emits). Only the out-of-band frames
+  are **named** events carrying JSON: the agent's `console` error frame, and the
+  `ready` frame the panel prepends to hand over the blueprint's `tty` flag —
+  the one piece of state the socket path gets from the session mint. A nameless
+  ready frame would be appended to the console as literal JSON text, which is
+  why it is named.
+
+### Keeping it instant
+
+A proxied stream passes through more hops than a socket, and every one of them
+would rather buffer. The stream route sets `cache-control: no-transform` (a
+proxy that gzips would hold bytes until its window fills),
+`x-accel-buffering: no` (nginx buffers proxied responses by default; Caddy and
+Traefik honour the same header) and `connection: keep-alive`. The agent sets the
+same headers on its own response — they are repeated because panel→browser is a
+different connection through different proxies than agent→panel. The agent's
+`: ping` comment every few seconds of silence keeps both hops from idling out.
+
+Cancellation propagates the whole way: closing the console tab aborts the
+EventSource, which aborts the panel's route handler, whose `request.signal` is
+forwarded to the agent, which forwards it to dockerode. No leaked attach at any
+hop.
+
 ## Security notes
 
 - The long-lived `AGENT_TOKEN` still guards **every** agent lifecycle route. The

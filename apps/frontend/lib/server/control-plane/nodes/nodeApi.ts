@@ -104,6 +104,16 @@ export interface NodeRequestOptions {
   query?: Record<string, string | number | boolean | undefined>;
   /** Override the default timeout, for calls that are legitimately slow. */
   timeoutMs?: number;
+  /**
+   * Abort the call from the caller's own signal instead of a deadline.
+   *
+   * For an endpoint that is *meant* to stay open forever (the console SSE
+   * stream), a timeout is not a safety net but a guaranteed disconnect, so
+   * passing a signal replaces the default deadline rather than adding to it.
+   * The caller forwards the browser's `request.signal`, so a closed console
+   * tab propagates all the way through the agent to the Docker log stream.
+   */
+  signal?: AbortSignal;
 }
 
 function buildUrl(
@@ -291,8 +301,10 @@ export async function nodeRequestRaw(
             ? undefined
             : JSON.stringify(options.body),
       // Downloads and uploads can legitimately take a long time for large
-      // files; the caller overrides this when it knows the size class.
-      signal: AbortSignal.timeout(options.timeoutMs ?? env.nodeApiTimeoutMs),
+      // files; the caller overrides this when it knows the size class. A
+      // caller-supplied signal replaces the deadline outright: a stream with no
+      // natural end would otherwise be cut off mid-session by its own timeout.
+      signal: options.signal ?? AbortSignal.timeout(options.timeoutMs ?? env.nodeApiTimeoutMs),
     };
     if (options.rawBody !== undefined) {
       init.duplex = "half";

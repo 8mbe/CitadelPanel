@@ -1330,6 +1330,36 @@ export function revokeConsoleSession(id: string, token: string): void {
   });
 }
 
+/**
+ * The panel-proxied console feed, for nodes the browser cannot reach directly.
+ *
+ * A URL rather than a function because `EventSource` opens the connection
+ * itself. It carries the session cookie automatically (same origin), so no
+ * capability token is involved on this path — the panel authenticates the
+ * request the same way it authenticates every other `/api` call.
+ */
+export function consoleStreamUrl(id: string, tail = 200): string {
+  return `/api/servers/${id}/console/stream?tail=${tail}`;
+}
+
+/**
+ * POST /api/servers/:id/command. Sends one console command.
+ *
+ * The input half of the proxied console: SSE is output-only, so a command typed
+ * while on the fallback transport goes through the panel instead of the agent
+ * socket. The route checks the same `console` permission and writes the same
+ * `server.console.command` audit row.
+ */
+export async function sendConsoleCommand(
+  id: string,
+  command: string,
+): Promise<void> {
+  await request<void>(`/api/servers/${id}/command`, {
+    method: "POST",
+    body: JSON.stringify({ command }),
+  });
+}
+
 // --- File manager --------------------------------------------------------------
 
 /**

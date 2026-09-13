@@ -39,7 +39,10 @@ import {
   requireUuidParam,
   unauthorized,
 } from "@/lib/server/control-plane/lib/http";
-import { normalizeApiUrl } from "@/lib/server/control-plane/nodes/nodeApi";
+import {
+  normalizeApiUrl,
+  nodeRequestRaw,
+} from "@/lib/server/control-plane/nodes/nodeApi";
 import {
   findNodeByAgentToken,
   getNodeWithSecrets,
@@ -48,6 +51,30 @@ import { recordAudit } from "@/lib/server/control-plane/services/auditLog";
 
 /** How long a minted token may sit unused before its WS open is rejected. */
 const SESSION_TTL_SECONDS = 60;
+
+/**
+ * Response headers for the proxied console stream.
+ *
+ * Every one of these exists to stop something in the path from holding bytes
+ * back. A console that arrives in one-kilobyte batches is not a live console,
+ * and the panel sits behind at least one reverse proxy in every real install:
+ *
+ *   - `no-transform` forbids a proxy from gzipping the stream, which would
+ *     otherwise buffer until the compressor's window fills.
+ *   - `x-accel-buffering: no` is nginx's opt-out (Caddy and Traefik honour it
+ *     too); without it nginx buffers proxied responses by default.
+ *   - `connection: keep-alive` keeps the hop open for the life of the stream.
+ *
+ * The agent sets the same set on its own SSE response; they are repeated here
+ * because the panel→browser hop is a *different* connection through different
+ * proxies than the agent→panel one.
+ */
+const SSE_HEADERS: Record<string, string> = {
+  "content-type": "text/event-stream; charset=utf-8",
+  "cache-control": "no-cache, no-store, no-transform",
+  connection: "keep-alive",
+  "x-accel-buffering": "no",
+};
 
 /**
  * Pull the agent's long-lived bearer from a request and resolve it to a node,
@@ -286,4 +313,111 @@ export async function handleConsoleAudit(request: Request): Promise<Response> {
   });
 
   return noContent();
+}
+
+/**
+ * `GET /api/servers/:id/console/stream` is the panel-proxied console feed.
+ *
+ * The fallback for every deployment where the direct WebSocket cannot work.
+ * The direct console needs an agent the *browser* can reach over `wss://`, and
+ * two common setups have no such address at all: an agent published only on the
+ * panel's private Docker network (`api_url: http://backend:8081`, the bundled
+ * compose), and an agent with no TLS certificate behind an HTTPS panel (the
+ * mixed-content refusal in {@link handleConsoleSession}). In both the mint is
+ * the wrong thing to hand a browser, so the console falls back to here and the
+ * panel carries the bytes instead.
+ *
+ * The trade the direct socket exists to avoid (see docs/direct-console.md) is
+ * real and is accepted knowingly: the panel now holds one upstream connection
+ * per viewer. That is the price of a console that works without exposing the
+ * agent publicly, and it is paid only by deployments that cannot do better.
+ *
+ * Output only. SSE is one-directional, so input keeps going through the
+ * existing `POST /api/servers/:id/command`, which already checks the same
+ * `console` permission and writes the same `server.console.command` audit row.
+ * Attribution is therefore *better* on this path than on the direct socket:
+ * the command transits the panel, so nothing has to be resolved from a
+ * capability token handed to an agent.
+ *
+ * The agent's own stream is passed through untouched rather than re-parsed. It
+ * already emits the same `output`/`console` event shapes the WebSocket sends,
+ * so the browser runs one frame handler for both transports. Only a leading
+ * `ready` event is prepended, carrying the blueprint's `tty` flag — the one
+ * piece of state the WS path gets from the session mint, and which the console
+ * needs before the first frame to decide whether to echo typed commands.
+ *
+ * `request.signal` is forwarded through the node client to the agent, which
+ * forwards it to dockerode: closing the console tab releases the Docker log
+ * stream, with no leaked attach anywhere along the chain.
+ */
+export async function handleConsoleStream(
+  request: Request,
+  serverId: string,
+): Promise<Response> {
+  const id = requireUuidParam(serverId, "serverId");
+  await requireServerPermission(request, id, "console");
+
+  const rows = (await sql`
+    SELECT s.node_id, COALESCE(b.tty, false) AS tty
+    FROM servers s
+    LEFT JOIN blueprints b ON b.id = s.blueprint_id
+    WHERE s.id = ${id}
+  `) as { node_id: string; tty: boolean }[];
+
+  const server = rows[0];
+  if (!server) return json({ error: "Server not found" }, 404);
+
+  const raw = Number(new URL(request.url).searchParams.get("tail"));
+  const tail = Math.min(Math.max(Number.isFinite(raw) ? raw : 200, 1), 2000);
+
+  const upstream = await nodeRequestRaw(
+    server.node_id,
+    `/v1/servers/${id}/logs/stream`,
+    { query: { tail }, signal: request.signal },
+  );
+
+  // The `tty` flag the WS path gets from the session mint. The console needs it
+  // before the first output frame (it decides whether typed commands are echoed
+  // locally), so it leads the stream as a `ready` event in the same shape the
+  // WebSocket sends.
+  // A *named* event, like the agent's own error frames. An unnamed `data:`
+  // event is how the agent sends a plain log line, so a nameless ready frame
+  // would be appended to the console as literal JSON text.
+  const ready = new TextEncoder().encode(
+    `event: ready\ndata: ${JSON.stringify({ type: "ready", tty: server.tty })}\n\n`,
+  );
+
+  const stream = upstream.body;
+  if (!stream) return new Response(ready, { headers: SSE_HEADERS });
+
+  // Prepend the ready frame, then forward the agent's bytes as they arrive.
+  // Chunks are passed straight through, never accumulated: a log line must
+  // reach the browser as the container writes it, not when some buffer fills.
+  const merged = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      controller.enqueue(ready);
+      const reader = stream.getReader();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          controller.enqueue(value);
+        }
+      } catch {
+        // Upstream dropped (agent restart, container gone, client abort). The
+        // browser's EventSource reconnects on its own, so end the stream
+        // quietly rather than surfacing a transport error as console text.
+      } finally {
+        reader.releaseLock();
+        controller.close();
+      }
+    },
+    cancel() {
+      // The browser went away. Drop the upstream so the agent's dockerode
+      // attach is released instead of lingering until its own timeout.
+      void stream.cancel().catch(() => undefined);
+    },
+  });
+
+  return new Response(merged, { headers: SSE_HEADERS });
 }

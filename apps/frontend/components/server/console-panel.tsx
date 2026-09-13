@@ -5,7 +5,14 @@ import { Send } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getPublicSettings, requestConsoleSession, revokeConsoleSession } from "@/lib/api";
+import {
+  ApiError,
+  consoleStreamUrl,
+  getPublicSettings,
+  requestConsoleSession,
+  revokeConsoleSession,
+  sendConsoleCommand,
+} from "@/lib/api";
 import { ConsoleHelperDialog } from "@/components/server/console-helper-dialog";
 import { parseAnsi, type AnsiRun } from "@/lib/ansi";
 import { cn } from "@/lib/utils";
@@ -21,6 +28,19 @@ interface Line {
 
 /** Backoff between reconnection attempts, after a dropped or closed socket. */
 const RECONNECT_MS = 3_000;
+
+/**
+ * How many direct-WebSocket attempts may fail before the console gives up on
+ * it and switches to the panel-proxied stream for the rest of the mount.
+ *
+ * One failure is not enough to conclude anything: a node agent restarting, or
+ * a container not yet up, closes the socket for reasons that fix themselves.
+ * Two consecutive opens that never reach `ready` means the address itself is
+ * unusable from this browser (no TLS, private hostname, blocked port), which
+ * retrying cannot fix — and unlike a mint that fails outright, the browser is
+ * given no error to read, so the count is the only signal there is.
+ */
+const DIRECT_FAILURES_BEFORE_PROXY = 2;
 
 /**
  * Live console.
@@ -103,6 +123,11 @@ export function ConsolePanel({
   // single-use, so a fresh mint overwrites this and the stale token is dead
   // anyway; revoke only matters for the live one.
   const tokenRef = React.useRef<string | null>(null);
+  // Whether this console has fallen back to the panel-proxied stream. Input
+  // routing depends on it (agent socket vs the command API), and it is sticky
+  // for the mount so a reconnect doesn't re-probe a node already known to be
+  // unreachable from the browser.
+  const proxyRef = React.useRef(false);
 
   // "Sticky to bottom": true while the view is parked at the newest line. New
   // output auto-scrolls only while this is true; scrolling up sets it false so
@@ -192,19 +217,132 @@ export function ConsolePanel({
 
   React.useEffect(() => {
     let ws: WebSocket | null = null;
+    let source: EventSource | null = null;
     let reconnect: ReturnType<typeof setTimeout> | null = null;
     let closed = false;
+    // How many direct-WS attempts have opened and died without ever reaching
+    // `ready`. Once this hits the threshold the console stops trying the direct
+    // socket for the rest of this mount and stays on the proxied stream.
+    let directFailures = 0;
     wsRef.current = null;
     tokenRef.current = null;
+    proxyRef.current = false;
+
+    // Clear the view for a fresh connection's backlog, so a stop→start cycle
+    // does not append the new session's replay to the old session's output.
+    const resetView = () => {
+      nextId.current = 1;
+      stickToBottom.current = true;
+      setLines([]);
+      bufferRef.current = "";
+      setPendingRuns([]);
+    };
+
+    // One frame handler for both transports. The panel's proxied stream
+    // deliberately re-emits the agent's own event shapes (`ready`, `output`,
+    // `console`/`error`), so the only difference between a WS message and an
+    // SSE message is how the bytes arrived.
+    const handleFrame = (payload: string) => {
+      let parsed: {
+        type?: string;
+        data?: unknown;
+        message?: string;
+        code?: string;
+        tty?: boolean;
+      };
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        return; // Ignore malformed frames rather than killing the console.
+      }
+      switch (parsed.type) {
+        case "ready":
+          // History frames arrive before `ready` on the WS path (the agent
+          // replays them on open) and after it on the proxied path (where
+          // `ready` is what carries `tty`). Either way it means connected.
+          if (typeof parsed.tty === "boolean") ttyRef.current = parsed.tty;
+          directFailures = 0;
+          setConnected(true);
+          break;
+        case "output":
+          if (typeof parsed.data === "string" && parsed.data.length > 0) {
+            append(parsed.data);
+          }
+          break;
+        case "closed":
+          // Container exited. On the WS path the agent follows this with
+          // ws.close(), and the reconnect is scheduled there; scheduling here
+          // too would open two sockets. So this only updates the UI.
+          setConnected(false);
+          break;
+        case "console":
+        case "error": {
+          // A container the node no longer has is not the viewer's problem to
+          // decode: the panel rebuilds it from the stored spec on the next
+          // power action, and the reconnect loop attaches on its own once it is
+          // back. So say that, not the agent's Docker fact.
+          const text =
+            parsed.code === "no_container"
+              ? "Please wait, rebuilding container…"
+              : parsed.message;
+          if (text) append(`[console] ${text}\n`);
+          setConnected(false);
+          break;
+        }
+      }
+    };
+
+    /**
+     * The panel-proxied fallback: output over SSE, input over the command API.
+     *
+     * Used when the agent has no address this browser can open a WebSocket to.
+     * EventSource carries the session cookie itself and reconnects on its own,
+     * but its built-in retry has no notion of "the server is stopped", so the
+     * stream is closed and re-opened by the same backoff the socket path uses.
+     */
+    const connectProxy = () => {
+      if (closed) return;
+      proxyRef.current = true;
+      resetView();
+
+      source = new EventSource(consoleStreamUrl(serverId));
+
+      // The agent's SSE stream is not the WebSocket's JSON protocol. A log line
+      // is sent as a *nameless* event whose data is the line itself (no JSON,
+      // no wrapper), and only the out-of-band frames are named events carrying
+      // JSON. So plain messages are appended as text, and the two named events
+      // go through the shared frame handler.
+      source.onmessage = (event) => {
+        if (typeof event.data !== "string") return;
+        // sseWrap emits one event per log line with the terminator stripped;
+        // `append` is newline-driven, so put it back.
+        append(`${event.data}\n`);
+      };
+      // `ready` is the panel's own frame (it carries `tty`); `console` is the
+      // agent's error frame. Both are JSON in the WebSocket's shape.
+      source.addEventListener("ready", (event) =>
+        handleFrame((event as MessageEvent<string>).data),
+      );
+      source.addEventListener("console", (event) =>
+        handleFrame((event as MessageEvent<string>).data),
+      );
+      source.onerror = () => {
+        // EventSource reports every transport fault the same way and retries by
+        // itself. Close it and drive the retry from our own backoff instead, so
+        // a stopped server doesn't reconnect in a tight loop.
+        setConnected(false);
+        source?.close();
+        source = null;
+        if (!closed) reconnect = setTimeout(connect, RECONNECT_MS);
+      };
+    };
 
     // The connection stays open across status transitions: a server prints its
     // most useful output (world save, crash trace) while shutting down, and the
-    // user should be able to read history while the server is offline. When the
-    // container exits the agent ends the attach stream and sends `{type:"closed"}`;
-    // the socket then closes. Like the old EventSource, we keep retrying on a
-    // backoff, but a retry only actually opens a socket while the server is
-    // running, so a stopped server doesn't thrash. This also covers the
-    // stopped→start case: the pending retry fires once `running` is true again.
+    // user should be able to read history while the server is offline. A retry
+    // only actually connects while the server is running, so a stopped server
+    // doesn't thrash. This also covers the stopped→start case: the pending
+    // retry fires once `running` is true again.
     const connect = async () => {
       if (closed) return;
       if (!runningRef.current) {
@@ -213,74 +351,46 @@ export function ConsolePanel({
         return;
       }
 
-      // Clear stale lines so a fresh connection's backlog (e.g. after a
-      // stop→start cycle) isn't appended to the previous session's output.
-      nextId.current = 1;
-      stickToBottom.current = true;
-      setLines([]);
-      bufferRef.current = "";
-      setPendingRuns([]);
+      // Already decided this node isn't directly reachable: don't re-probe it
+      // on every reconnect, just stay on the proxy.
+      if (proxyRef.current) {
+        connectProxy();
+        return;
+      }
+
+      resetView();
 
       let session: { token: string; url: string; tty: boolean };
       try {
         session = await requestConsoleSession(serverId);
-      } catch {
-        // Panel unreachable / not authorized: try again later.
+      } catch (error) {
+        // A 4xx from the mint is a verdict, not a hiccup: the node has no
+        // browser-reachable console address (no TLS behind an HTTPS panel, or
+        // an agent that only exists on the panel's private network). Retrying
+        // cannot change that, so switch to the proxied stream immediately.
+        // A 5xx or a network failure is transient — back off and try again.
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+          connectProxy();
+          return;
+        }
         if (!closed) reconnect = setTimeout(connect, RECONNECT_MS);
         return;
       }
       if (closed) return;
 
       ttyRef.current = session.tty === true;
+      // Tracks whether this particular socket ever became usable, so a close is
+      // classified as "dropped after working" vs "never worked".
+      let becameReady = false;
       ws = new WebSocket(session.url);
       wsRef.current = ws;
       tokenRef.current = session.token;
 
       ws.onmessage = (event) => {
-        let parsed: {
-          type?: string;
-          data?: unknown;
-          message?: string;
-          code?: string;
-        };
-        try {
-          parsed = JSON.parse(event.data);
-        } catch {
-          return; // Ignore malformed frames rather than killing the console.
+        if (typeof event.data === "string" && event.data.includes('"ready"')) {
+          becameReady = true;
         }
-        switch (parsed.type) {
-          case "ready":
-            // History frames arrive before `ready` (the agent replays them on
-            // open), so the buffer is already populated. Just mark connected.
-            setConnected(true);
-            break;
-          case "output":
-            if (typeof parsed.data === "string" && parsed.data.length > 0) {
-              append(parsed.data);
-            }
-            break;
-          case "closed":
-            // Container exited. The agent follows this frame with ws.close(),
-            // which fires `onclose` below, and that is where the single
-            // reconnect is scheduled. Scheduling here too would double-fire
-            // `connect()` and open two sockets (duplicate history replay,
-            // accumulating per restart), so this case just updates the UI.
-            setConnected(false);
-            break;
-          case "error": {
-            // A container the node no longer has is not the viewer's problem to
-            // decode: the panel rebuilds it from the stored spec on the next
-            // power action, and the reconnect loop below attaches on its own
-            // once it is back. So say that, not the agent's Docker fact.
-            const text =
-              parsed.code === "no_container"
-                ? "Please wait, rebuilding container…"
-                : parsed.message;
-            if (text) append(`[console] ${text}\n`);
-            setConnected(false);
-            break;
-          }
-        }
+        handleFrame(event.data);
       };
 
       ws.onclose = () => {
@@ -290,7 +400,27 @@ export function ConsolePanel({
         // `connect()` mints a fresh one. This is the lag/reconnect path, NOT a
         // leave, so no revoke here.
         tokenRef.current = null;
-        if (!closed) reconnect = setTimeout(connect, RECONNECT_MS);
+        wsRef.current = null;
+        if (closed) return;
+
+        // A socket that closed without ever reaching `ready` means the URL the
+        // panel handed out does not work from this browser. The mint succeeded,
+        // so the panel thinks the node is reachable; only the browser knows
+        // otherwise, and it is told nothing beyond the close. Count the silent
+        // failures and move to the proxy once they can't be coincidence.
+        if (!becameReady) directFailures += 1;
+        if (directFailures >= DIRECT_FAILURES_BEFORE_PROXY) {
+          append(
+            "[console] Direct connection to the node failed; " +
+              "streaming through the panel instead.\n",
+          );
+          // Latch the decision, then go back through `connect` so the
+          // server-is-running check still gates the next attempt.
+          proxyRef.current = true;
+          reconnect = setTimeout(connect, RECONNECT_MS);
+          return;
+        }
+        reconnect = setTimeout(connect, RECONNECT_MS);
       };
 
       ws.onerror = () => setConnected(false);
@@ -329,6 +459,10 @@ export function ConsolePanel({
       revokeOnLeave();
       if (reconnect) clearTimeout(reconnect);
       ws?.close();
+      // Closing the EventSource aborts the panel's route handler, which aborts
+      // its fetch to the agent, which releases the Docker log stream. The whole
+      // chain unwinds from this one call.
+      source?.close();
       wsRef.current = null;
       tokenRef.current = null;
       setConnected(false);
@@ -340,7 +474,12 @@ export function ConsolePanel({
     const trimmed = command.trim();
     if (!trimmed) return;
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const viaProxy = proxyRef.current;
+    // On the direct socket the command needs a live socket to ride. On the
+    // proxied path there is no socket at all — input is its own HTTP request —
+    // so only the connection state gates it.
+    if (!viaProxy && (!ws || ws.readyState !== WebSocket.OPEN)) return;
+    if (viaProxy && !connected) return;
     setCommand("");
 
     // Echo the command locally so input appears above its own output. Even for
@@ -357,7 +496,21 @@ export function ConsolePanel({
     if (ttyRef.current) {
       bufferRef.current = "";
     }
-    ws.send(JSON.stringify({ type: "input", data: trimmed }));
+
+    if (viaProxy) {
+      // Fire-and-forget like the socket write it replaces: the result of the
+      // command shows up in the output stream, not in this response. A failure
+      // is surfaced in the console itself rather than thrown away, since on
+      // this path there is no socket close to hint that something went wrong.
+      void sendConsoleCommand(serverId, trimmed).catch((error: unknown) => {
+        const message =
+          error instanceof ApiError ? error.message : "Failed to send command.";
+        append(`[console] ${message}\n`);
+      });
+      return;
+    }
+
+    ws!.send(JSON.stringify({ type: "input", data: trimmed }));
   };
 
   return (
