@@ -237,6 +237,13 @@ export interface ServerView {
   /** When the server was last suspended (ISO string). Null when not suspended. */
   suspendedAt: string | null;
   /**
+   * Why the last start did not hold, or null when the last start worked.
+   *
+   * The reason only. The captured container output is fetched separately
+   * (`getServerStartFailure`) because it can be tens of kilobytes.
+   */
+  startFailure: { reason: string; at: string } | null;
+  /**
    * The caller's access to this server. Only set by the detail endpoint
    * (`getServer`); list views omit it. Undefined must be read as "no access
    * information". See `lib/permissions.ts` for how the UI treats that.

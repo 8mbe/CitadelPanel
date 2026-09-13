@@ -72,6 +72,10 @@ import {
   type EnvWrite,
 } from "../services/serverManager";
 import {
+  readStartFailure,
+  waitForStartWatch,
+} from "../services/startWatchdog";
+import {
   createServerLink,
   listServerLinks,
   removeServerLink,
@@ -152,6 +156,13 @@ export async function handleStartServer(
   const { user } = await requireServerPermission(request, id, "start_stop");
 
   const server = await startServer(id, user.id);
+
+  // The start watch outlives this response (see services/startWatchdog.ts), so
+  // the runtime is told to keep it alive, exactly as the create path does for
+  // provisioning. Without this the watch can be cut off when the response is
+  // flushed, and a crash-on-boot goes unexplained again.
+  after(() => waitForStartWatch(id));
+
   return json({ server });
 }
 
@@ -176,6 +187,7 @@ export async function handleRestartServer(
   const { user } = await requireServerPermission(request, id, "start_stop");
 
   const server = await restartServer(id, user.id);
+  after(() => waitForStartWatch(id));
   return json({ server });
 }
 
@@ -919,3 +931,26 @@ export async function handleResetServerDatabasePassword(
   return json({ password: result.password });
 }
 
+
+/**
+ * GET /api/servers/:id/start-failure. Why the last start did not hold.
+ *
+ * Separate from the server read because of the payload: the reason rides every
+ * server summary, but the captured container output can be tens of kilobytes
+ * and is only wanted when someone opens the failure to read it.
+ *
+ * Gated on `console` rather than `start_stop`: this *is* console output, held
+ * on the row because the container that printed it is gone. Anyone trusted to
+ * read the live console is trusted to read the last thing the server said
+ * before it died, and gating it any tighter would hide the explanation from
+ * exactly the subuser who was asked to look into it.
+ */
+export async function handleGetServerStartFailure(
+  request: Request,
+  serverId: string,
+): Promise<Response> {
+  const id = requireUuidParam(serverId, "serverId");
+  await requireServerPermission(request, id, "console");
+
+  return json({ startFailure: await readStartFailure(id) });
+}

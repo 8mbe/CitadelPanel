@@ -324,6 +324,65 @@ badly: being *in* a stop already means the graceful path is underway, and a stop
 that finishes in five seconds spends most of that window with its escape hatch
 greyed out.
 
+## A start that does not hold
+
+`docker start` answering "ok" means the container's entrypoint was handed to
+the kernel. It does not mean the server is running, and the gap between those
+two facts is where the worst class of bug in this panel used to live.
+
+A server whose data directory is unwritable, whose port is already bound, or
+whose config is malformed starts cleanly and exits a second or two later. The
+panel recorded `running`, because the node had said yes; the status reconciler
+later noticed the container was gone and rewrote the row to `stopped`, because
+that was true. Nothing anywhere said *why*. The explanation had been printed by
+the container, and by the time anyone thought to look, that container had been
+restarted or removed and taken `docker logs` with it. The operator was left
+with a server that "won't start" and a panel with no opinion about it.
+
+So a start is now watched after the response goes out
+(`services/startWatchdog.ts`). For thirty seconds the panel polls the node, and
+the first observation that is not `running` ends the watch: the reason and the
+container's last 500 lines are written to the server row, *while the container
+still exists to be asked*. The row is the only durable place for it.
+
+Some deliberate choices in that:
+
+- **Thirty seconds is not "time to be playable".** A large modpack can spend
+  minutes generating a world, and that start is a success here. The window is
+  how long it takes to find out whether the process survives its own startup,
+  which is a different and much faster question. Everything that makes a start
+  fail outright kills the process in the first seconds.
+- **Polling, not one look at the end.** A container that dies two seconds in
+  should be reported two seconds in, while the person who pressed Start is
+  still watching. The window bounds patience, it is not the unit of
+  measurement.
+- **`restarting` counts as a failure.** It is what a restart policy looks like
+  while it hides a crash loop, and a watch that only asked "is it not running?"
+  would see the container flicker back up and call the start good.
+- **A deliberate stop cancels the watch.** Stop, kill, suspend and delete all
+  call `cancelStartWatch`, because the watchdog's only signal is "the container
+  is not running" and those are all about to make that true on purpose. The
+  status reconciler must *not* cancel: a reconcile that notices the container
+  exited is observing the very crash the watch exists to explain, and would
+  race the watchdog to the row and usually win.
+- **The failure is its own columns, not a status.** A failed start leaves the
+  server `stopped`, which is a true statement, and the reconciler stays free to
+  keep correcting the status without erasing the explanation. The watchdog does
+  write the corrected status itself in the same statement, so the panel stops
+  claiming `running` immediately rather than at the next read.
+- **Only a successful start clears it.** Not the beginning of the next attempt:
+  someone who hits Start twice on a broken server should still be looking at
+  why it is broken, not at a panel that just cleared the evidence for them.
+
+Like provisioning, the watch is in-process and not durable. A panel restart
+mid-watch loses it, which leaves a failure unexplained — exactly where things
+stood before the watchdog existed, so a lost watch is never worse than not
+having watched. It is never allowed to fail or delay the start itself.
+
+The reason rides every server summary (`startFailure`); the captured output is
+a separate read (`GET /api/servers/:id/start-failure`, gated on `console`)
+because it can be tens of kilobytes and is only wanted when someone opens it.
+
 ## When the container is gone from the node
 
 The panel addresses containers by server id, but it also stores the container

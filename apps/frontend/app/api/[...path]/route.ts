@@ -138,6 +138,7 @@ import {
   handleGetServer,
   handleGetServerEnv,
   handleGetServerInstallLog,
+  handleGetServerStartFailure,
   handleGetServerLogs,
   handleGetServerStats,
   handleKillServer,
@@ -284,6 +285,8 @@ const patterns: Array<{
   { pattern: /^servers\/([^/]+)\/logs$/, methods: { GET: handleGetServerLogs } },
   // Provisioning output, admin-only (see routes/servers.ts).
   { pattern: /^servers\/([^/]+)\/install-log$/, methods: { GET: handleGetServerInstallLog } },
+  // Why the last start did not hold, kept on the row (see startWatchdog.ts).
+  { pattern: /^servers\/([^/]+)\/start-failure$/, methods: { GET: handleGetServerStartFailure } },
   { pattern: /^servers\/([^/]+)\/stats$/, methods: { GET: handleGetServerStats } },
   { pattern: /^servers\/([^/]+)\/env$/, methods: { GET: handleGetServerEnv, PATCH: handleUpdateServerEnv } },
   { pattern: /^servers\/([^/]+)\/ports$/, methods: { GET: handleListServerPorts, POST: handleAddServerPort, DELETE: handleRemoveServerPort } },

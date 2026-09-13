@@ -306,6 +306,8 @@ export interface ApiServerSummary {
   suspensionReason: string | null;
   /** When the server was last suspended (ISO string). Null when not suspended. */
   suspendedAt: string | null;
+  /** Why the last start did not hold. Null when the last start worked. */
+  startFailure: { reason: string; at: string } | null;
   /** Present on detail responses only: resolved plugin/mod support, if any. */
   pluginSupport?: {
     label: string;
@@ -372,6 +374,7 @@ export function toServerView(summary: ApiServerSummary): ServerView {
     createdAt: summary.createdAt,
     suspensionReason: summary.suspensionReason ?? null,
     suspendedAt: summary.suspendedAt ?? null,
+    startFailure: summary.startFailure ?? null,
     pluginSupport: summary.pluginSupport ?? null,
   };
 }
@@ -1359,6 +1362,22 @@ export async function sendConsoleCommand(
     method: "POST",
     body: JSON.stringify({ command }),
   });
+}
+
+/**
+ * GET /api/servers/:id/start-failure. Why the last start did not hold.
+ *
+ * Returns null when the last start worked. The captured container output lives
+ * here rather than on the server summary because it can be tens of kilobytes
+ * and is only wanted when someone opens the failure to read it.
+ */
+export async function getServerStartFailure(
+  id: string,
+): Promise<{ reason: string; at: string; log: string } | null> {
+  const data = await request<{
+    startFailure: { reason: string; at: string; log: string } | null;
+  }>(`/api/servers/${id}/start-failure`);
+  return data.startFailure;
 }
 
 // --- File manager --------------------------------------------------------------

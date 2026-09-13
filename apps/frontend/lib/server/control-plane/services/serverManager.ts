@@ -52,6 +52,10 @@ import {
 import { assertNodeReadyToProvision } from "../nodes/nodeApi";
 import { getNodeWithSecrets } from "../nodes/nodeRegistry";
 import { recordAudit } from "./auditLog";
+import {
+  beginStartWatch,
+  cancelStartWatch,
+} from "@/lib/server/control-plane/services/startWatchdog";
 import { getServerLimits } from "./settings";
 import { listServerLinkNetworks, detachAllServerLinks } from "./serverLinks";
 import {
@@ -106,6 +110,12 @@ interface ServerRow {
    * when it is absent.
    */
   blueprint_key?: string;
+  /** Why the last start did not hold. Null when the last start worked. */
+  start_failure_reason?: string | null;
+  /** The failed container's captured output. Empty when nothing is on record. */
+  start_failure_log?: string;
+  /** When the failed start was observed. Null when there is no failure. */
+  start_failed_at?: Date | null;
 }
 
 export interface ServerSummary {
@@ -132,6 +142,16 @@ export interface ServerSummary {
   suspensionReason: string | null;
   /** When the server was last suspended. Null when not suspended. */
   suspendedAt: Date | null;
+  /**
+   * Why the last start did not hold, and when, or null if the last start
+   * worked (or none has been watched).
+   *
+   * The reason only, never the captured output: this rides every server read
+   * including list pages, and the log is up to 64KB. The output is fetched on
+   * demand from `GET /api/servers/:id/start-failure`. See
+   * `services/startWatchdog.ts`.
+   */
+  startFailure: { reason: string; at: Date } | null;
   /**
    * Plugin/mod support resolved against the server's env, when the blueprint
    * declares it: what the tab is called and which provider serves it. Only
@@ -225,6 +245,12 @@ function toSummaryFromRow(
     createdAt: row.created_at,
     suspensionReason: row.suspension_reason ?? null,
     suspendedAt: row.suspended_at ?? null,
+    // `start_failed_at` is the flag as well as the timestamp: it is set and
+    // cleared together with the reason, so one null check covers both.
+    startFailure:
+      row.start_failed_at && row.start_failure_reason
+        ? { reason: row.start_failure_reason, at: row.start_failed_at }
+        : null,
   };
 }
 
@@ -1218,6 +1244,12 @@ export async function startServer(
     throw error;
   }
 
+  // `docker start` returning success only means the entrypoint was handed to
+  // the kernel. Watch the container for a while to find out whether the server
+  // actually survived its own startup, and keep the output if it did not.
+  // Detached: the person who pressed Start gets their response now.
+  beginStartWatch(serverId, server.node_id);
+
   await recordAudit({
     userId: actorId,
     action: "server.start",
@@ -1235,6 +1267,11 @@ export async function stopServer(
   const server = await loadServerRow(serverId);
   assertNotMigrating(server);
   assertHasContainer(server);
+
+  // A deliberate stop must not look like a crash: the watchdog's only signal is
+  // "the container is not running", which is exactly what this is about to make
+  // true on purpose.
+  cancelStartWatch(serverId);
 
   await setStatus(serverId, "stopping");
   try {
@@ -1273,6 +1310,9 @@ export async function killServer(
   const server = await loadServerRow(serverId);
   assertNotMigrating(server);
   assertHasContainer(server);
+
+  // Same as a stop: this is a deliberate end, not a failed start.
+  cancelStartWatch(serverId);
 
   await setStatus(serverId, "stopping");
   try {
@@ -1323,6 +1363,9 @@ export async function restartServer(
     throw error;
   }
 
+  // The second half of a restart is a start, and fails the same silent way.
+  beginStartWatch(serverId, server.node_id);
+
   await recordAudit({
     userId: actorId,
     action: "server.restart",
@@ -1344,6 +1387,9 @@ export async function suspendServer(
 ): Promise<void> {
   const server = await loadServerRow(serverId);
   assertNotMigrating(server);
+
+  // An enforcement stop, not a crash.
+  cancelStartWatch(serverId);
 
   if (server.container_id) {
     try {
@@ -1434,6 +1480,10 @@ export async function deleteServer(
   const previousStatus = server.status;
   const cleanupMustSucceed =
     !force && (server.container_id !== null || deleteData);
+
+  // The row is about to go; a watch still polling it would only race the
+  // delete to write a failure onto a server that no longer exists.
+  cancelStartWatch(serverId);
 
   await setStatus(serverId, "deleting");
 
