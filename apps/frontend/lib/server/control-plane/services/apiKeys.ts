@@ -9,6 +9,10 @@
  * the table directly like the other admin list routes.
  */
 
+import {
+  sanitizeApiKeyScopes,
+  type ApiKeyScopes,
+} from "@/lib/api-key-scopes";
 import { sql } from "../db/client";
 import {
   toApiKeyAdminView,
@@ -26,6 +30,7 @@ const API_KEY_COLUMNS = sql`
     k."lastRequest" AS last_request,
     k."expiresAt" AS expires_at,
     k."createdAt" AS created_at,
+    k.permissions,
     u.id AS owner_id, u.email AS owner_email, u.name AS owner_name, u.role AS owner_role
   FROM apikey k
   LEFT JOIN "user" u ON u.id = k."referenceId"
@@ -64,7 +69,8 @@ export async function setApiKeyEnabled(
       "requestCount" AS request_count,
       "lastRequest" AS last_request,
       "expiresAt" AS expires_at,
-      "createdAt" AS created_at
+      "createdAt" AS created_at,
+      permissions
   `) as Omit<ApiKeyRow, "owner_id" | "owner_email" | "owner_name" | "owner_role">[];
 
   const row = rows[0];
@@ -118,4 +124,42 @@ export async function listApiKeyById(
   `) as ApiKeyRow[];
 
   return rows[0] ? toApiKeyAdminView(rows[0], now) : null;
+}
+
+/**
+ * Re-scope any user's key.
+ *
+ * Written here rather than through the plugin because the plugin's own update
+ * endpoint is session-scoped (a user may only touch their own keys) and admin
+ * oversight is the whole reason this module exists. The column is Better
+ * Auth's, so the stored shape has to match what the plugin writes: a JSON
+ * *string*, or NULL for unrestricted.
+ *
+ * Passing `null` returns the key to unrestricted — full owner authority — which
+ * is the one direction of this call that grants rather than narrows, so the
+ * route above audits the before and after.
+ */
+export async function setApiKeyScopes(
+  keyId: string,
+  scopes: ApiKeyScopes | null,
+  options: { now?: Date } = {},
+): Promise<ApiKeyAdminView | null> {
+  // Re-sanitized here as well as at the route: this is the last point before
+  // the value becomes a stored grant, and an unknown resource name persisted
+  // now is one the enforcer would never check later.
+  const sanitized = scopes === null ? null : sanitizeApiKeyScopes(scopes);
+  // NULL and "{}" are different grants and must stay different: NULL is
+  // unrestricted (the legacy key), "{}" is a key scoped to nothing. Collapsing
+  // the empty object to NULL would turn "revoke every scope" into "grant
+  // everything", which is the one mistake this whole feature exists to prevent.
+  const encoded = sanitized === null ? null : JSON.stringify(sanitized);
+
+  const rows = (await sql`
+    UPDATE apikey SET permissions = ${encoded}, "updatedAt" = now()
+    WHERE id = ${keyId}
+    RETURNING id
+  `) as { id: string }[];
+
+  if (!rows[0]) return null;
+  return listApiKeyById(keyId, options.now ?? new Date());
 }

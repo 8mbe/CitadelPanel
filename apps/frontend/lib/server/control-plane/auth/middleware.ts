@@ -6,11 +6,21 @@
  * router converts into a response.
  */
 
+import {
+  isScopeSubset,
+  parseApiKeyScopes,
+  scopesAllow,
+  type ApiKeyResource,
+  type ApiKeyScopes,
+  type ScopeAction,
+} from "@/lib/api-key-scopes";
 import { auth, isRole, type Role } from "./betterAuth";
+import { resolveRouteScope } from "./routeScopes";
 import {
   readSessionCache,
   sessionCacheKey,
   writeSessionCache,
+  type ApiKeyContext,
   type SessionIdentity,
 } from "./sessionCache";
 import {
@@ -74,9 +84,44 @@ async function resolveSessionIdentity(
     id: session.user.id,
     email: session.user.email,
     sessionRole: (session.user as { role?: unknown }).role,
+    apiKey: headers.get("x-api-key")
+      ? await loadApiKeyContext(
+          (session as { session?: { id?: unknown } }).session?.id,
+        )
+      : null,
   };
   writeSessionCache(key, identity);
   return identity;
+}
+
+/**
+ * Resolve the scopes of the key that authenticated this request.
+ *
+ * The api-key plugin synthesizes a session whose `session.id` *is* the `apikey`
+ * row id (it has no session row to point at), which is what lets this be a
+ * lookup by primary key rather than a re-hash of the presented credential. We
+ * depend on that one property rather than on the plugin's hashing scheme,
+ * because the scheme is an implementation detail and the id is part of what the
+ * plugin returns.
+ *
+ * If that id is missing or names no row, the key is treated as scoped to
+ * nothing rather than as unrestricted: we know a key authenticated the request
+ * (the header is present and `getSession` succeeded), so failing to learn its
+ * scopes must deny, not grant.
+ */
+async function loadApiKeyContext(sessionId: unknown): Promise<ApiKeyContext> {
+  if (typeof sessionId !== "string" || sessionId.length === 0) {
+    return { id: "", scopes: {} };
+  }
+
+  const rows = (await sql`
+    SELECT permissions FROM apikey WHERE id = ${sessionId}
+  `) as { permissions: unknown }[];
+
+  const row = rows[0];
+  if (!row) return { id: sessionId, scopes: {} };
+
+  return { id: sessionId, scopes: parseApiKeyScopes(row.permissions) };
 }
 
 /**
@@ -218,4 +263,126 @@ export async function requireServerOwner(
   }
 
   return { user, access };
+}
+
+// --- API-key scopes -----------------------------------------------------------
+
+/**
+ * Whether the request carries an API key at all, from the headers alone.
+ *
+ * Cheap on purpose. Every scope check starts here so that cookie-session and
+ * anonymous requests — which are almost all of them — cost exactly what they
+ * cost before scopes existed: nothing. Only a request that actually presents a
+ * key goes on to resolve a session in the gate.
+ */
+function carriesApiKey(headers: Headers): boolean {
+  return headers.get("x-api-key") !== null || Boolean(
+    headers.get("authorization")?.toLowerCase().startsWith("bearer "),
+  );
+}
+
+/**
+ * The key that authenticated this request, or null for a cookie session.
+ *
+ * Exposed so the dispatcher's scope gate can read the caller's own grant when
+ * it has to compare it against something (see {@link assertScopeSubset}).
+ */
+export async function getRequestApiKey(
+  request: Request,
+): Promise<ApiKeyContext | null> {
+  if (!carriesApiKey(request.headers)) return null;
+  const identity = await resolveSessionIdentity(request);
+  return identity?.apiKey ?? null;
+}
+
+/**
+ * Refuse a request whose API key is not scoped to what the route touches.
+ *
+ * Called by the dispatcher for every `/api/*` path, *before* the handler and
+ * its own guards run. Three cases:
+ *
+ * - **No key** (cookie session, or no credential at all): nothing to check.
+ *   Unauthenticated requests still fail in the handler's own guard, as before.
+ * - **Unrestricted key** (`scopes === null`): nothing to check. Every key
+ *   minted before scopes existed is unrestricted, so this is a pure addition
+ *   and no existing integration changes behaviour.
+ * - **Scoped key**: the route's `(resource, action)` must be granted.
+ *
+ * The gate only ever *narrows*. It cannot grant anything, because the handler's
+ * `requireAdmin` / `requireServerPermission` still run behind it — a key is the
+ * intersection of its owner's authority and its own scope, never the union.
+ *
+ * An unmapped path denies (see `routeScopes.ts` on failing closed).
+ */
+export async function enforceApiKeyScope(
+  request: Request,
+  path: string,
+): Promise<void> {
+  const apiKey = await getRequestApiKey(request);
+  if (!apiKey || apiKey.scopes === null) return;
+
+  const scope = resolveRouteScope(path, request.method);
+  // `undefined` is a route that needs no scope; `null` is one we do not
+  // recognise, which a scoped key may not reach.
+  if (scope === undefined) return;
+  if (scope === null) {
+    throw forbidden(
+      "This API key is scoped, and this endpoint is not covered by any scope.",
+    );
+  }
+
+  if (!scopesAllow(apiKey.scopes, scope.resource, scope.action)) {
+    throw forbidden(
+      `This API key is missing the "${scope.resource}:${scope.action}" scope.`,
+    );
+  }
+}
+
+/**
+ * Refuse to mint or re-scope a key broader than the one asking for it.
+ *
+ * Without this, `api_keys:write` would be an escape hatch rather than a
+ * delegation: a key scoped to `files:read` could call the key-creation endpoint
+ * and hand itself an unrestricted successor. Attenuation makes the scope
+ * lattice monotonic — a key can only ever produce keys weaker than or equal to
+ * itself — which is what lets `api_keys` be a grantable scope at all.
+ *
+ * A cookie session or an unrestricted key passes unconditionally: both already
+ * hold everything the new key could be given.
+ */
+export async function assertScopeSubset(
+  request: Request,
+  requested: ApiKeyScopes | null,
+): Promise<void> {
+  const apiKey = await getRequestApiKey(request);
+  if (!apiKey || apiKey.scopes === null) return;
+
+  if (requested === null) {
+    throw forbidden(
+      "A scoped API key cannot create an unrestricted key. Specify permissions that are a subset of this key's own scopes.",
+    );
+  }
+  if (!isScopeSubset(requested, apiKey.scopes)) {
+    throw forbidden(
+      "A scoped API key cannot grant permissions beyond its own scopes.",
+    );
+  }
+}
+
+/**
+ * Require one specific scope, for a handler that needs a check the path alone
+ * cannot express. The gate above covers the ordinary case; this is the escape
+ * hatch for a route whose resource depends on its body.
+ */
+export async function requireApiKeyScope(
+  request: Request,
+  resource: ApiKeyResource,
+  action: ScopeAction,
+): Promise<void> {
+  const apiKey = await getRequestApiKey(request);
+  if (!apiKey || apiKey.scopes === null) return;
+
+  if (!scopesAllow(apiKey.scopes, resource, action)) {
+    throw forbidden(`This API key is missing the "${resource}:${action}" scope.`);
+  }
 }

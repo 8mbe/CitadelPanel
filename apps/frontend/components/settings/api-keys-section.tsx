@@ -3,7 +3,13 @@
 import * as React from "react";
 import { Check, Copy, KeyRound, Plus } from "lucide-react";
 
+import {
+  ApiKeyScopePicker,
+  ApiKeyScopeSummary,
+  isUsableScopeSelection,
+} from "@/components/settings/api-key-scope-picker";
 import { ApiError, authRequest } from "@/lib/api";
+import { parseApiKeyScopes, type ApiKeyScopes } from "@/lib/api-key-scopes";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -42,6 +48,12 @@ interface ApiKeyRow {
   enabled: boolean;
   createdAt: string | null;
   expiresAt: string | null;
+  /**
+   * The plugin returns this as the raw column (a JSON string) on list and as a
+   * parsed object on create, so it is normalised through `parseApiKeyScopes`
+   * rather than read directly.
+   */
+  permissions?: unknown;
 }
 
 export function ApiKeysSection() {
@@ -103,7 +115,8 @@ export function ApiKeysSection() {
           Keys let scripts and tools call the panel API on your behalf. Use the{" "}
           <code className="text-foreground">x-api-key</code> header or{" "}
           <code className="text-foreground">Authorization: Bearer</code>. Treat
-          them like passwords. They grant the same access as your account.
+          them like passwords. Unless you restrict a key, it grants the same
+          access as your account.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -123,6 +136,7 @@ export function ApiKeysSection() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Prefix</TableHead>
+                <TableHead>Access</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead className="w-10" />
               </TableRow>
@@ -141,6 +155,7 @@ export function ApiKeysSection() {
 
 function CreateKeyForm({ onCreated }: { onCreated: () => void }) {
   const [name, setName] = React.useState("");
+  const [scopes, setScopes] = React.useState<ApiKeyScopes | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [newKey, setNewKey] = React.useState<string | null>(null);
@@ -151,15 +166,21 @@ function CreateKeyForm({ onCreated }: { onCreated: () => void }) {
     setError(null);
     try {
       // The plugin returns the full key only here, as `key` on the ApiKey body.
+      // `permissions` is omitted entirely for an unrestricted key: sending an
+      // empty object would ask for a key that can reach nothing.
       const created = await authRequest<ApiKeyRow & { key: string }>(
         "/api/auth/api-key/create",
         {
           method: "POST",
-          body: JSON.stringify({ name }),
+          body: JSON.stringify({
+            name,
+            ...(scopes ? { permissions: scopes } : {}),
+          }),
         },
       );
       setNewKey(created.key);
       setName("");
+      setScopes(null);
       onCreated();
     } catch (err) {
       setError(
@@ -185,15 +206,35 @@ function CreateKeyForm({ onCreated }: { onCreated: () => void }) {
                 maxLength={64}
                 placeholder="e.g. CI deploy script"
               />
-              <Button type="submit" disabled={loading || name.trim() === ""}>
+              <Button
+                type="submit"
+                disabled={
+                  loading ||
+                  name.trim() === "" ||
+                  !isUsableScopeSelection(scopes)
+                }
+              >
                 {loading ? <Spinner /> : <Plus />}
                 Create
               </Button>
             </div>
           </Field>
+          <Field>
+            <FieldLabel>Access</FieldLabel>
+            <ApiKeyScopePicker
+              value={scopes}
+              onChange={setScopes}
+              disabled={loading}
+            />
+          </Field>
         </FieldGroup>
       </form>
       {error && <p className="text-sm text-destructive">{error}</p>}
+      {scopes !== null && !isUsableScopeSelection(scopes) && (
+        <p className="text-sm text-muted-foreground">
+          Tick at least one resource, or switch the restriction off.
+        </p>
+      )}
       {newKey && <GeneratedKey token={newKey} onDismiss={() => setNewKey(null)} />}
     </div>
   );
@@ -276,6 +317,9 @@ function KeyRow({
       </TableCell>
       <TableCell className="font-mono text-xs text-muted-foreground">
         {apiKey.prefix ? `${apiKey.prefix}…` : "Unknown"}
+      </TableCell>
+      <TableCell>
+        <ApiKeyScopeSummary scopes={parseApiKeyScopes(apiKey.permissions)} />
       </TableCell>
       <TableCell className="text-muted-foreground tabular-nums">
         {apiKey.createdAt ? formatRelative(apiKey.createdAt) : "Unknown"}

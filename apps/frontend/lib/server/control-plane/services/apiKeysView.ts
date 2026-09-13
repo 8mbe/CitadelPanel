@@ -7,6 +7,8 @@
  * any secret: the hashed `key` column is never part of `ApiKeyRow`.
  */
 
+import { parseApiKeyScopes, type ApiKeyScopes } from "@/lib/api-key-scopes";
+
 /** One raw `apikey` row joined with its owner, exactly as the queries select it. */
 export interface ApiKeyRow {
   id: string;
@@ -19,6 +21,11 @@ export interface ApiKeyRow {
   last_request: Date | string | null;
   expires_at: Date | string | null;
   created_at: Date | string | null;
+  /**
+   * Better Auth's `permissions` column: a JSON string of resource → actions, or
+   * null for an unrestricted key. Parsed, never trusted as-is.
+   */
+  permissions: unknown;
   owner_id: string | null;
   owner_email: string | null;
   owner_name: string | null;
@@ -42,6 +49,11 @@ export interface ApiKeyAdminView {
   lastUsedAt: string | null;
   expiresAt: string | null;
   createdAt: string | null;
+  /**
+   * What the key may reach. `null` means unrestricted — the key is simply its
+   * owner, which is what every key minted before scopes existed still is.
+   */
+  scopes: ApiKeyScopes | null;
   ownerId: string;
   ownerEmail: string | null;
   ownerName: string | null;
@@ -80,6 +92,7 @@ export function toApiKeyAdminView(row: ApiKeyRow, now: Date): ApiKeyAdminView {
     lastUsedAt: asIso(row.last_request),
     expiresAt: asIso(row.expires_at),
     createdAt: asIso(row.created_at),
+    scopes: parseApiKeyScopes(row.permissions),
     ownerId: row.owner_id ?? "",
     ownerEmail: row.owner_email,
     ownerName: row.owner_name,

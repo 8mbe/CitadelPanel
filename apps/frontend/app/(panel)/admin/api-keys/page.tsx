@@ -40,20 +40,32 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  ApiKeyScopePicker,
+  ApiKeyScopeSummary,
+  isUsableScopeSelection,
+} from "@/components/settings/api-key-scope-picker";
+import {
   adminCreateApiKey,
   adminDeleteApiKey,
   adminListApiKeys,
   adminSetApiKeyEnabled,
+  adminSetApiKeyScopes,
   ApiError,
   type AdminApiKeyView,
 } from "@/lib/api";
+import type { ApiKeyScopes } from "@/lib/api-key-scopes";
 import { formatRelative } from "@/lib/format";
 
 /**
- * Admin API-key oversight: every key on the panel, who owns it, when it was
- * last used, and enable/disable + revoke as the compromise response. Keys
- * carry their owner's full authority (including admin, when the owner is one),
- * so this is the one place to answer "what scripts can act on this panel?".
+ * Admin API-key oversight: every key on the panel, who owns it, what it is
+ * scoped to, when it was last used, and enable/disable/re-scope + revoke as the
+ * compromise responses. An unrestricted key carries its owner's full authority
+ * (including admin, when the owner is one), so this is the one place to answer
+ * "what scripts can act on this panel, and how much?".
+ *
+ * Re-scoping sits between disabling and revoking: it cuts a key down without
+ * rotating it, so an over-broad key stops being over-broad while the script
+ * holding it keeps working.
  *
  * Owners still manage their own keys from /settings; creation here mints a key
  * for the calling admin.
@@ -93,6 +105,7 @@ export default function AdminApiKeysPage() {
 
   const adminKeys = keys.filter((k) => k.ownerRole === "admin").length;
   const stale = keys.filter((k) => k.status !== "active").length;
+  const unrestricted = keys.filter((k) => k.scopes === null).length;
 
   return (
     <>
@@ -108,7 +121,7 @@ export default function AdminApiKeysPage() {
                 ? error
                 : query
                   ? `${keys.length} match for “${query}”.`
-                  : `${keys.length} keys on the panel. ${adminKeys} held by administrators, ${stale} disabled or expired.`}
+                  : `${keys.length} keys on the panel. ${adminKeys} held by administrators, ${unrestricted} unrestricted, ${stale} disabled or expired.`}
           </p>
         </div>
         <div className="flex gap-2">
@@ -136,6 +149,7 @@ export default function AdminApiKeysPage() {
               <TableRow>
                 <TableHead>Key</TableHead>
                 <TableHead>Owner</TableHead>
+                <TableHead>Access</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Requests</TableHead>
                 <TableHead className="text-right">Last used</TableHead>
@@ -152,6 +166,9 @@ export default function AdminApiKeysPage() {
                     </TableCell>
                     <TableCell>
                       <Skeleton className="h-5 w-44" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="h-5 w-32" />
                     </TableCell>
                     <TableCell>
                       <Skeleton className="h-5 w-20" />
@@ -171,7 +188,7 @@ export default function AdminApiKeysPage() {
               ) : keys.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={7}
+                    colSpan={8}
                     className="h-32 text-center text-sm text-muted-foreground"
                   >
                     {query
@@ -216,6 +233,9 @@ export default function AdminApiKeysPage() {
                           {key.ownerEmail ?? "deleted account"}
                         </span>
                       </div>
+                    </TableCell>
+                    <TableCell className="max-w-64">
+                      <ApiKeyScopeSummary scopes={key.scopes} />
                     </TableCell>
                     <TableCell>
                       <StatusBadge apiKey={key} />
@@ -287,6 +307,7 @@ function KeyActions({
   onChanged: () => void | Promise<void>;
 }) {
   const [busy, setBusy] = React.useState(false);
+  const [scopesOpen, setScopesOpen] = React.useState(false);
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -312,6 +333,7 @@ function KeyActions({
   };
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
@@ -325,6 +347,9 @@ function KeyActions({
         •••
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        <DropdownMenuItem disabled={busy} onClick={() => setScopesOpen(true)}>
+          Edit access…
+        </DropdownMenuItem>
         <DropdownMenuItem
           disabled={busy || apiKey.status === "expired"}
           onClick={() =>
@@ -341,6 +366,89 @@ function KeyActions({
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+
+    {/*
+      A sibling of the menu, not a child: the menu closes as soon as the item
+      is picked, and a dialog mounted inside it would be fighting that unmount
+      for focus. Mounted only while open, so the picker's initial value comes
+      from the row on every open without an effect re-seeding it -- a cancelled
+      edit cannot linger into the next one.
+    */}
+    {scopesOpen && (
+      <EditScopesDialog
+        apiKey={apiKey}
+        onClose={() => setScopesOpen(false)}
+        onSaved={onChanged}
+      />
+    )}
+    </>
+  );
+}
+
+/**
+ * Re-scope a key in place. The key itself is untouched — same secret, same
+ * prefix, same counters — so this narrows (or widens) what a running script can
+ * reach without anyone having to rotate a credential. It takes effect within
+ * the panel's session-cache window, a few seconds.
+ */
+function EditScopesDialog({
+  apiKey,
+  onClose,
+  onSaved,
+}: {
+  apiKey: AdminApiKeyView;
+  onClose: () => void;
+  onSaved: () => void | Promise<void>;
+}) {
+  const [scopes, setScopes] = React.useState<ApiKeyScopes | null>(apiKey.scopes);
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await adminSetApiKeyScopes(apiKey.id, scopes);
+      onClose();
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to save the scopes.");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(next) => !next && onClose()}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <KeyRound className="size-5" />
+            Access for “{apiKey.name ?? apiKey.prefix ?? "this key"}”
+          </DialogTitle>
+          <DialogDescription>
+            Owned by {apiKey.ownerEmail ?? "a deleted account"}. Scopes narrow
+            the key; they never widen its owner, whose role is re-checked on
+            every request.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="max-h-[60vh] overflow-y-auto pr-1">
+          <ApiKeyScopePicker value={scopes} onChange={setScopes} disabled={saving} />
+        </div>
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={saving || !isUsableScopeSelection(scopes)}>
+            {saving && <Spinner />}
+            Save access
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -360,6 +468,7 @@ function CreateKeyDialog({
   newToken: string | null;
 }) {
   const [name, setName] = React.useState("");
+  const [scopes, setScopes] = React.useState<ApiKeyScopes | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
@@ -368,8 +477,9 @@ function CreateKeyDialog({
     setSubmitting(true);
     setError(null);
     try {
-      const { token } = await adminCreateApiKey(name.trim() || "Admin key");
+      const { token } = await adminCreateApiKey(name.trim() || "Admin key", scopes);
       setName("");
+      setScopes(null);
       onCreated(token);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to create the key.");
@@ -391,15 +501,17 @@ function CreateKeyDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <KeyRound className="size-5" />
             New admin API key
           </DialogTitle>
           <DialogDescription>
-            The key carries your full authority, including admin actions on
-            every endpoint. It is stored hashed and shown only once.
+            Unrestricted, the key carries your full authority, including admin
+            actions on every endpoint. Restrict it below to scope it to the
+            resources the script actually needs. It is stored hashed and shown
+            only once.
           </DialogDescription>
         </DialogHeader>
 
@@ -445,6 +557,16 @@ function CreateKeyDialog({
                 Something that identifies the script or tool that will use it.
               </FieldDescription>
             </Field>
+            <Field>
+              <FieldLabel>Access</FieldLabel>
+              <div className="max-h-[50vh] overflow-y-auto pr-1">
+                <ApiKeyScopePicker
+                  value={scopes}
+                  onChange={setScopes}
+                  disabled={submitting}
+                />
+              </div>
+            </Field>
           </FieldGroup>
         )}
 
@@ -459,7 +581,10 @@ function CreateKeyDialog({
             >
               Cancel
             </Button>
-            <Button onClick={submit} disabled={submitting}>
+            <Button
+              onClick={submit}
+              disabled={submitting || !isUsableScopeSelection(scopes)}
+            >
               {submitting && <Spinner />}
               Create key
             </Button>

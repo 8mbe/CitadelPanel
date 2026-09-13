@@ -7,6 +7,7 @@
  */
 
 import { initials } from "./format";
+import type { ApiKeyScopes } from "@/lib/api-key-scopes";
 import type { SiteThemeSettings } from "@/lib/site-theme";
 import type {
   DirectoryListing,
@@ -2954,6 +2955,8 @@ export interface AdminApiKeyView {
   lastUsedAt: string | null;
   expiresAt: string | null;
   createdAt: string | null;
+  /** What the key may reach; `null` means unrestricted (see docs/api-keys.md). */
+  scopes: ApiKeyScopes | null;
   ownerId: string;
   ownerEmail: string | null;
   ownerName: string | null;
@@ -2978,10 +2981,13 @@ export async function adminListApiKeys(q?: string): Promise<AdminApiKeyView[]> {
  */
 export async function adminCreateApiKey(
   name: string,
+  scopes: ApiKeyScopes | null = null,
 ): Promise<{ key: AdminApiKeyView | null; token: string }> {
   return request<{ key: AdminApiKeyView | null; token: string }>("/api/admin/api-keys", {
     method: "POST",
-    body: JSON.stringify({ name }),
+    // `permissions` omitted entirely means unrestricted; sending it scopes the
+    // key. The two are different requests, not one with an empty value.
+    body: JSON.stringify({ name, ...(scopes ? { permissions: scopes } : {}) }),
   });
 }
 
@@ -2993,6 +2999,24 @@ export async function adminSetApiKeyEnabled(
   const data = await request<{ key: AdminApiKeyView }>(`/api/admin/api-keys/${keyId}`, {
     method: "PATCH",
     body: JSON.stringify({ enabled }),
+  });
+  return data.key;
+}
+
+/**
+ * PATCH /api/admin/api-keys/:id. Re-scopes any user's key (admin only).
+ *
+ * `null` returns the key to unrestricted — full owner authority. Narrowing a
+ * key takes effect within seconds (the panel's session cache TTL), without
+ * rotating it, so a script keeps working with less access rather than breaking.
+ */
+export async function adminSetApiKeyScopes(
+  keyId: string,
+  scopes: ApiKeyScopes | null,
+): Promise<AdminApiKeyView> {
+  const data = await request<{ key: AdminApiKeyView }>(`/api/admin/api-keys/${keyId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ permissions: scopes }),
   });
   return data.key;
 }

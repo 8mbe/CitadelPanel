@@ -13,6 +13,9 @@
  *   - the admin key lifecycle: mint → works → disable (401) → re-enable → revoke
  *   - the create/disable/revoke actions land in audit_logs with `viaApiKey` +
  *     `viaKeyPrefix` attribution
+ *   - scoped keys: a grant is honoured, everything outside it is 403, `write`
+ *     does not imply `read`, an unmapped path fails closed, and a scoped key
+ *     cannot mint a successor broader than itself (docs/api-keys.md → Scopes)
  *
  * The lifecycle test mints its own throwaway key using the admin key and
  * revokes it in `afterAll`, so the suite leaves no residue on success.
@@ -299,5 +302,190 @@ describe("admin API-key lifecycle (a key is its owner)", () => {
     expect(keys.find((k) => k.id === created!.id)).toBeUndefined();
 
     created = null; // already revoked, afterAll should not try again
+  });
+});
+
+// --- Scopes ------------------------------------------------------------------
+
+/**
+ * The scoped-key contract (see docs/api-keys.md → Scopes).
+ *
+ * These are the claims that make scopes worth having, so they are asserted
+ * against a real panel rather than only in unit tests:
+ *
+ *   - a scoped key reaches what it was granted
+ *   - and is refused (403, not 401) everywhere else, including the routes its
+ *     owner is perfectly entitled to use
+ *   - `write` does not smuggle in `read`
+ *   - the key cannot mint a successor broader than itself, via either the
+ *     plugin's endpoint or the panel's admin route
+ *   - narrowing an existing key takes effect without rotating it
+ *
+ * The keys are minted with the admin key and revoked in `afterAll`, so the
+ * suite leaves no residue on success.
+ */
+describe("scoped API keys", () => {
+  interface Minted {
+    id: string;
+    token: string;
+  }
+
+  const minted: Minted[] = [];
+
+  /** Mint a key for the admin with the given grant, via the admin route. */
+  const mint = async (
+    name: string,
+    permissions: Record<string, string[]> | null,
+  ): Promise<Minted> => {
+    const res = await api("/api/admin/api-keys", {
+      method: "POST",
+      key: config.adminKey,
+      body: { name, ...(permissions ? { permissions } : {}) },
+    });
+    expect(res.status).toBe(201);
+    const body = res.body as { key?: { id?: string }; token?: string };
+    const key = { id: body.key?.id ?? "", token: body.token ?? "" };
+    expect(key.id).not.toBe("");
+    expect(key.token).not.toBe("");
+    minted.push(key);
+    return key;
+  };
+
+  afterAll(async () => {
+    if (!configured) return;
+    for (const key of minted) {
+      await api(`/api/admin/api-keys/${key.id}`, {
+        method: "DELETE",
+        key: config.adminKey,
+      });
+    }
+  });
+
+  e2e("a read-scoped key reaches its resource and nothing else", async () => {
+    const key = await mint("e2e servers:read", { servers: ["read"] });
+
+    // Granted.
+    expect((await api("/api/servers", { key: key.token })).status).toBe(200);
+
+    // Not granted, even though the owner is an admin who may do all of these.
+    // 403 (scope) rather than 401 (credential) or 404 (missing): the key is
+    // valid and the caller is entitled; the key is not.
+    for (const path of [
+      "/api/admin/users",
+      "/api/admin/audit-logs",
+      "/api/admin/nodes",
+    ]) {
+      const res = await api(path, { key: key.token });
+      expect(res.status).toBe(403);
+    }
+
+    // `account` was not granted either, so even /api/me is out of scope.
+    expect((await api("/api/me", { key: key.token })).status).toBe(403);
+  });
+
+  e2e("write does not imply read", async () => {
+    const key = await mint("e2e servers:write", { servers: ["write"] });
+    // Listing servers is a read, and this key holds only the write half.
+    expect((await api("/api/servers", { key: key.token })).status).toBe(403);
+  });
+
+  e2e("an unmapped path is refused rather than allowed", async () => {
+    const key = await mint("e2e account:read", { account: ["read"] });
+    expect((await api("/api/me", { key: key.token })).status).toBe(200);
+    // The agent-callback surface belongs to no scope at all.
+    const res = await api("/api/internal/console/audit", {
+      method: "POST",
+      key: key.token,
+      body: {},
+    });
+    expect(res.status).toBe(403);
+  });
+
+  e2e("health stays reachable with any key", async () => {
+    const key = await mint("e2e files:read", { files: ["read"] });
+    expect((await api("/api/health", { key: key.token })).status).toBe(200);
+  });
+
+  e2e("a scoped key cannot mint a broader one", async () => {
+    const key = await mint("e2e api_keys:write", {
+      api_keys: ["read", "write"],
+      files: ["read"],
+    });
+
+    // Via the panel's admin route: unrestricted is refused...
+    const unrestricted = await api("/api/admin/api-keys", {
+      method: "POST",
+      key: key.token,
+      body: { name: "e2e escalation" },
+    });
+    expect(unrestricted.status).toBe(403);
+
+    // ...and so is a grant reaching beyond its own.
+    const broader = await api("/api/admin/api-keys", {
+      method: "POST",
+      key: key.token,
+      body: { name: "e2e escalation", permissions: { admin_users: ["write"] } },
+    });
+    expect(broader.status).toBe(403);
+
+    // Via Better Auth's own endpoint, which the dispatcher gates separately.
+    const viaPlugin = await api("/api/auth/api-key/create", {
+      method: "POST",
+      key: key.token,
+      body: { name: "e2e escalation" },
+    });
+    expect(viaPlugin.status).toBe(403);
+
+    // A subset of its own scopes is allowed, and is the point of the grant.
+    const attenuated = await api("/api/admin/api-keys", {
+      method: "POST",
+      key: key.token,
+      body: { name: "e2e attenuated", permissions: { files: ["read"] } },
+    });
+    expect(attenuated.status).toBe(201);
+    const id = (attenuated.body as { key?: { id?: string } }).key?.id;
+    if (id) minted.push({ id, token: "" });
+  });
+
+  e2e("an unrestricted key is unaffected by scopes", async () => {
+    // The admin key itself carries no grant, so nothing above applies to it.
+    const list = await api("/api/admin/api-keys", { key: config.adminKey });
+    expect(list.status).toBe(200);
+    const self = (
+      list.body as { keys?: Array<{ id?: string; scopes?: unknown }> }
+    ).keys?.find((k) => k.scopes === null);
+    expect(self).toBeDefined();
+  });
+
+  e2e("re-scoping narrows a live key without rotating it", async () => {
+    const key = await mint("e2e rescope", { servers: ["read"], account: ["read"] });
+    expect((await api("/api/me", { key: key.token })).status).toBe(200);
+
+    const patched = await api(`/api/admin/api-keys/${key.id}`, {
+      method: "PATCH",
+      key: config.adminKey,
+      body: { permissions: { servers: ["read"] } },
+    });
+    expect(patched.status).toBe(200);
+    expect(
+      (patched.body as { key?: { scopes?: Record<string, string[]> } }).key
+        ?.scopes,
+    ).toEqual({ servers: ["read"] });
+
+    // Same secret, less access. The panel caches a resolved key for a few
+    // seconds, so the new scope applies on the next cache miss rather than the
+    // next request -- documented in docs/api-keys.md → Security notes.
+    await Bun.sleep(16_000);
+    expect((await api("/api/me", { key: key.token })).status).toBe(403);
+    expect((await api("/api/servers", { key: key.token })).status).toBe(200);
+  }, 30_000);
+
+  e2e("an empty grant is refused rather than stored as unrestricted", async () => {
+    const res = await api("/api/admin/api-keys", {
+      method: "POST",
+      key: config.adminKey,
+      body: { name: "e2e empty", permissions: {} },
+    });
+    expect(res.status).toBe(400);
   });
 });

@@ -24,6 +24,7 @@ const row = (overrides: Partial<ApiKeyRow> = {}): ApiKeyRow => ({
   last_request: new Date("2026-08-17T11:00:00.000Z"),
   expires_at: null,
   created_at: new Date("2026-01-02T03:04:05.000Z"),
+  permissions: null,
   owner_id: "1d2c3b4a-1111-2222-3333-444455556666",
   owner_email: "owner@example.com",
   owner_name: "Owner",
@@ -128,5 +129,23 @@ describe("toApiKeyAdminView", () => {
     const view = toApiKeyAdminView(row({ prefix: null, start: "slpgDd" }), NOW);
     expect(view.prefix).toBe("slpgDd");
     expect(toApiKeyAdminView(row({ prefix: null, start: null }), NOW).prefix).toBeNull();
+  });
+});
+
+describe("scopes", () => {
+  test("a null permissions column reads as unrestricted", () => {
+    expect(toApiKeyAdminView(row({ permissions: null }), NOW).scopes).toBeNull();
+  });
+
+  test("the plugin's stored JSON string is parsed into a grant", () => {
+    expect(
+      toApiKeyAdminView(row({ permissions: '{"files":["read"]}' }), NOW).scopes,
+    ).toEqual({ files: ["read"] });
+  });
+
+  test("a restriction that cannot be read denies rather than going unrestricted", () => {
+    // The view is what the admin UI renders and what the enforcer agrees with;
+    // a corrupt grant must not surface as "Full access" in either.
+    expect(toApiKeyAdminView(row({ permissions: "{oops" }), NOW).scopes).toEqual({});
   });
 });

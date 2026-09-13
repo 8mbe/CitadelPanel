@@ -8,7 +8,12 @@
  * waiting for the owner.
  */
 
-import { requireAdmin } from "../auth/middleware";
+import {
+  describeScopes,
+  sanitizeApiKeyScopes,
+  type ApiKeyScopes,
+} from "@/lib/api-key-scopes";
+import { assertScopeSubset, requireAdmin } from "../auth/middleware";
 import { auth } from "../auth/betterAuth";
 import {
   badRequest,
@@ -23,6 +28,7 @@ import {
   listApiKeyById,
   listApiKeys,
   setApiKeyEnabled,
+  setApiKeyScopes,
   type ApiKeyAdminView,
 } from "../services/apiKeys";
 
@@ -48,7 +54,42 @@ function keyAuditMetadata(view: ApiKeyAdminView): Record<string, unknown> {
     keyPrefix: view.prefix,
     ownerId: view.ownerId || null,
     ownerEmail: view.ownerEmail,
+    // The grant is the security-relevant half of a key: "an admin key was
+    // minted" and "an admin key scoped to backups:read was minted" are very
+    // different entries to read back six months later.
+    scopes: describeScopes(view.scopes),
   };
+}
+
+/**
+ * Read an optional `permissions` object off a request body.
+ *
+ * Three inputs, three meanings, and they must not be conflated: absent means
+ * "don't change / unrestricted", explicit `null` means "unrestricted", and an
+ * object means a scoped grant. An object that sanitizes to nothing is rejected
+ * rather than stored, because a key that can reach nothing is almost certainly
+ * a mistake in the caller, not a deliberate grant -- and disabling the key is
+ * the way to express "this key should do nothing".
+ */
+function optionalScopes(
+  body: Record<string, unknown>,
+  key = "permissions",
+): ApiKeyScopes | null | undefined {
+  const value = body[key];
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw badRequest(`"${key}" must be an object of resource → ["read","write"]`);
+  }
+
+  const scopes = sanitizeApiKeyScopes(value);
+  if (Object.keys(scopes).length === 0) {
+    throw badRequest(
+      `"${key}" granted no known resource. Omit it for an unrestricted key, or name at least one resource.`,
+    );
+  }
+  return scopes;
 }
 
 /** GET /api/admin/api-keys. Every key on the panel, with owner context. */
@@ -75,11 +116,18 @@ export async function handleAdminCreateApiKey(request: Request): Promise<Respons
 
   const body = await parseJsonBody(request);
   const name = optionalString(body, "name", { max: 64 }) ?? "Admin key";
+  const scopes = optionalScopes(body) ?? null;
+
+  // An admin driving this route *through a scoped key* may not mint a broader
+  // one. Being an admin is authority over the panel, not permission for a
+  // credential to exceed itself, so attenuation applies here exactly as it does
+  // on the plugin's own create endpoint.
+  await assertScopeSubset(request, scopes);
 
   // The plugin resolves the owner from the session carried by these headers.
   const created = (await auth.api.createApiKey({
     headers: request.headers,
-    body: { name },
+    body: { name, ...(scopes ? { permissions: scopes } : {}) },
   })) as { id: string; name: string; prefix: string; key: string; start: string | null };
 
   const view = await listApiKeyById(created.id);
@@ -94,6 +142,7 @@ export async function handleAdminCreateApiKey(request: Request): Promise<Respons
       keyPrefix: created.prefix,
       ownerId: admin.id,
       ownerEmail: admin.email,
+      scopes: describeScopes(scopes),
     },
   });
 
@@ -101,11 +150,16 @@ export async function handleAdminCreateApiKey(request: Request): Promise<Respons
 }
 
 /**
- * PATCH /api/admin/api-keys/:id. Enables or disables any key.
+ * PATCH /api/admin/api-keys/:id. Enables/disables any key, and re-scopes it.
  *
  * Disabling is the reversible compromise response (the row, its usage counters
  * and prefix survive for forensics); deletion is the destructive one. An
  * expired key reads as expired regardless of `enabled`.
+ *
+ * Re-scoping is the third, narrower response: a key that turns out to be doing
+ * more than it needs can be cut down without being rotated, so the script using
+ * it keeps working with less authority instead of breaking. Both fields are
+ * optional; sending neither is a no-op the route rejects rather than audits.
  */
 export async function handleAdminSetApiKeyEnabled(
   request: Request,
@@ -115,11 +169,31 @@ export async function handleAdminSetApiKeyEnabled(
   const id = requireKeyId(keyId);
 
   const body = await parseJsonBody(request);
-  if (typeof body.enabled !== "boolean") {
+  const enabled = body.enabled;
+  if (enabled !== undefined && typeof enabled !== "boolean") {
     throw badRequest('"enabled" must be a boolean');
   }
+  const scopes = optionalScopes(body);
+  if (enabled === undefined && scopes === undefined) {
+    throw badRequest('Send "enabled" and/or "permissions"');
+  }
 
-  const view = await setApiKeyEnabled(id, body.enabled);
+  // Widening a key is a grant, so the caller's own credential has to be able to
+  // make it: the same attenuation rule that governs minting.
+  if (scopes !== undefined) await assertScopeSubset(request, scopes);
+
+  // Read the grant before changing it so the audit entry carries both sides.
+  // Only useful when the scope is actually moving.
+  const before = scopes === undefined ? null : await listApiKeyById(id);
+
+  let view: ApiKeyAdminView | null = null;
+  if (scopes !== undefined) {
+    view = await setApiKeyScopes(id, scopes);
+    if (!view) throw notFound("API key not found");
+  }
+  if (enabled !== undefined) {
+    view = await setApiKeyEnabled(id, enabled);
+  }
   if (!view) throw notFound("API key not found");
 
   await recordAuditFromRequest(request, {
@@ -127,7 +201,13 @@ export async function handleAdminSetApiKeyEnabled(
     action: "apikey.update",
     targetType: "api_key",
     targetId: id,
-    metadata: { ...keyAuditMetadata(view), enabled: view.enabled },
+    metadata: {
+      ...keyAuditMetadata(view),
+      enabled: view.enabled,
+      ...(scopes === undefined
+        ? {}
+        : { scopesBefore: describeScopes(before?.scopes ?? null) }),
+    },
   });
 
   return json({ key: view });

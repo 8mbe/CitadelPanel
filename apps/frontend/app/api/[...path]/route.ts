@@ -1,7 +1,12 @@
 import type { NextRequest } from "next/server";
 
+import { parseApiKeyScopes } from "@/lib/api-key-scopes";
 import { auth } from "@/lib/server/control-plane/auth/betterAuth";
-import { requireServerPermission } from "@/lib/server/control-plane/auth/middleware";
+import {
+  assertScopeSubset,
+  enforceApiKeyScope,
+  requireServerPermission,
+} from "@/lib/server/control-plane/auth/middleware";
 import { checkDatabaseConnection, sql } from "@/lib/server/control-plane/db/client";
 import { json, parseJsonBody, requireString, toErrorResponse } from "@/lib/server/control-plane/lib/http";
 import { sendServerCommand } from "@/lib/server/control-plane/nodes/nodeServerApi";
@@ -422,13 +427,63 @@ async function handleConsoleCommand(request: Request, serverId: string): Promise
   return new Response(null, { status: 204 });
 }
 
+/**
+ * Keep a scoped key from minting a key broader than itself.
+ *
+ * Better Auth owns `/api/auth/api-key/create` and `/update`, so the scope a new
+ * key is *given* is a request body the panel never otherwise reads. Without
+ * this check `api_keys:write` would be a one-request escalation to unrestricted
+ * access, which would make every other scope decorative. See
+ * `middleware.assertScopeSubset` for the attenuation rule itself.
+ *
+ * The body is read from a clone so the original stream still reaches
+ * `auth.handler`. A body that is not JSON is left alone: Better Auth's own
+ * validation will reject it, and there is nothing to attenuate.
+ */
+async function enforceApiKeyAttenuation(
+  request: NextRequest,
+  path: string,
+): Promise<void> {
+  if (path !== "auth/api-key/create" && path !== "auth/api-key/update") return;
+  if (request.method !== "POST") return;
+
+  let body: unknown;
+  try {
+    body = await request.clone().json();
+  } catch {
+    return;
+  }
+  if (typeof body !== "object" || body === null) return;
+
+  const permissions = (body as { permissions?: unknown }).permissions;
+  // On update, an absent `permissions` leaves the key's grant untouched, so
+  // there is nothing to attenuate. On create it means "unrestricted", which
+  // `assertScopeSubset` rejects for a scoped caller.
+  if (path === "auth/api-key/update" && permissions === undefined) return;
+
+  await assertScopeSubset(request, parseApiKeyScopes(permissions));
+}
+
 async function dispatch(request: NextRequest): Promise<Response> {
   const path = request.nextUrl.pathname.replace(/^\/api\/?/, "");
 
   if (path === "auth" || path.startsWith("auth/")) {
+    // Better Auth's surface is gated too: it carries the key-management
+    // endpoints and the admin plugin's ban/role endpoints, which would
+    // otherwise be an unscoped route to the actions `api_keys` and
+    // `admin_users` exist to gate.
+    await enforceApiKeyScope(request, path);
+    await enforceApiKeyAttenuation(request, path);
     return auth.handler(request);
   }
   if (request.method === "OPTIONS") return new Response(null, { status: 204 });
+
+  // The single chokepoint for API-key scopes. It only narrows: every handler's
+  // own `requireAuth`/`requireAdmin`/`requireServerPermission` still runs
+  // behind it, so a key is the intersection of its owner's authority and its
+  // own scope. Routes are mapped to resources in `auth/routeScopes.ts`, which
+  // fails closed -- a path it does not know is unreachable by a scoped key.
+  await enforceApiKeyScope(request, path);
 
   const direct = exact.get(path)?.[request.method];
   if (direct) return direct(request);
