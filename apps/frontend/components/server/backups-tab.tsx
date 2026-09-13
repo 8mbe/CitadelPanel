@@ -176,6 +176,10 @@ function ActiveRunCard({
         <CardDescription>
           {phaseLabel(phase)}
           {run.trigger === "scheduled" && " · started by the schedule"}
+          {run.trigger === "archive" &&
+            (isRestore
+              ? " · restoring this server from its archive"
+              : " · archiving this server")}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -286,6 +290,10 @@ function BackupRow({
           <StatusBadge backup={backup} />
           {backup.kind === "restore" && <Badge variant="secondary">Restore</Badge>}
           {backup.trigger === "scheduled" && <Badge variant="outline">Scheduled</Badge>}
+          {/* Not a spare copy: while the server is archived this snapshot is
+              the only place its files exist, which is why the API refuses to
+              delete it until the server has been restored. */}
+          {backup.trigger === "archive" && <Badge variant="outline">Archive</Badge>}
         </div>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">

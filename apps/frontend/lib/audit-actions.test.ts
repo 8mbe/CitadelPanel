@@ -62,6 +62,32 @@ test("server.reinstall without a blueprint still records the deletion", () => {
   expect(describeMetadata("server.reinstall", {})).toBe("all files deleted");
 });
 
+// The archive row is what someone reads when asking why a server went offline
+// on its own, so the automatic case has to say that nobody pressed anything.
+test("server.archive distinguishes the idle sweep from someone pressing the button", () => {
+  expect(describeMetadata("server.archive", { trigger: "idle" })).toBe(
+    "files moved to S3 · archived automatically after being left stopped",
+  );
+  expect(describeMetadata("server.archive", { trigger: "manual" })).toBe(
+    "files moved to S3 · node disk freed",
+  );
+});
+
+test("server.unarchive names the snapshot the files came from", () => {
+  expect(
+    describeMetadata("server.unarchive", {
+      snapshotId: "a1b2c3d4e5f6",
+      nodeId: "11111111-2222-3333-4444-555555555555",
+    }),
+  ).toBe("files restored from snapshot a1b2c3d4");
+});
+
+test("server.unarchive without a recorded snapshot still reads as a restore", () => {
+  expect(describeMetadata("server.unarchive", {})).toBe(
+    "files restored from the archive",
+  );
+});
+
 test("server.file.delete renders a batch as a comma-separated path list", () => {
   expect(
     describeMetadata("server.file.delete", {

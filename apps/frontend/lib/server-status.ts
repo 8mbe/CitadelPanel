@@ -13,3 +13,22 @@ import type { ServerStatus } from "./types";
 export function isProvisioning(status: ServerStatus): boolean {
   return status === "creating" || status === "installing";
 }
+
+/**
+ * Client-side reading of the three statuses the archive owns. Mirrors
+ * `serverManager.isArchiveStatus`.
+ *
+ * `archiving` and `restoring` are transfers in progress; `archived` is the
+ * settled state where the server's files are in S3 and its node holds nothing.
+ * Grouped because the shell treats them alike: there is no container to operate
+ * in any of them, so every section of the page would be a row of errors.
+ * See `docs/archive.md`.
+ */
+export function isArchiveStatus(status: ServerStatus): boolean {
+  return status === "archiving" || status === "archived" || status === "restoring";
+}
+
+/** Whether a transfer to or from the archive is in flight right now. */
+export function isArchiveTransfer(status: ServerStatus): boolean {
+  return status === "archiving" || status === "restoring";
+}

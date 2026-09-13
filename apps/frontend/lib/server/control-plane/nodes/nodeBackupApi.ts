@@ -100,7 +100,8 @@ export async function startNodeServerBackup(
   request: {
     repo: AgentRepoTarget;
     keepMax: number;
-    reason: "manual" | "scheduled";
+    /** Tags the snapshot. `archive` marks the one that is the only copy. */
+    reason: "manual" | "scheduled" | "archive";
     exclude: string[];
   },
 ): Promise<{ jobId: string }> {
@@ -136,7 +137,8 @@ export async function startNodeDatabaseBackup(
     databases: string[];
     admin: AgentDbAdmin;
     keepMax: number;
-    reason: "manual" | "scheduled";
+    /** Tags the snapshot. `archive` marks the one that is the only copy. */
+    reason: "manual" | "scheduled" | "archive";
   },
 ): Promise<{ jobId: string }> {
   return nodeRequest(nodeId, "/v1/backups/databases", {

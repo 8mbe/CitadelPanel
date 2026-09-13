@@ -53,6 +53,12 @@ export async function resolveServerView(
       ...summary,
       createdAt: summary.createdAt.toISOString(),
       suspendedAt: summary.suspendedAt?.toISOString() ?? null,
+      archive: summary.archive
+        ? {
+            ...summary.archive,
+            archivedAt: summary.archive.archivedAt.toISOString(),
+          }
+        : null,
       startFailure: summary.startFailure
         ? {
             reason: summary.startFailure.reason,

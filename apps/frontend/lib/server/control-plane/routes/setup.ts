@@ -736,6 +736,27 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
       }
     }
 
+    let archive: BackupSettingsUpdate["archive"];
+    if (backups.archive !== undefined) {
+      const group = requireObject(backups, "archive");
+      archive = {};
+      if (group.enabled !== undefined) {
+        if (typeof group.enabled !== "boolean") {
+          throw badRequest('"backups.archive.enabled" must be a boolean');
+        }
+        archive.enabled = group.enabled;
+      }
+      // Floored at 1 because zero would archive every server the moment it
+      // stopped, which is not a policy anybody means to set; capped at ten years
+      // so a typo is a refusal rather than a sweep that never fires.
+      if (group.idleDays !== undefined) {
+        archive.idleDays = requireNumber(group, "idleDays", { min: 1, max: 3650 });
+      }
+      if (group.concurrency !== undefined) {
+        archive.concurrency = requireNumber(group, "concurrency", { min: 1, max: 32 });
+      }
+    }
+
     let storage: BackupSettingsUpdate["storage"];
     if (backups.storage !== undefined) {
       const group = requireObject(backups, "storage");
@@ -791,6 +812,7 @@ export async function handleUpdateSettings(request: Request): Promise<Response> 
           storage,
           servers,
           databases,
+          archive,
         },
         admin.id,
       );

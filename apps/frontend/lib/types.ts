@@ -19,7 +19,13 @@ export type ServerStatus =
   | "error"
   | "deleting"
   /** Being moved to another node; see docs/server-migration.md. */
-  | "migrating";
+  | "migrating"
+  /** Files are being snapshotted to S3 and taken off the node. */
+  | "archiving"
+  /** Files live in S3 and nowhere else; see docs/archive.md. */
+  | "archived"
+  /** Files are coming back from S3 onto the node. */
+  | "restoring";
 
 // Matches apps/backend/src/nodes/nodeRegistry.ts `PublicNode`.
 export interface NodeView {
@@ -209,6 +215,16 @@ export interface ServerViewerAccess {
   permissions: Partial<Record<ServerPermission, boolean>>;
 }
 
+/** Where an archived server's files are, and what put them there. */
+export interface ServerArchiveView {
+  /** ISO string. Present means archived. */
+  archivedAt: string;
+  /** The restic snapshot holding the files. */
+  snapshotId: string | null;
+  /** `manual` = someone pressed the button; `idle` = the auto-archive policy. */
+  trigger: "manual" | "idle";
+}
+
 /** A game server as the UI displays it. */
 export interface ServerView {
   id: string;
@@ -236,6 +252,20 @@ export interface ServerView {
   suspensionReason: string | null;
   /** When the server was last suspended (ISO string). Null when not suspended. */
   suspendedAt: string | null;
+  /**
+   * Set when the server's files are in S3 rather than on its node, null
+   * otherwise. See docs/archive.md.
+   *
+   * Rides every server read including list pages, because an archived server and
+   * a stopped one look identical otherwise and only one of them will start.
+   */
+  archive: ServerArchiveView | null;
+  /**
+   * Why the last archive or restore-from-archive failed. Outlives the attempt:
+   * a failed restore leaves the server archived, and the explanation has to
+   * survive that or the owner sees a button that silently did nothing.
+   */
+  archiveError: string | null;
   /**
    * Why the last start did not hold, or null when the last start worked.
    *

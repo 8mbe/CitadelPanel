@@ -54,6 +54,28 @@ const STATUS_META: Record<
   // Sky, like creating/installing: the server is being built somewhere, and
   // the pulse says a long operation owns it. Not amber, which this palette
   // reserves for the seconds-long power transitions.
+  // Sky and pulsing, like the other long transfers: an archive is a world being
+  // uploaded or downloaded, and it takes as long as a migration does.
+  archiving: {
+    label: "Archiving",
+    dot: "bg-sky-500 animate-pulse",
+    badge: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
+  },
+  restoring: {
+    label: "Restoring",
+    dot: "bg-sky-500 animate-pulse",
+    badge: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
+  },
+  // Settled, not transitional, so no pulse. Deliberately quieter than
+  // `suspended`: an archived server is a normal thing an owner chose, not a
+  // sanction, and it must not read as one in a list of servers. Muted like
+  // `stopped`, which is the state it is closest to, with its own label doing the
+  // work of telling them apart.
+  archived: {
+    label: "Archived",
+    dot: "bg-muted-foreground/50",
+    badge: "bg-muted text-muted-foreground",
+  },
   migrating: {
     label: "Migrating",
     dot: "bg-sky-500 animate-pulse",

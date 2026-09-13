@@ -23,6 +23,14 @@ export type AuditAction =
   // happened. Whether the move then succeeded is the migration row's story.
   | "server.migrate"
   | "server.migrate.cancel"
+  // Archiving, both directions (see docs/archive.md). Audited on acceptance,
+  // like `server.create`: the decision was taken, whether or not the transfer
+  // then completed. `server.unarchive.restore` is the restore run the unarchive
+  // starts, recorded separately so the audit trail names the snapshot that was
+  // read as well as the decision to read it.
+  | "server.archive"
+  | "server.unarchive"
+  | "server.unarchive.restore"
   | "server.suspend"
   | "server.unsuspend"
   | "server.env.update"

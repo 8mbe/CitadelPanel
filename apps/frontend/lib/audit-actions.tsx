@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import {
+  Archive,
+  ArchiveRestore,
   Boxes,
   CalendarClock,
   Cog,
@@ -86,6 +88,20 @@ export function actionMeta(action: string): ActionMeta {
       return { label: "Server reinstalled", category: "lifecycle", icon: RotateCcw };
     case "server.delete":
       return { label: "Server deleted", category: "lifecycle", icon: Trash2 };
+    case "server.archive":
+      return { label: "Server archived", category: "lifecycle", icon: Archive };
+    case "server.unarchive":
+      return {
+        label: "Server restored from archive",
+        category: "lifecycle",
+        icon: ArchiveRestore,
+      };
+    case "server.unarchive.restore":
+      return {
+        label: "Archived files restored",
+        category: "lifecycle",
+        icon: ArchiveRestore,
+      };
     case "server.suspend":
       return { label: "Server suspended", category: "admin", icon: ShieldAlert };
     case "server.unsuspend":
@@ -465,6 +481,19 @@ function describeActionMetadata(
       return key
         ? `all files deleted · reinstalled from ${key}`
         : "all files deleted";
+    }
+    case "server.archive": {
+      // The row a reader lands on when asking why a server went offline on its
+      // own, so it has to say that nobody pressed anything.
+      return str(meta.trigger) === "idle"
+        ? "files moved to S3 · archived automatically after being left stopped"
+        : "files moved to S3 · node disk freed";
+    }
+    case "server.unarchive": {
+      const snapshot = str(meta.snapshotId);
+      return snapshot
+        ? `files restored from snapshot ${snapshot.slice(0, 8)}`
+        : "files restored from the archive";
     }
     case "server.suspend": {
       const reason = str(meta.reason);

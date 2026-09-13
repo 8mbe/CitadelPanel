@@ -34,7 +34,18 @@ import type { AgentRepoTarget } from "../nodes/nodeBackupApi";
 export type BackupScope = "server" | "node";
 export type BackupKind = "backup" | "restore";
 export type BackupStatus = "pending" | "running" | "succeeded" | "failed";
-export type BackupTrigger = "manual" | "scheduled";
+/**
+ * What asked for a run.
+ *
+ * `archive` is a server file backup like any other, kept distinct from the two
+ * that existed for two reasons that both bite. The backup schedule's double-fire
+ * guard keys off `scheduled`, so an archive wearing that label would suppress a
+ * real scheduled backup for the same server in the same minute; and the history
+ * the owner reads labels a run by its trigger, where "Archive" marks the one
+ * snapshot that is not a spare copy but the server itself. See
+ * `services/serverArchive.ts`.
+ */
+export type BackupTrigger = "manual" | "scheduled" | "archive";
 
 /** A backup or restore run, as the API returns it. */
 export interface BackupRunView {

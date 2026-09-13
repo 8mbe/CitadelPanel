@@ -81,13 +81,18 @@ export interface StatusSweepResult {
  *     same guard `reconcileRowStatus` applies;
  *   - `suspended`: an administrative decision, never overwritten by an
  *     observation;
- *   - `creating`/`installing`/`deleting`/`migrating`: a task in this process
- *     owns the row and is mid-way through changing the node to match it.
- *     `migrating` is the sharpest case, because the row still names the SOURCE
- *     node and that node is honestly reporting a container it was told to stop:
- *     a sweep that believed it would write `stopped` over a move in progress.
- *     Anything left over from a *previous* process is handled at boot, by
- *     `failInterruptedProvisions` and `failInterruptedMigrations`.
+ *   - `creating`/`installing`/`deleting`/`migrating`/`archiving`/`archived`/
+ *     `restoring`: a task in this process owns the row and is mid-way through
+ *     changing the node to match it. `migrating` is the sharpest case, because
+ *     the row still names the SOURCE node and that node is honestly reporting a
+ *     container it was told to stop: a sweep that believed it would write
+ *     `stopped` over a move in progress. `archived` is the same shape with the
+ *     opposite cause: it is a settled state the panel holds about where the
+ *     files are, which no observation of the node can confirm or deny, and a
+ *     sweep that wrote `stopped` over it would offer the owner a Start button
+ *     for a server whose disk is empty. Anything left over from a *previous*
+ *     process is handled at boot, by `failInterruptedProvisions`,
+ *     `failInterruptedMigrations` and `recoverInterruptedArchives`.
  *
  * Excluded in the query rather than only in `reconcileStatus`, so a migrating
  * server costs the sweep nothing at all: it is not even in the batch its node
@@ -98,7 +103,10 @@ async function loadSweepableServers(): Promise<SweepableRow[]> {
     SELECT id, status, updated_at, node_id
     FROM servers
     WHERE container_id IS NOT NULL
-      AND status NOT IN ('suspended', 'creating', 'installing', 'deleting', 'migrating')
+      AND status NOT IN (
+        'suspended', 'creating', 'installing', 'deleting', 'migrating',
+        'archiving', 'archived', 'restoring'
+      )
   `) as {
     id: string;
     status: ServerStatus;

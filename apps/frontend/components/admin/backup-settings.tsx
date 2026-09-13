@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Clock, CloudUpload, HardDrive, Plug } from "lucide-react";
+import { Archive, Clock, CloudUpload, HardDrive, Plug } from "lucide-react";
 
 import {
   ApiError,
@@ -99,13 +99,15 @@ export function AdminBackupSettings() {
         <p className="text-sm text-muted-foreground">
           Where snapshots go, when they are taken, and how many are kept. Server
           backups hold files and are taken by their owners; database backups sweep
-          every database on a node and are yours alone.
+          every database on a node and are yours alone. Archiving uses the same
+          destination to take idle servers off their nodes entirely.
         </p>
       </div>
 
       <DestinationCard settings={settings} patch={patch} />
       <ScheduleCard settings={settings} patch={patch} />
       <DatabaseBackupsSection settings={settings} patch={patch} />
+      <ArchiveCard settings={settings} patch={patch} />
       <StorageCard settings={settings} patch={patch} />
     </div>
   );
@@ -768,4 +770,148 @@ function gbToBytes(value: string): number {
   const gb = Number(value);
   if (!Number.isFinite(gb) || gb <= 0) return 0;
   return Math.round(gb) * 1024 ** 3;
+}
+
+// --- Auto-archive ------------------------------------------------------------------
+
+/**
+ * The auto-archive policy: how long a server may sit stopped before the panel
+ * puts it in S3 and takes it off its node.
+ *
+ * On this page rather than the general settings screen because it is completely
+ * dependent on what the cards above it configure. Without a usable destination
+ * the sweep does nothing, and the card says so rather than offering a switch
+ * that silently would not work.
+ *
+ * Not a cron, unlike the two schedules above, and that is the point worth being
+ * clear about in the copy: "stopped for thirteen days" is continuously true or
+ * false for each server on its own clock, so there is no time of day to pick.
+ */
+function ArchiveCard({
+  settings,
+  patch,
+}: {
+  settings: AdminSettings;
+  patch: (update: AdminSettingsUpdate) => Promise<AdminSettings>;
+}) {
+  const s = settings.backups;
+  const [enabled, setEnabled] = React.useState(s.archive.enabled);
+  const [idleDays, setIdleDays] = React.useState(String(s.archive.idleDays));
+  const [concurrency, setConcurrency] = React.useState(String(s.archive.concurrency));
+  const [loading, setLoading] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const save = async () => {
+    setLoading(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await patch({
+        backups: {
+          enabled: s.enabled,
+          archive: {
+            enabled,
+            idleDays: Math.max(1, Number(idleDays) || 1),
+            concurrency: Math.max(1, Number(concurrency) || 1),
+          },
+        },
+      });
+      setSaved(true);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Could not save the archive policy.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Archive className="size-4" />
+          Archive idle servers
+        </CardTitle>
+        <CardDescription>
+          A server nobody has started in a while still holds its whole world on a
+          node&apos;s disk. Archiving uploads those files to the destination above
+          and then frees the disk, keeping the server&apos;s address, ports,
+          settings, subusers and databases exactly as they are. Owners can restore
+          it themselves at any time, and can archive a server by hand from its
+          settings page whether or not this is on.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        {!s.usable && (
+          <p className="rounded-lg border bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
+            No S3 destination is configured, so nothing is archived automatically
+            and the archive button is unavailable to owners. Set one up in the
+            destination card above first.
+          </p>
+        )}
+
+        <Field orientation="horizontal">
+          <Switch
+            id="archive-enabled"
+            checked={enabled}
+            onCheckedChange={(checked) => setEnabled(checked === true)}
+          />
+          <FieldLabel htmlFor="archive-enabled" className="font-normal">
+            Archive servers automatically once they have been idle long enough
+          </FieldLabel>
+        </Field>
+
+        <Field>
+          <FieldLabel htmlFor="archive-idle-days">Days stopped before archiving</FieldLabel>
+          <Input
+            id="archive-idle-days"
+            type="number"
+            min={1}
+            max={3650}
+            value={idleDays}
+            onChange={(e) => setIdleDays(e.target.value)}
+          />
+          <FieldDescription>
+            Counted from the moment a server last changed state, so the clock
+            starts when it actually went down and resets the moment anyone starts
+            it again. A running server is never archived, however long it has been
+            up. Servers whose owner has turned their backups off are left alone,
+            and so are suspended ones.
+          </FieldDescription>
+        </Field>
+
+        <Field>
+          <FieldLabel htmlFor="archive-concurrency">Servers archived at once</FieldLabel>
+          <Input
+            id="archive-concurrency"
+            type="number"
+            min={1}
+            max={32}
+            value={concurrency}
+            onChange={(e) => setConcurrency(e.target.value)}
+          />
+          <FieldDescription>
+            Each archive uploads a whole world, so a fleet with a lot of idle
+            servers drains over several checks rather than saturating every
+            node&apos;s upstream at once. One at a time is almost always right:
+            there is no window to hit.
+          </FieldDescription>
+        </Field>
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {saved && !error && (
+          <p className="text-sm text-emerald-600 dark:text-emerald-400">Saved.</p>
+        )}
+
+        <div>
+          <Button onClick={save} disabled={loading}>
+            {loading && <Spinner />}
+            Save archive policy
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }

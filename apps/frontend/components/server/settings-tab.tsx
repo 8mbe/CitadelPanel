@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ArchiveServerCard } from "@/components/server/archive-server-card";
 import { ConnectedServersCard } from "@/components/server/connected-servers-card";
 import { ReinstallServerCard } from "@/components/server/reinstall-server-card";
 import { useServerData } from "@/components/server/server-data-context";
@@ -52,11 +53,11 @@ function Allocation({ label, value }: { label: string; value: string }) {
  * blueprint marks `editable` are the one exception: the owner (and subusers with
  * `settings`) may override those after creation.
  *
- * Reinstalling is the one destructive action on this page, and it sits at the
- * bottom of General rather than in a tab of its own. A tab would be a place to
- * arrive at, and this is a thing to scroll past. It renders for owners and
- * admins only, so a subuser with `settings` can retune the game without being
- * able to erase it.
+ * Archiving and reinstalling are the two heavy actions on this page, and they
+ * sit at the bottom of General rather than in a tab of their own. A tab would be
+ * a place to arrive at, and these are things to scroll past. Both render for
+ * owners and admins only, so a subuser with `settings` can retune the game
+ * without being able to take it off its node or erase it.
  *
  * Panels stay mounted (Base UI default), so the env and links fetches fire on
  * mount exactly as they did when everything was on one page.
@@ -101,7 +102,14 @@ export function SettingsTab() {
             />
           </CardContent>
         </Card>
-        {/* Last on the page, and owner-only: it hides itself for subusers. */}
+        {/*
+          The two "I am done with this for now" actions, owner-only: both hide
+          themselves for subusers. Archive comes first deliberately. They look
+          alike from a distance -- a big button at the bottom of Settings that
+          takes the server away -- and the one that keeps every file should be
+          the one an owner reads first.
+        */}
+        <ArchiveServerCard />
         <ReinstallServerCard />
       </TabsContent>
       <TabsContent value="environment" className="mt-4">

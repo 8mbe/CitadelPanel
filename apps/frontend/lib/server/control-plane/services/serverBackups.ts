@@ -32,6 +32,7 @@ import {
   trimFailedRuns,
   toRunView,
   type BackupRunView,
+  type BackupTrigger,
   type RunRow,
 } from "./backupCore";
 import {
@@ -53,9 +54,12 @@ async function loadServer(serverId: string): Promise<{
   name: string;
   status: string;
   backupsEnabled: boolean;
+  /** The run holding the archive snapshot, when this server is archived. */
+  archiveRunId: string | null;
+  archivedAt: Date | null;
 }> {
   const rows = (await sql`
-    SELECT id, node_id, name, status, backups_enabled
+    SELECT id, node_id, name, status, backups_enabled, archive_run_id, archived_at
     FROM servers WHERE id = ${serverId}
   `) as {
     id: string;
@@ -63,6 +67,8 @@ async function loadServer(serverId: string): Promise<{
     name: string;
     status: string;
     backups_enabled: boolean;
+    archive_run_id: string | null;
+    archived_at: Date | null;
   }[];
 
   const row = rows[0];
@@ -73,7 +79,34 @@ async function loadServer(serverId: string): Promise<{
     name: row.name,
     status: row.status,
     backupsEnabled: row.backups_enabled,
+    archiveRunId: row.archive_run_id,
+    archivedAt: row.archived_at,
   };
+}
+
+/**
+ * An archived server has no files on its node, so there is nothing to snapshot
+ * and nothing to restore *into*.
+ *
+ * Refused rather than quietly producing an empty snapshot, which is the outcome
+ * the agent would otherwise give: `ensureServerDataDir` creates the directory it
+ * finds missing, and restic would happily write a snapshot of nothing over the
+ * top of a repository whose newest snapshot is the only copy of the server. The
+ * message names the button that does work.
+ */
+function assertNotArchived(server: { status: string }): void {
+  if (server.status === "archived") {
+    throw conflict(
+      "This server is archived, so its files are in S3 rather than on its node. " +
+        "Restore it from the archive first.",
+    );
+  }
+  if (server.status === "archiving" || server.status === "restoring") {
+    throw conflict(
+      "This server is being archived or restored from its archive. Wait for that " +
+        "to finish first.",
+    );
+  }
 }
 
 // --- Reads ------------------------------------------------------------------------
@@ -119,7 +152,13 @@ export async function countServerBackups(serverId: string): Promise<number> {
 export interface StartServerBackupInput {
   serverId: string;
   actorId: string | null;
-  trigger: "manual" | "scheduled";
+  /**
+   * `archive` is the archive's own snapshot (`services/serverArchive.ts`). It
+   * takes the same path as every other server backup on purpose: one code path
+   * means the archive cannot drift from the thing that is known to work, and the
+   * snapshot it leaves is an ordinary one that an ordinary restore can read.
+   */
+  trigger: BackupTrigger;
 }
 
 /**
@@ -142,6 +181,9 @@ export async function startServerBackup(
       "This server is suspended pending administrator review and cannot be backed up.",
     );
   }
+  // The archive's own snapshot is taken while the row already says `archiving`,
+  // so it exempts itself here rather than being refused by the guard it needs.
+  if (input.trigger !== "archive") assertNotArchived(server);
   if (await hasActiveRun("server", input.serverId)) {
     throw conflict("A backup or restore is already running for this server.");
   }
@@ -236,6 +278,7 @@ export async function startServerRestore(
       "This server is suspended pending administrator review and cannot be restored.",
     );
   }
+  assertNotArchived(server);
   if (source.kind !== "backup" || source.status !== "succeeded" || !source.snapshotId) {
     throw badRequest("Only a completed backup can be restored.");
   }
@@ -305,6 +348,82 @@ export async function startServerRestore(
 }
 
 /**
+ * Restore a snapshot by id, with no source run and no stop.
+ *
+ * This is how an *unarchive* gets its files back (`services/serverArchive.ts`),
+ * and the two differences from {@link startServerRestore} are both consequences
+ * of the archived server having nothing on its node:
+ *
+ *   - **No server to stop.** There is no container yet. The archive flow rebuilds
+ *     it after the files land, so this restore writes into a data directory the
+ *     agent creates for it.
+ *   - **A snapshot id, not a run id.** The run row that recorded the archive can
+ *     be deleted -- by an operator, or by the failed-run trim -- while the
+ *     snapshot it named lives on. `servers.archive_snapshot_id` is the durable
+ *     pointer for exactly that reason (migration 027), so this takes what that
+ *     column holds rather than requiring a row to still exist beside it.
+ *
+ * It deliberately does **not** re-check the archive guards. Its only caller has
+ * already put the row in `restoring`, which is the state those guards refuse,
+ * and the check that matters here -- that this snapshot belongs to this server's
+ * repository -- is structural: the repository is built from the server id, so a
+ * snapshot from another server simply is not in it.
+ */
+export async function startArchiveRestore(input: {
+  serverId: string;
+  snapshotId: string;
+  actorId: string | null;
+}): Promise<BackupRunView> {
+  const server = await loadServer(input.serverId);
+  const settings = await getBackupSettings();
+  const repo = await buildRepoTarget("server", input.serverId, settings);
+
+  if (await hasActiveRun("server", input.serverId)) {
+    throw conflict("A backup or restore is already running for this server.");
+  }
+
+  const run = await createRun({
+    scope: "server",
+    serverId: input.serverId,
+    nodeId: server.nodeId,
+    kind: "restore",
+    trigger: "archive",
+    requestedBy: input.actorId,
+    snapshotId: input.snapshotId,
+  });
+
+  await appendLog(
+    run.id,
+    0,
+    "info",
+    "Restoring the archived copy of this server's files from S3. Its container " +
+      "is rebuilt once the files are back on the node.",
+  );
+
+  try {
+    const { jobId } = await startNodeServerRestore(server.nodeId, input.serverId, {
+      repo,
+      snapshotId: input.snapshotId,
+    });
+    await markRunAccepted(run.id, jobId, 0);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await failRun(run.id, `The node did not accept the restore: ${message}`);
+    throw error;
+  }
+
+  await recordAudit({
+    userId: input.actorId,
+    action: "server.unarchive.restore",
+    targetType: "server",
+    targetId: input.serverId,
+    metadata: { runId: run.id, snapshotId: input.snapshotId },
+  });
+
+  return getServerBackup(input.serverId, run.id);
+}
+
+/**
  * Bring a server back up after a restore, on request.
  *
  * Separate from the restore so the owner decides when players reconnect, and so
@@ -346,6 +465,19 @@ export async function deleteServerBackup(
 
   if (run.status === "pending" || run.status === "running") {
     throw conflict("This backup is still running. Wait for it to finish before deleting it.");
+  }
+
+  // The one backup that is not a spare copy. While a server is archived this
+  // snapshot *is* the server: its files exist nowhere else, so deleting it is
+  // not "losing a restore point", it is destroying the server with the panel
+  // still showing a row for it. Refused here rather than only hidden in the UI,
+  // because the API is the enforcement point and the mistake is unrecoverable.
+  if (server.archivedAt && run.id === server.archiveRunId) {
+    throw conflict(
+      "This is the archived copy of the server's files, and it is the only copy " +
+        "that exists. Restore the server from its archive first; the snapshot can " +
+        "be deleted once its files are back on the node.",
+    );
   }
 
   if (run.snapshotId) {
@@ -432,7 +564,12 @@ export async function listServersDueForBackup(): Promise<
     SELECT s.id, s.name, s.node_id
     FROM servers s
     WHERE s.backups_enabled = TRUE
-      AND s.status NOT IN ('suspended', 'installing', 'error')
+      AND s.status NOT IN (
+        'suspended', 'installing', 'error',
+        -- Archived servers have no files on their node; archiving and restoring
+        -- ones are already running a backup or a restore of their own.
+        'archiving', 'archived', 'restoring'
+      )
       AND NOT EXISTS (
         SELECT 1 FROM backup_runs b
         WHERE b.scope = 'server' AND b.server_id = s.id

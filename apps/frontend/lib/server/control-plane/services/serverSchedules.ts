@@ -624,6 +624,9 @@ export interface DueSchedule {
  *     not be a way to keep working on a server an administrator has frozen.
  *   - `creating` / `installing` / `deleting`: mid-transition, with nothing
  *     stable to act on.
+ *   - `archiving` / `archived` / `restoring`: the files are in S3 or on their way
+ *     there, so there is no container to power, no disk to back up and no console
+ *     to write to. Every task kind would fail against the node.
  *
  * `error` is deliberately *not* excluded, unlike the backup sweep: a server that
  * failed a start is exactly the one whose nightly `power.start` schedule should
@@ -639,7 +642,12 @@ export async function listCandidateSchedules(): Promise<DueSchedule[]> {
     FROM server_schedules sc
     JOIN servers s ON s.id = sc.server_id
     WHERE sc.enabled = TRUE
-      AND s.status NOT IN ('suspended', 'creating', 'installing', 'deleting')
+      AND s.status NOT IN (
+        'suspended', 'creating', 'installing', 'deleting',
+        -- An archived server has no container and no files: every task kind a
+        -- schedule can run (power, backup, console) would fail against the node.
+        'archiving', 'archived', 'restoring'
+      )
       AND NOT EXISTS (
         SELECT 1 FROM server_schedule_runs r
         WHERE r.schedule_id = sc.id AND r.status = 'running'
@@ -950,8 +958,8 @@ export async function runScheduleNow(
       throw conflict("This schedule is already running.");
     }
     throw conflict(
-      "This schedule cannot run right now: the server is suspended, being created, " +
-        "installing, or being deleted.",
+      "This schedule cannot run right now: the server is suspended, archived, or " +
+        "being created, installed, deleted, archived or restored.",
     );
   }
 

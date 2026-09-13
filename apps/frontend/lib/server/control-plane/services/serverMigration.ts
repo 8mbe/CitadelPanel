@@ -72,7 +72,7 @@ import {
 import { rewireServerLinks } from "./serverLinks";
 import { getBackupSettings } from "./settings";
 import { getServerBackup, startServerBackup } from "./serverBackups";
-import { runBackupTick } from "../nodes/backupScheduler";
+import { reconcileBackupRuns } from "../nodes/backupScheduler";
 import { recordAudit } from "./auditLog";
 import {
   changedPorts,
@@ -1181,7 +1181,10 @@ async function takeSafetyBackup(
   for (;;) {
     // The backup scheduler's own tick is what advances a run; forcing one keeps
     // the wait to the backup's real duration rather than the tick interval.
-    await runBackupTick().catch(() => undefined);
+    // Reconcile only: a full tick would also evaluate both cron schedules and
+    // sweep for idle servers to archive, on every poll of a wait that can last
+    // an hour.
+    await reconcileBackupRuns().catch(() => undefined);
     const current = await getServerBackup(serverId, run.id);
 
     if (current.status === "succeeded") {

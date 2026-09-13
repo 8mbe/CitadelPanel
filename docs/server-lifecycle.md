@@ -10,7 +10,8 @@ the whole thing away and starts again.
 
 `servers.status` is what the panel last observed or intended
 (`creating`, `installing`, `stopped`, `starting`, `running`, `stopping`,
-`suspended`, `error`, `deleting`, `migrating`). It is written before the node is
+`suspended`, `error`, `deleting`, `migrating`, `archiving`, `archived`,
+`restoring`). It is written before the node is
 asked to do anything and corrected after. That is the ordering principle in
 `services/serverManager.ts`: a DB row with no container is recoverable, a
 container with no DB row is an orphan nobody can see.
@@ -22,7 +23,11 @@ it back onto the stored status. Suspended servers are never reconciled away;
 that state is an administrative decision, not an observation of the node. Nor
 are `migrating` ones, for a sharper version of the same reason: the row still
 names the *source* node, which is honestly reporting a container the migration
-stopped on purpose (see [server-migration.md](server-migration.md)).
+stopped on purpose (see [server-migration.md](server-migration.md)). Nor are the
+three the archive owns, where believing the node is the most expensive of all: an
+archived server has no container, so the node says `missing`, which means `error`,
+and the next power action would "repair" that by building a container over an
+empty disk (see [archive.md](archive.md)).
 
 ### Something has to go and look
 

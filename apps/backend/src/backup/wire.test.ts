@@ -212,7 +212,10 @@ describe("parseReason", () => {
   });
 
   test("rejects an arbitrary tag rather than forwarding it into restic", () => {
-    expect(() => parseReason({ reason: "whatever" })).toThrow(/"manual" or "scheduled"/);
+    expect(parseReason({ reason: "archive" })).toBe("archive");
+    expect(() => parseReason({ reason: "whatever" })).toThrow(
+      /"manual", "scheduled" or "archive"/,
+    );
   });
 });
 

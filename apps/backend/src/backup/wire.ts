@@ -166,8 +166,12 @@ export function parseExclude(body: Record<string, unknown>): string[] {
 /** Parse the trigger tag. Anything unrecognised is rejected rather than passed through. */
 export function parseReason(body: Record<string, unknown>): string {
   const reason = body.reason === undefined ? "manual" : str(body, "reason", { max: 32 });
-  if (reason !== "manual" && reason !== "scheduled") {
-    throw badRequest('"reason" must be "manual" or "scheduled".');
+  // Becomes a `reason:` tag on the snapshot, so an operator listing the bucket
+  // can tell the three apart. `archive` matters most of the three: that snapshot
+  // is not a spare copy of a server, it *is* the server, and its files exist
+  // nowhere else. See the panel's `docs/archive.md`.
+  if (reason !== "manual" && reason !== "scheduled" && reason !== "archive") {
+    throw badRequest('"reason" must be "manual", "scheduled" or "archive".');
   }
   return reason;
 }

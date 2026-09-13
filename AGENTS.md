@@ -158,6 +158,15 @@ Existing docs:
   rows move only in the cutover transaction, why the transfer streams through
   the panel rather than node-to-node, the `migrating` status nothing reconciles,
   and the one server that cannot be migrated yet.
+- `docs/archive.md`: taking an idle server's files off its node and leaving them
+  only in S3. Why archiving is a third answer beside stop and delete rather than a
+  variant of either (it frees the disk and keeps the identity), the durable commit
+  point that makes an interrupted archive recoverable without ever deleting
+  something that is not already uploaded, why the three archive statuses outrank
+  what the node reports and what "repairing" an archived server would destroy, why
+  the archive's snapshot is the one nothing may prune or delete, the idle clock
+  (`last_active_at`) the automatic sweep measures and why neither existing column
+  could be it, and the two things archiving deliberately does not free.
 - `docs/node-hardening.md`: keeping a compromised server from becoming a
   compromised node. The per-container controls (`hardening.ts`), user-namespace
   remapping and the uid-offset bookkeeping it forces on every agent write, the

@@ -1,5 +1,5 @@
 /**
- * The backup scheduler: one timer, two jobs.
+ * The backup scheduler: one timer, three jobs.
  *
  *   1. **Reconcile.** Poll every in-flight run's agent job, drain its new log lines
  *      into Postgres, and record its outcome. The agent cannot call in. It has no
@@ -9,16 +9,22 @@
  *   2. **Fire.** Evaluate the operator's two cron expressions and start the runs
  *      that are due: server file backups, and node database backups.
  *
+ *   3. **Sweep idle servers.** Archive anything the auto-archive policy says has
+ *      been stopped for too long (`services/serverArchive.ts`). Not a cron, but a
+ *      continuous "is it older than N days?" question, so it is evaluated every
+ *      tick rather than at a time of day.
+ *
  * Reconciliation is what makes the whole feature durable. The agent's job state is
  * in memory; the panel's row is on disk. Every tick moves information from the
  * former to the latter, so the worst an agent restart costs is the progress
  * percentage of one run. A job that has disappeared becomes a failed run with that
  * stated as the reason, rather than a row stuck at "running" forever.
  *
- * One timer rather than three because they must not race: firing a new backup for a
+ * One timer rather than four because they must not race: firing a new backup for a
  * subject whose previous run has not been reconciled yet would start a second restic
- * against one repository. Doing everything in sequence on one tick makes that
- * impossible without a lock.
+ * against one repository, and an archive is a backup as far as the node is
+ * concerned. Doing everything in sequence on one tick makes that impossible
+ * without a lock.
  */
 
 import {
@@ -190,7 +196,16 @@ async function reconcileOne(run: ActiveRun): Promise<void> {
   await trimFailedRuns(run.scope, subjectId);
 }
 
-/** Poll every in-flight run. One run's failure must not stop the others. */
+/**
+ * Poll every in-flight run. One run's failure must not stop the others.
+ *
+ * Exported as {@link reconcileBackupRuns} for the callers that are *waiting* on
+ * one specific run (`serverArchive`, `serverMigration`). They poll every few
+ * seconds for as long as a transfer takes, and firing the schedules on every one
+ * of those polls would re-evaluate two cron expressions and sweep the fleet for
+ * idle servers a thousand times an hour to no purpose. Advancing the runs is the
+ * whole of what a waiter needs.
+ */
 async function reconcileAll(): Promise<number> {
   const active = await listActiveRuns();
 
@@ -307,6 +322,24 @@ async function fireScheduled(): Promise<number> {
     started += await fireDatabaseBackups(minuteStart);
   }
 
+  // Not cron-driven: "has this been stopped for thirteen days?" is true or false
+  // continuously, so it is asked on every tick. The policy's own concurrency cap
+  // is what keeps that from mattering -- a fleet with fifty idle servers drains
+  // one per tick, not fifty at once.
+  //
+  // Imported here rather than at the top of the file to break an import cycle:
+  // `serverArchive` waits on its transfers by driving `runBackupTick` from this
+  // module, exactly as `serverMigration` does for its safety backup. A static
+  // import in the other direction would close the loop.
+  try {
+    const { runIdleArchiveSweep } = await import("../services/serverArchive");
+    started += await runIdleArchiveSweep(settings.archive);
+  } catch (error) {
+    // The sweep already swallows per-server failures; reaching here means the
+    // query or the settings read failed, which must not stop the reconcile.
+    console.error("[backups] the idle archive sweep failed:", error);
+  }
+
   if (started > 0) {
     console.log(`[backups] schedule fired: started ${started} run(s)`);
   }
@@ -382,6 +415,15 @@ export function stopBackupScheduler(): void {
   clearInterval(holder[TIMER_KEY]!);
   holder[TIMER_KEY] = null;
   console.log("[backups] scheduler stopped");
+}
+
+/**
+ * Advance every in-flight run, without evaluating any schedule.
+ *
+ * What a caller blocked on one transfer should use; see {@link reconcileAll}.
+ */
+export async function reconcileBackupRuns(): Promise<number> {
+  return reconcileAll();
 }
 
 /**

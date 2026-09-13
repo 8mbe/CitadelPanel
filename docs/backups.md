@@ -11,8 +11,11 @@ Both run asynchronously on the node, report live progress, keep a durable log, a
 can be driven by an admin-configured cron schedule. Both go to the same
 S3-compatible bucket, in separate encrypted restic repositories.
 
-Related: `scheduler.md` (the per-server schedule an owner can point at a file
-backup, which is a different thing from the admin backup cron below),
+Related: `archive.md` (taking an idle server's files *off* its node and leaving
+them only in the bucket, which is built on the server backup below and is why one
+snapshot in a repository is not a spare copy), `scheduler.md` (the per-server
+schedule an owner can point at a file backup, which is a different thing from the
+admin backup cron below),
 `database-explorer.md` (where per-database credentials come from),
 `subusers.md` (the `backups` flag), `ports.md` and `server-links.md` (the other
 per-server owner surfaces), `first-time-setup.md` (backups are configured after
@@ -485,6 +488,11 @@ its own initiative.
 
 ## Deletion
 
+One snapshot per repository is exempt: the one a server was **archived** into.
+While a server is archived that snapshot is not a restore point, it is the only
+place the server's files exist, so `deleteServerBackup` refuses it until the
+server has been restored. See [archive.md](archive.md).
+
 Snapshot first (`forget --prune`), then the panel row. The other order would orphan the
 snapshot on a prune failure, paid for forever with nothing in the UI referencing it. A
 snapshot the agent reports as already gone counts as success, so a retried delete
@@ -497,6 +505,7 @@ completes.
 | List, status, logs, take a **server** backup | `backups` |
 | Include/exclude a server from the schedule | `settings` (a property of the server, like its env) |
 | Restore or delete a **server** backup, list its repository snapshots | Owner or admin |
+| Archive a server, or restore it from its archive ([archive.md](archive.md)) | Owner or admin |
 | Everything about **database** backups | Admin |
 | Configure destinations, schedules, limits, storage | Admin |
 

@@ -81,7 +81,25 @@ export type ServerStatus =
    * migration the source node honestly reports the container as exited, and
    * believing it would rewrite the row to `stopped` mid-move.
    */
-  | "migrating";
+  | "migrating"
+  /**
+   * The archive is in progress: a snapshot is being taken, and once it is proved
+   * the container and the data directory are removed from the node
+   * (`services/serverArchive.ts`).
+   */
+  | "archiving"
+  /**
+   * Settled, and the one status here that is not transitional: the server's files
+   * are in S3 and nowhere else. Like `suspended` it is a state the panel *holds*
+   * rather than observes, and nothing may reconcile it away -- a node with no
+   * container for this server looks exactly like one that lost a container to a
+   * `docker rm`, and {@link healMissingContainer} repairing the second by
+   * rebuilding around a data directory would, on the first, build a container
+   * over an empty disk and report it as fixed.
+   */
+  | "archived"
+  /** Coming back: the container is rebuilt and the snapshot restored onto it. */
+  | "restoring";
 
 interface ServerRow {
   id: string;
@@ -116,6 +134,16 @@ interface ServerRow {
   start_failure_log?: string;
   /** When the failed start was observed. Null when there is no failure. */
   start_failed_at?: Date | null;
+  /** When the archive completed. Null unless the server is archived. */
+  archived_at?: Date | null;
+  /** The restic snapshot holding an archived server's files. */
+  archive_snapshot_id?: string | null;
+  /** What asked for the archive: an owner/admin, or the idle sweep. */
+  archive_trigger?: "manual" | "idle" | null;
+  /** Why the last archive or unarchive did not complete. */
+  archive_error?: string | null;
+  /** Time of the last status change; the idle clock auto-archiving reads. */
+  last_active_at?: Date | null;
 }
 
 export interface ServerSummary {
@@ -152,6 +180,24 @@ export interface ServerSummary {
    * `services/startWatchdog.ts`.
    */
   startFailure: { reason: string; at: Date } | null;
+  /**
+   * Where an archived server's files are, or null when it is not archived.
+   *
+   * Rides every server read including list pages, because the dashboard has to
+   * be able to tell an archived server from a stopped one without a second
+   * request: they are equally idle and only one of them will start.
+   */
+  archive: {
+    archivedAt: Date;
+    snapshotId: string | null;
+    trigger: "manual" | "idle";
+  } | null;
+  /**
+   * Why the last archive or unarchive failed, or null. Kept separate from
+   * {@link archive} because a failed unarchive leaves the server archived and
+   * the explanation has to outlive the attempt.
+   */
+  archiveError: string | null;
   /**
    * Plugin/mod support resolved against the server's env, when the blueprint
    * declares it: what the tab is called and which provider serves it. Only
@@ -251,6 +297,17 @@ function toSummaryFromRow(
       row.start_failed_at && row.start_failure_reason
         ? { reason: row.start_failure_reason, at: row.start_failed_at }
         : null,
+    // `archived_at` is the flag as well as the timestamp: it is written and
+    // cleared in the same statements as the status, so one null check answers
+    // "is this archived?" without a second read.
+    archive: row.archived_at
+      ? {
+          archivedAt: row.archived_at,
+          snapshotId: row.archive_snapshot_id ?? null,
+          trigger: row.archive_trigger ?? "manual",
+        }
+      : null,
+    archiveError: row.archive_error ?? null,
   };
 }
 
@@ -409,12 +466,36 @@ export async function getServer(serverId: string): Promise<ServerSummary> {
   return { ...summary, pluginSupport };
 }
 
+/**
+ * Write the server's status, and stamp the idle clock when it actually moves.
+ *
+ * `last_active_at` is what auto-archiving measures (see `services/serverArchive.ts`
+ * and migration 027). It has to be the time of the last *status change*
+ * specifically, which is why it is bumped here and not in the dozen other places
+ * that touch `updated_at`:
+ *
+ *   - bumping it on every write, including the no-op ones, would let the status
+ *     sweeper's re-assertions keep a long-dead server looking freshly active;
+ *   - bumping it on `updated_at`'s schedule instead would mean an env edit or a
+ *     plugin install resets the idle clock, and a fleet whose owners tweak
+ *     settings would never auto-archive at all.
+ *
+ * The `IS DISTINCT FROM` guard is what makes it "changed", and it brackets an
+ * idle period from both ends: the transition into `stopped` starts the clock,
+ * whether the owner pressed Stop or the sweeper noticed a crash.
+ */
 export async function setStatus(
   serverId: string,
   status: ServerStatus,
 ): Promise<void> {
   await sql`
-    UPDATE servers SET status = ${status}, updated_at = now() WHERE id = ${serverId}
+    UPDATE servers
+    SET status = ${status},
+        last_active_at = CASE
+          WHEN status IS DISTINCT FROM ${status} THEN now() ELSE last_active_at
+        END,
+        updated_at = now()
+    WHERE id = ${serverId}
   `;
 }
 
@@ -588,6 +669,17 @@ function deriveJvmMemory(memoryLimitMb: number): string {
  */
 export function isProvisioning(status: ServerStatus): boolean {
   return status === "creating" || status === "installing";
+}
+
+/**
+ * The statuses the archive owns.
+ *
+ * Grouped because every consumer treats them alike: none may be reconciled from
+ * the node, none may be swept, and none is a server anybody can operate. See
+ * `services/serverArchive.ts`.
+ */
+export function isArchiveStatus(status: ServerStatus): boolean {
+  return status === "archiving" || status === "archived" || status === "restoring";
 }
 
 /**
@@ -1132,6 +1224,37 @@ function assertNotMigrating(server: ServerRow): void {
 }
 
 
+/**
+ * An archived server has no container and no files on its node.
+ *
+ * Every lifecycle call would therefore fail somewhere less legible: a power
+ * action on a 404 from the node, and worse, `withMissingContainerRecovery` would
+ * read that 404 as drift and rebuild a container over an empty data directory,
+ * handing the owner a server that starts and has lost their world. Refusing here
+ * is what keeps "the files are in S3" from being mistaken for "the container went
+ * missing".
+ */
+function assertNotArchived(server: ServerRow): void {
+  if (server.status === "archived") {
+    throw conflict(
+      "This server is archived. Its files are stored in S3 and nothing is running " +
+        "on its node. Restore it from the archive before using it again.",
+    );
+  }
+  if (server.status === "archiving") {
+    throw conflict(
+      "This server is being archived. Wait for that to finish before doing " +
+        "anything else with it.",
+    );
+  }
+  if (server.status === "restoring") {
+    throw conflict(
+      "This server is being restored from its archive. Wait for that to finish " +
+        "before doing anything else with it.",
+    );
+  }
+}
+
 /** A suspended server must not be startable by its owner. */
 function assertNotSuspended(server: ServerRow): void {
   if (server.status === "suspended") {
@@ -1226,6 +1349,7 @@ export async function startServer(
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
   assertNotMigrating(server);
+  assertNotArchived(server);
   assertNotSuspended(server);
   assertHasContainer(server);
 
@@ -1266,6 +1390,7 @@ export async function stopServer(
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
   assertNotMigrating(server);
+  assertNotArchived(server);
   assertHasContainer(server);
 
   // A deliberate stop must not look like a crash: the watchdog's only signal is
@@ -1309,6 +1434,7 @@ export async function killServer(
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
   assertNotMigrating(server);
+  assertNotArchived(server);
   assertHasContainer(server);
 
   // Same as a stop: this is a deliberate end, not a failed start.
@@ -1341,6 +1467,7 @@ export async function restartServer(
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
   assertNotMigrating(server);
+  assertNotArchived(server);
   assertNotSuspended(server);
   assertHasContainer(server);
 
@@ -1387,6 +1514,7 @@ export async function suspendServer(
 ): Promise<void> {
   const server = await loadServerRow(serverId);
   assertNotMigrating(server);
+  assertNotArchived(server);
 
   // An enforcement stop, not a crash.
   cancelStartWatch(serverId);
@@ -1425,6 +1553,7 @@ export async function unsuspendServer(
 ): Promise<void> {
   const server = await loadServerRow(serverId);
   assertNotMigrating(server);
+  assertNotArchived(server);
   if (server.status !== "suspended") {
     throw conflict("Server is not suspended");
   }
@@ -1600,6 +1729,12 @@ export async function deleteServer(
  */
 async function reconcileRowStatus(server: ServerRow): Promise<ServerStatus> {
   if (server.status === "suspended") return "suspended";
+  // The archive statuses are held by the panel, not observed on the node, and
+  // the node's honest answer during each of them is misleading: a container that
+  // is about to be removed still reports as exited, and an archived server has no
+  // container at all. `archiving` is the one with a container to ask about, so it
+  // is the one that has to be named here rather than caught by the guard below.
+  if (isArchiveStatus(server.status)) return server.status;
   if (!server.container_id) return server.status;
 
   const state = await getServerState(server.node_id, server.id);
@@ -1678,6 +1813,7 @@ export async function reinstallServer(
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
   assertNotMigrating(server);
+  assertNotArchived(server);
 
   if (server.status === "suspended") {
     throw conflict(
@@ -1973,7 +2109,7 @@ export async function buildServerContainerOn(
  * container is removed). One that never had a container (still `creating`/error
  * during provisioning) is treated as a plain create rather than a recreate.
  */
-async function recreateServerContainer(serverId: string): Promise<void> {
+export async function recreateServerContainer(serverId: string): Promise<void> {
   const server = await loadServerRow(serverId);
   const blueprintKey = await getBlueprintKeyById(server.blueprint_id);
   if (!blueprintKey) throw badRequest("Server blueprint is not available");
@@ -2136,6 +2272,7 @@ export async function addServerPort(
 ): Promise<ServerSummary> {
   const server = await loadServerRow(input.serverId);
   assertNotMigrating(server);
+  assertNotArchived(server);
 
   const label =
     input.label !== undefined && input.label !== null
@@ -2395,6 +2532,7 @@ export async function addServerDatabase(
 ): Promise<ServerDatabaseSummary> {
   const server = await loadServerRow(input.serverId);
   assertNotMigrating(server);
+  assertNotArchived(server);
 
   // Enforce the per-server database limit before generating anything.
   const limits = await getServerLimits();

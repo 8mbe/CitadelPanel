@@ -91,6 +91,25 @@ export function reconcileStatus(
   // `failInterruptedMigrations` is what releases it if that process dies.
   if (stored === "migrating") return "migrating";
 
+  // The three the archive owns, for the same reason once more, and this is the
+  // set where believing the node does the most damage:
+  //
+  // - `archived` means the files are in S3 and the node holds nothing. The node
+  //   therefore reports `missing`, which maps to `error` -- so a reconcile that
+  //   trusted it would turn every archived server into a broken one, and
+  //   `healMissingContainer` would then "repair" it by building a container over
+  //   an empty disk and handing the owner a server with no world.
+  // - `archiving` still has a container, which the archive has just stopped on
+  //   purpose so the snapshot is of a world nobody is writing to. Exactly the
+  //   migration's problem.
+  // - `restoring` has no container until the files are back, then a fresh one.
+  //
+  // `services/serverArchive.ts` is the only thing that moves these, and
+  // `recoverInterruptedArchives` is what releases them if that process dies.
+  if (stored === "archiving" || stored === "archived" || stored === "restoring") {
+    return stored;
+  }
+
   const observed = statusFromContainerState(state);
 
   if (

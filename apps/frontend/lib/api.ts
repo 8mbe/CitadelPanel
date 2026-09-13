@@ -23,6 +23,7 @@ import type {
   BlueprintView,
   PluginSearchResult,
   PluginVersionView,
+  ServerArchiveView,
   ServerInstallLogView,
   ServerPluginList,
   ServerStatus,
@@ -308,6 +309,10 @@ export interface ApiServerSummary {
   suspendedAt: string | null;
   /** Why the last start did not hold. Null when the last start worked. */
   startFailure: { reason: string; at: string } | null;
+  /** Set when the server's files are in S3 rather than on its node. */
+  archive: ServerArchiveView | null;
+  /** Why the last archive or restore-from-archive failed. */
+  archiveError: string | null;
   /** Present on detail responses only: resolved plugin/mod support, if any. */
   pluginSupport?: {
     label: string;
@@ -375,6 +380,8 @@ export function toServerView(summary: ApiServerSummary): ServerView {
     suspensionReason: summary.suspensionReason ?? null,
     suspendedAt: summary.suspendedAt ?? null,
     startFailure: summary.startFailure ?? null,
+    archive: summary.archive ?? null,
+    archiveError: summary.archiveError ?? null,
     pluginSupport: summary.pluginSupport ?? null,
   };
 }
@@ -742,7 +749,12 @@ export async function previewSchedule(
 
 export type BackupKind = "backup" | "restore";
 export type BackupStatus = "pending" | "running" | "succeeded" | "failed";
-export type BackupTrigger = "manual" | "scheduled";
+/**
+ * What asked for a run. `archive` marks the snapshot a server was archived into,
+ * which is not a spare copy but the only place that server's files exist until
+ * it is restored. See docs/archive.md.
+ */
+export type BackupTrigger = "manual" | "scheduled" | "archive";
 
 /**
  * One backup or restore run.
@@ -1731,6 +1743,54 @@ export function reinstallServer(
   return request<{ server: ApiServerSummary }>(`/api/servers/${id}/reinstall`, {
     method: "POST",
     body: JSON.stringify({ confirmName }),
+  }).then((d) => d.server);
+}
+
+// --- Archive ------------------------------------------------------------------
+
+/** What the archive card renders. See `routes/archive.ts`. */
+export interface ServerArchiveState {
+  status: ServerStatus;
+  archive: ServerArchiveView | null;
+  /** Why the last archive or restore failed, or null. */
+  error: string | null;
+  /** The archive's own backup run, for its progress and log. */
+  run: ServerBackup | null;
+  policy: {
+    /** False when no S3 destination is configured; nothing can be archived. */
+    configured: boolean;
+    autoEnabled: boolean;
+    idleDays: number;
+    /** ISO string; null when the idle clock is not running. */
+    idleSince: string | null;
+  };
+}
+
+/** GET /api/servers/:id/archive. Owner or admin. */
+export function getServerArchive(id: string): Promise<ServerArchiveState> {
+  return request<ServerArchiveState>(`/api/servers/${id}/archive`);
+}
+
+/**
+ * POST /api/servers/:id/archive.
+ *
+ * Answers as soon as the server is in `archiving`; the upload and the wipe that
+ * follows it run on the node. The server page's status poll is what follows it
+ * to `archived`.
+ */
+export function archiveServer(id: string): Promise<ApiServerSummary> {
+  return request<{ server: ApiServerSummary }>(`/api/servers/${id}/archive`, {
+    method: "POST",
+  }).then((d) => d.server);
+}
+
+/**
+ * POST /api/servers/:id/unarchive. Same contract in reverse; the server comes
+ * back stopped.
+ */
+export function unarchiveServer(id: string): Promise<ApiServerSummary> {
+  return request<{ server: ApiServerSummary }>(`/api/servers/${id}/unarchive`, {
+    method: "POST",
   }).then((d) => d.server);
 }
 
@@ -3117,6 +3177,7 @@ export interface AdminBackupSettings {
   storage: BackupStorageLimits;
   servers: ServerBackupPolicy;
   databases: DatabaseBackupPolicy;
+  archive: ArchivePolicy;
   usable: boolean;
 }
 
@@ -3139,6 +3200,21 @@ export interface ServerBackupPolicy {
 export interface DatabaseBackupPolicy {
   schedule: string;
   maxPerNode: number;
+}
+
+/**
+ * Automatically archiving idle servers (see docs/archive.md).
+ *
+ * Not a cron: "has this been stopped for N days?" is continuously true or false,
+ * so the sweep evaluates it every tick rather than at a time of day. Inert
+ * without an S3 destination, which is why it lives with the backup settings.
+ */
+export interface ArchivePolicy {
+  enabled: boolean;
+  /** Days a server must have been continuously stopped. */
+  idleDays: number;
+  /** Servers archived per tick, so a large fleet drains rather than stampedes. */
+  concurrency: number;
 }
 
 /**
@@ -3376,6 +3452,7 @@ export interface AdminSettingsUpdate {
     storage?: Partial<BackupStorageLimits>;
     servers?: Partial<ServerBackupPolicy>;
     databases?: Partial<DatabaseBackupPolicy>;
+    archive?: Partial<ArchivePolicy>;
   };
 
   branding?: Partial<BrandingSettings>;

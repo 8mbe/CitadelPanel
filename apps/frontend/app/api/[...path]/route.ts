@@ -124,6 +124,11 @@ import {
   handleStartServerMigration,
 } from "@/lib/server/control-plane/routes/migrations";
 import {
+  handleArchiveServer,
+  handleGetServerArchive,
+  handleUnarchiveServer,
+} from "@/lib/server/control-plane/routes/archive";
+import {
   handleGetNodeDatabase,
   handleSetUpNodeDatabase,
   handleStartNodeDatabase,
@@ -282,6 +287,10 @@ const patterns: Array<{
   { pattern: /^servers\/([^/]+)\/kill$/, methods: { POST: handleKillServer } },
   // Destructive: wipes the data directory and re-runs the blueprint's install.
   { pattern: /^servers\/([^/]+)\/reinstall$/, methods: { POST: handleReinstallServer } },
+  // Archiving (see routes/archive.ts). Owner-or-admin, like reinstall: it takes
+  // the server offline and deletes its files from the node.
+  { pattern: /^servers\/([^/]+)\/archive$/, methods: { GET: handleGetServerArchive, POST: handleArchiveServer } },
+  { pattern: /^servers\/([^/]+)\/unarchive$/, methods: { POST: handleUnarchiveServer } },
   { pattern: /^servers\/([^/]+)\/logs$/, methods: { GET: handleGetServerLogs } },
   // Provisioning output, admin-only (see routes/servers.ts).
   { pattern: /^servers\/([^/]+)\/install-log$/, methods: { GET: handleGetServerInstallLog } },

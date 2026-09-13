@@ -12,6 +12,7 @@ export async function register() {
     { startStatusSweeper },
     { failAbandonedScheduleRuns, startScheduleRunner },
     { failInterruptedMigrations },
+    { recoverInterruptedArchives },
   ] = await Promise.all([
     import("./lib/server/control-plane/blueprints/registry"),
     import("./lib/server/control-plane/security/watcher"),
@@ -20,6 +21,7 @@ export async function register() {
     import("./lib/server/control-plane/services/statusSweeper"),
     import("./lib/server/control-plane/nodes/scheduleRunner"),
     import("./lib/server/control-plane/services/serverMigration"),
+    import("./lib/server/control-plane/services/serverArchive"),
   ]);
 
   await syncBlueprintsToDatabase();
@@ -41,6 +43,13 @@ export async function register() {
   // deliberately does not resume or undo anything on either node, because it
   // cannot know how far the previous process got.
   await failInterruptedMigrations();
+
+  // An archive runs in this process too, and holds its server in `archiving` or
+  // `restoring`, two more statuses nothing else may correct. Unlike a migration
+  // this one can often finish rather than fail: if the previous process got as
+  // far as recording the snapshot, the files are in S3 and only the wipe is
+  // outstanding, so the recovery completes the archive instead of abandoning it.
+  await recoverInterruptedArchives();
 
   // Containers are created with no restart policy, so a node that rebooted
   // brings none of them back and every row on it still claims to be running.

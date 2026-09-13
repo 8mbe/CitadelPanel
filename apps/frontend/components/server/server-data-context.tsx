@@ -3,7 +3,7 @@
 import * as React from "react";
 
 import { getServer, getServerStats } from "@/lib/api";
-import { isProvisioning } from "@/lib/server-status";
+import { isProvisioning, isArchiveTransfer } from "@/lib/server-status";
 import type { ServerStatus, ServerView } from "@/lib/types";
 
 /**
@@ -67,8 +67,14 @@ export function ServerDataProvider({
   // node takes as long as it takes -- and it is polled on the provisioning
   // cadence for the same reason: this poll is what lifts the shell's migrating
   // gate when the move finishes, without anyone reloading.
+  //
+  // `archiving`/`restoring` join the long case for the same reason again: an
+  // upload or a download of a whole world is minutes to hours, and this poll is
+  // what lifts the shell's archive gate when the transfer settles. `archived`
+  // itself is *not* polled -- it is a settled state that only changes when
+  // somebody presses Restore, and that path flips the status itself.
   const recordPollMs =
-    isProvisioning(status) || status === "migrating"
+    isProvisioning(status) || status === "migrating" || isArchiveTransfer(status)
       ? 5000
       : status === "starting" || status === "stopping"
         ? 2000

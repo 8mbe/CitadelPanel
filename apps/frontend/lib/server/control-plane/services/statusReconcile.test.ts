@@ -36,6 +36,26 @@ describe("reconcileStatus", () => {
     expect(reconcileStatus("stopped", "running", FRESH)).toBe("running");
   });
 
+  test("an archived server is never reconciled away by a node with no container", () => {
+    // The failure this prevents is the expensive one: `missing` maps to `error`,
+    // and an archived server written to `error` is one `healMissingContainer`
+    // would then "repair" by building a container over an empty data directory.
+    expect(reconcileStatus("archived", "missing", STALE)).toBe("archived");
+    expect(reconcileStatus("archived", "dead", STALE)).toBe("archived");
+    // The node cannot rescind an archive by finding a container either.
+    expect(reconcileStatus("archived", "running", STALE)).toBe("archived");
+  });
+
+  test("a transfer to or from the archive outranks what the node reports", () => {
+    // `archiving` stops the container on purpose so the snapshot is of a world
+    // nobody is writing to; the node honestly reporting `exited` must not become
+    // `stopped` and take the archive's progress reporting with it.
+    expect(reconcileStatus("archiving", "exited", STALE)).toBe("archiving");
+    expect(reconcileStatus("archiving", "running", STALE)).toBe("archiving");
+    expect(reconcileStatus("restoring", "missing", STALE)).toBe("restoring");
+    expect(reconcileStatus("restoring", "exited", STALE)).toBe("restoring");
+  });
+
   test("suspension is an administrative decision, never an observation", () => {
     expect(reconcileStatus("suspended", "running", FRESH)).toBe("suspended");
     expect(reconcileStatus("suspended", "exited", STALE)).toBe("suspended");
@@ -136,6 +156,22 @@ describe("statusCorrections", () => {
         { id: "migrating", status: "migrating", updatedAt: new Date(NOW - STALE) },
       ],
       { suspended: "running", stopping: "running", migrating: "exited" },
+      NOW,
+    );
+
+    expect(corrections).toEqual([]);
+  });
+
+  // The archive statuses reach a sweep only if the query that excludes them is
+  // ever relaxed, which is precisely when this has to hold.
+  test("archived servers survive a batch sweep that says their container is gone", () => {
+    const corrections = statusCorrections(
+      [
+        settled("archived", "archived"),
+        settled("archiving", "archiving"),
+        settled("restoring", "restoring"),
+      ],
+      { archived: "missing", archiving: "exited", restoring: "missing" },
       NOW,
     );
 

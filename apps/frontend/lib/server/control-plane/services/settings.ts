@@ -1245,6 +1245,7 @@ export interface StoredBackupSettings {
   storage: BackupStorageLimits;
   servers: ServerBackupPolicy;
   databases: DatabaseBackupPolicy;
+  archive: ArchivePolicy;
 }
 
 /**
@@ -1296,6 +1297,41 @@ export interface DatabaseBackupPolicy {
   maxPerNode: number;
 }
 
+/**
+ * Automatically archiving servers nobody is using (see `docs/archive.md`).
+ *
+ * This is a lifecycle policy rather than a backup policy, and it lives in the
+ * backup settings for one reason: it cannot work without them. Archiving moves a
+ * server's files to S3 and deletes them from the node, so a panel with no
+ * destination configured has nowhere to put them, and the sweep is inert rather
+ * than dangerous. Keeping the knob next to the destination is what makes that
+ * dependency visible to the operator setting it.
+ */
+export interface ArchivePolicy {
+  /** Whether idle servers are archived without anyone asking. */
+  enabled: boolean;
+  /**
+   * How many days a server must have been continuously *stopped* before the
+   * sweep archives it.
+   *
+   * Measured from `servers.last_active_at`, which is the time of the server's
+   * last status change, so the clock starts when it actually went down rather
+   * than when it was created or last edited. A running server is never a
+   * candidate whatever this says.
+   */
+  idleDays: number;
+  /**
+   * How many servers the sweep archives per tick.
+   *
+   * The same throttle, for the same reason, as `ServerBackupPolicy.concurrency`:
+   * every archive is a restic container reading a disk and saturating a node's
+   * upstream. One at a time is the right default here rather than two, because
+   * unlike a nightly backup this is not racing a window -- a fleet that takes a
+   * week to drain its idle servers has lost nothing.
+   */
+  concurrency: number;
+}
+
 /** Backup config safe to hand to a browser: no secret key, just "is one stored?". */
 export interface PublicBackupSettings {
   enabled: boolean;
@@ -1309,6 +1345,7 @@ export interface PublicBackupSettings {
   storage: BackupStorageLimits;
   servers: ServerBackupPolicy;
   databases: DatabaseBackupPolicy;
+  archive: ArchivePolicy;
   /** Whether the stored config is complete enough to actually run a backup. */
   usable: boolean;
 }
@@ -1327,6 +1364,21 @@ const DEFAULT_DATABASE_POLICY: DatabaseBackupPolicy = {
   maxPerNode: 5,
 };
 
+/**
+ * Auto-archive is **on** by default at thirteen days.
+ *
+ * It is gated twice over, which is what makes an enabled default defensible: the
+ * sweep does nothing at all until an operator has configured an S3 destination
+ * and switched backups on, and it only ever considers servers that have been
+ * stopped for the whole window. A panel that has never been pointed at a bucket
+ * behaves exactly as it did before this existed.
+ */
+const DEFAULT_ARCHIVE_POLICY: ArchivePolicy = {
+  enabled: true,
+  idleDays: 13,
+  concurrency: 1,
+};
+
 const DEFAULT_BACKUPS: StoredBackupSettings = {
   enabled: false,
   endpoint: null,
@@ -1339,6 +1391,7 @@ const DEFAULT_BACKUPS: StoredBackupSettings = {
   storage: DEFAULT_STORAGE,
   servers: DEFAULT_SERVER_POLICY,
   databases: DEFAULT_DATABASE_POLICY,
+  archive: DEFAULT_ARCHIVE_POLICY,
 };
 
 export async function getBackupSettings(): Promise<StoredBackupSettings> {
@@ -1356,6 +1409,7 @@ export async function getBackupSettings(): Promise<StoredBackupSettings> {
       exclude: Array.isArray(stored.servers?.exclude) ? stored.servers.exclude : [],
     },
     databases: { ...DEFAULT_DATABASE_POLICY, ...(stored.databases ?? {}) },
+    archive: { ...DEFAULT_ARCHIVE_POLICY, ...(stored.archive ?? {}) },
   };
 }
 
@@ -1391,6 +1445,7 @@ export async function getPublicBackupSettings(): Promise<PublicBackupSettings> {
     storage: backups.storage,
     servers: backups.servers,
     databases: backups.databases,
+    archive: backups.archive,
     usable: isBackupConfigUsable(backups),
   };
 }
@@ -1415,6 +1470,7 @@ export interface BackupSettingsUpdate {
   storage?: Partial<BackupStorageLimits>;
   servers?: Partial<ServerBackupPolicy>;
   databases?: Partial<DatabaseBackupPolicy>;
+  archive?: Partial<ArchivePolicy>;
 }
 
 /**
@@ -1454,6 +1510,7 @@ export async function setBackupSettings(
     storage: { ...current.storage, ...(update.storage ?? {}) },
     servers: { ...current.servers, ...(update.servers ?? {}) },
     databases: { ...current.databases, ...(update.databases ?? {}) },
+    archive: { ...current.archive, ...(update.archive ?? {}) },
   };
 
   if (next.enabled && !isBackupConfigUsable(next)) {

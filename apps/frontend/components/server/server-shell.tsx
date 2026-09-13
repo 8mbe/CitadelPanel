@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Loader2, Lock, OctagonPause, Truck } from "lucide-react";
+import { Archive, Loader2, Lock, OctagonPause, Truck } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { ArchiveServerCard } from "@/components/server/archive-server-card";
 import { ServerHeader } from "@/components/server/server-header";
 import { useServerData } from "@/components/server/server-data-context";
 import {
@@ -22,12 +23,12 @@ import {
 } from "@/components/server/server-tabs";
 import { formatRelative } from "@/lib/format";
 import { sectionAllowed } from "@/lib/permissions";
-import { isProvisioning } from "@/lib/server-status";
+import { isArchiveStatus, isProvisioning } from "@/lib/server-status";
 import type { ServerView } from "@/lib/types";
 
 /**
- * The server page's shell: header, tabs, section guard, and the two full-page
- * lockouts (suspended, installing).
+ * The server page's shell: header, tabs, section guard, and the full-page
+ * lockouts (suspended, installing, migrating, archived).
  *
  * A client component because everything it gates on moves while the page is
  * open. The data provider's status poll is what notices a suspension lift or
@@ -77,6 +78,22 @@ export function ServerShell({ children }: { children: React.ReactNode }) {
   // the migration and who has to watch it.
   if (status === "migrating" && !isAdmin) {
     return <MigratingNotice server={server} />;
+  }
+
+  // And once more for a server whose files are in S3. This one is not a
+  // lockout in the same sense as the others: the owner is not being kept out of
+  // something, there is genuinely nothing there. No container, no data
+  // directory, so the console has nothing to attach to, the file manager has no
+  // files to list, and the database explorer would be the one tab that still
+  // worked, which is the most confusing outcome of all.
+  //
+  // Unlike the other three this replaces the shell for admins as well. The
+  // exemptions above exist because an admin has a job to do on the page (read
+  // the install log, watch the migration); on an archived server there is
+  // nothing on the node for anybody to inspect, and the one action that matters
+  // is on this screen.
+  if (isArchiveStatus(status)) {
+    return <ArchivedNotice server={server} status={status} />;
   }
 
   return (
@@ -295,5 +312,82 @@ function SuspendedBanner({ server }: { server: ServerView }) {
         )}
       </AlertDescription>
     </Alert>
+  );
+}
+
+/**
+ * Full-page notice for a server that is archived, or on its way to or from the
+ * archive.
+ *
+ * It renders the archive card itself rather than linking to Settings, because
+ * this screen *replaces* Settings along with every other section: a link to the
+ * page the restore button lives on would be a link back to this one. So the card
+ * is the action here, in its restore mode, and the alert above it is the
+ * explanation. The same component owns both directions, which is what keeps the
+ * two halves of the feature describing each other consistently, and it is why
+ * this screen does not repeat what the card already says about when and why the
+ * server was archived.
+ */
+function ArchivedNotice({
+  server,
+  status,
+}: {
+  server: ServerView;
+  status: ServerView["status"];
+}) {
+  const transferring = status === "archiving" || status === "restoring";
+
+  return (
+    <div className="mx-auto flex w-full max-w-lg flex-col gap-6 py-16">
+      <Alert>
+        {transferring ? <Loader2 className="animate-spin" /> : <Archive />}
+        <AlertTitle>
+          {status === "archiving"
+            ? "This server is being archived"
+            : status === "restoring"
+              ? "This server is being restored"
+              : "This server is archived"}
+        </AlertTitle>
+        <AlertDescription>
+          <span className="block">
+            {status === "archiving" ? (
+              <>
+                &ldquo;{server.name}&rdquo; is being uploaded to storage. Its
+                files are removed from its node once the upload finishes. It
+                keeps its address and everything the panel knows about it, and
+                you can restore it whenever you want.
+              </>
+            ) : status === "restoring" ? (
+              <>
+                &ldquo;{server.name}&rdquo; is being copied back onto its node.
+                It will come back stopped, so you can check it over before
+                players reconnect.
+              </>
+            ) : (
+              <>
+                &ldquo;{server.name}&rdquo; has been archived. Its files are kept
+                in storage rather than on its node, so nothing here is running.
+                Restoring it puts everything back on the same node, on the same
+                ports.
+              </>
+            )}
+          </span>
+        </AlertDescription>
+      </Alert>
+
+      {/* The restore button, and the progress line while a transfer runs. It
+          renders nothing for a subuser, which is correct: archiving is owner or
+          admin only, so they get the explanation and no controls. */}
+      <ArchiveServerCard />
+
+      <Button
+        render={<Link href="/" />}
+        nativeButton={false}
+        variant="outline"
+        className="w-fit"
+      >
+        Back to dashboard
+      </Button>
+    </div>
   );
 }
