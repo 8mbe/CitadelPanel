@@ -34,6 +34,7 @@ import type {
 } from "../blueprints/plugins";
 import { badRequest } from "../lib/http";
 import { isBlockedHost } from "../lib/ssrf";
+import { selectPluginVersionFile } from "@/lib/plugin-files";
 import {
   asChannel,
   asGameVersionList,
@@ -342,9 +343,13 @@ function mapVersion(
 export async function engineListVersions(
   support: ResolvedPluginSupport,
   projectId: string,
+  options: { unfiltered?: boolean } = {},
 ): Promise<ProviderVersion[]> {
   const spec = support.provider;
-  const vars = templateVars(spec, support, { projectId });
+  const profile = options.unfiltered
+    ? { ...support, loaders: [], gameVersion: undefined }
+    : support;
+  const vars = templateVars(spec, profile, { projectId });
   const body = await fetchEndpoint(spec, spec.versions.path, spec.versions.query, vars);
   if (body === null) {
     throw badRequest("That plugin does not exist in the catalog.");
@@ -358,9 +363,30 @@ export async function engineListVersions(
     .filter((v): v is ProviderVersion => v !== null);
 }
 
+/** Manual selection alone may fall back to releases outside the profile. */
+export async function engineListInstallVersions(
+  support: ResolvedPluginSupport,
+  projectId: string,
+): Promise<{ versions: ProviderVersion[]; compatibilityFallback: boolean }> {
+  const filtered = await engineListVersions(support, projectId);
+  const versions = filtered.filter((version) =>
+    selectPluginVersionFile(version, support.projectType) !== undefined &&
+    (!support.gameVersion || version.gameVersions.length === 0 ||
+      version.gameVersions.includes(support.gameVersion)) &&
+    (support.loaders.length === 0 || version.loaders.length === 0 ||
+      version.loaders.some((loader) => support.loaders.includes(loader))),
+  );
+  if (versions.length > 0) return { versions, compatibilityFallback: false };
+
+  return {
+    versions: await engineListVersions(support, projectId, { unfiltered: true }),
+    compatibilityFallback: true,
+  };
+}
+
 /**
  * One version by id: via the spec's single-version endpoint when configured,
- * else by scanning the project's version list (still profile-filtered).
+ * else by scanning all project versions so a manual fallback can be installed.
  */
 export async function engineGetVersion(
   support: ResolvedPluginSupport,
@@ -373,7 +399,7 @@ export async function engineGetVersion(
     const body = await fetchEndpoint(spec, spec.version.path, spec.version.query, vars);
     return body === null ? null : mapVersion(spec, spec.version, body);
   }
-  const versions = await engineListVersions(support, projectId);
+  const versions = await engineListVersions(support, projectId, { unfiltered: true });
   return versions.find((v) => v.versionId === versionId) ?? null;
 }
 
@@ -402,11 +428,6 @@ export function assertDownloadUrl(spec: PluginFetchSpec, url: string): URL {
     );
   }
   return parsed;
-}
-
-/** The file a version install should write: the primary, else the first. */
-export function pickVersionFile(version: ProviderVersion): ProviderVersionFile {
-  return version.files.find((file) => file.primary) ?? version.files[0];
 }
 
 /** Facet composition, exported for tests. */

@@ -14,7 +14,7 @@
 
 import { requireServerPermission } from "../auth/middleware";
 import { badRequest, json, noContent, parseJsonBody, requireUuidParam } from "../lib/http";
-import { engineListVersions, engineSearch } from "../plugins/engine";
+import { engineListInstallVersions, engineSearch } from "../plugins/engine";
 import {
   installPlugin,
   listServerPlugins,
@@ -68,9 +68,7 @@ export async function handleListPluginVersions(
   if (!PROJECT_ID.test(projectId)) {
     throw badRequest("Invalid project id.");
   }
-  return json({
-    versions: await engineListVersions(ctx.support, projectId),
-  });
+  return json(await engineListInstallVersions(ctx.support, projectId));
 }
 
 /**

@@ -27,7 +27,6 @@ import {
   engineGetProject,
   engineGetVersion,
   engineListVersions,
-  pickVersionFile,
   providerProjectUrl,
   type ProviderVersion,
 } from "../plugins/engine";
@@ -38,16 +37,11 @@ import {
   renameServerFile,
 } from "../nodes/nodeServerApi";
 import { recordAudit } from "./auditLog";
+import { selectPluginVersionFile } from "@/lib/plugin-files";
 
-/**
- * Only plain `.jar` files, no path separators, no leading dot. A hostile
- * catalog response must not be able to name its way out of the install
- * directory (the agent's path containment is the backstop, this is the fence).
- */
-const JAR_FILENAME = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,120}\.jar$/;
 /** Disabled plugins keep the same file with this suffix, which loaders skip. */
 const DISABLED_SUFFIX = ".disabled";
-const JAR_LIKE = /\.jar(\.disabled)?$/;
+const PLUGIN_FILE_LIKE = /\.(jar|zip)(\.disabled)?$/;
 
 interface PluginRow {
   id: string;
@@ -252,14 +246,9 @@ async function applyVersion(
   version: ProviderVersion,
   installedBy: string | null,
 ): Promise<void> {
-  const file = pickVersionFile(version);
-  if (!file) throw badRequest("That version has no downloadable files.");
+  const file = selectPluginVersionFile(version, ctx.support.projectType);
+  if (!file) throw badRequest("That version has no installable files for this content type.");
   assertDownloadUrl(ctx.support.provider, file.url);
-  if (!JAR_FILENAME.test(file.filename)) {
-    throw badRequest(
-      `The catalog returned an unexpected filename ("${file.filename}").`,
-    );
-  }
 
   const target = `${ctx.support.directory}/${file.filename}`;
   const existing = (await sql`
@@ -564,7 +553,7 @@ export async function listServerPlugins(
     reconciled: files !== null,
     plugins,
     untracked:
-      files === null ? [] : files.filter((n) => JAR_LIKE.test(n) && !claimed.has(n)),
+      files === null ? [] : files.filter((n) => PLUGIN_FILE_LIKE.test(n) && !claimed.has(n)),
   };
 }
 
@@ -600,7 +589,8 @@ export async function autoUpdateServerPlugins(serverId: string): Promise<void> {
         try {
           const versions = await engineListVersions(support, row.project_id);
           const latest =
-            versions.find((v) => v.channel === "release" && v.files.length > 0) ??
+            versions.find((v) => v.channel === "release" &&
+              selectPluginVersionFile(v, support.projectType) !== undefined) ??
             null;
           return { row, latest };
         } catch {

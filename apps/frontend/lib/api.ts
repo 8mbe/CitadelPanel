@@ -22,7 +22,7 @@ import type {
   BlueprintPluginsSpec,
   BlueprintView,
   PluginSearchResult,
-  PluginVersionView,
+  PluginVersionList,
   ServerArchiveView,
   ServerInstallLogView,
   ServerPluginList,
@@ -1635,11 +1635,10 @@ export function searchServerPlugins(
 export async function getServerPluginVersions(
   serverId: string,
   projectId: string,
-): Promise<PluginVersionView[]> {
-  const data = await request<{ versions: PluginVersionView[] }>(
+): Promise<PluginVersionList> {
+  return request<PluginVersionList>(
     `/api/servers/${serverId}/plugins/versions/${encodeURIComponent(projectId)}`,
   );
-  return data.versions;
 }
 
 /**

@@ -81,8 +81,11 @@ code-execution primitives**:
   networks.
 - **Downloads are fenced twice.** Every file URL must be https, exactly match
   a declared `downloadHosts` entry and pass the blocklist before the agent is
-  asked to fetch it; the filename must match a strict `.jar` pattern (no path
-  separators). The agent's `paths.ts` containment is the backstop.
+  asked to fetch it; the filename must match a strict plain-name pattern (no
+  path separators), with `.jar` for plugins/mods and `.zip` for datapacks. File
+  selection prefers a primary file of the tab's content type, so a mixed
+  project cannot put a primary jar into a datapacks directory. The agent's
+  `paths.ts` containment is the backstop.
 - **The source is never hidden.** The blueprint form (and the import review
   step, which is that form) shows a "Network access" callout naming the catalog
   and download hosts before saving; the server's plugins tab footers the same
@@ -130,6 +133,23 @@ the server's version server-side, so a badge on a search row means the
 catalog's *project-level* list disagrees with its own filter, usually a
 mapping bug, as above. The badge stays for providers with no such facet, where
 it is the only compatibility signal.
+
+The manual version picker tries the filtered list first. If it contains no
+installable release matching the tab's content type, loader and concrete game
+version, the panel fetches the project's versions again with loader and game
+version filters removed. The response marks this as `compatibilityFallback`,
+and the dialog warns that compatibility is unconfirmed before listing **all**
+project versions, newest first. Each row shows its loaders, game versions and
+selected filename. Versions with no file for the tab's content type remain
+visible with installation disabled; a game-version or loader mismatch alone
+does not prevent a deliberate manual install.
+
+This is an escape hatch for incomplete catalog metadata, not a claim that an
+unmatched release will work. The panel still resolves the chosen version on
+install and enforces the same project-id, filename and download-host guards.
+For providers without a single-version endpoint, that lookup also uses the
+unfiltered project list so the fallback choice can actually be installed.
+Automatic updates keep using the filtered list and never enter this fallback.
 
 ## Opening the catalog's own page
 

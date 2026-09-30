@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 
 import {
+  AlertTriangle,
   Download,
   ExternalLink,
   History,
@@ -66,6 +67,7 @@ import type {
   PluginVersionView,
   ServerPluginList,
 } from "@/lib/types";
+import { selectPluginVersionFile } from "@/lib/plugin-files";
 
 const compact = new Intl.NumberFormat("en", { notation: "compact" });
 
@@ -92,6 +94,7 @@ function VersionsDialog({
   project,
   installedVersionId,
   gameVersion,
+  projectType,
   open,
   onOpenChange,
   onInstalled,
@@ -100,11 +103,13 @@ function VersionsDialog({
   project: { projectId: string; title: string; projectUrl?: string };
   installedVersionId?: string;
   gameVersion?: string;
+  projectType: ServerPluginList["support"]["projectType"];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onInstalled: () => void;
 }) {
   const [versions, setVersions] = React.useState<PluginVersionView[] | null>(null);
+  const [compatibilityFallback, setCompatibilityFallback] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [installingId, setInstallingId] = React.useState<string | null>(null);
 
@@ -113,10 +118,16 @@ function VersionsDialog({
     let cancelled = false;
     (async () => {
       setVersions(null);
+      setCompatibilityFallback(false);
       setError(null);
       try {
         const list = await getServerPluginVersions(serverId, project.projectId);
-        if (!cancelled) setVersions(list);
+        if (!cancelled) {
+          setVersions([...list.versions].sort((a, b) =>
+            b.datePublished.localeCompare(a.datePublished),
+          ));
+          setCompatibilityFallback(list.compatibilityFallback);
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof ApiError ? err.message : "Failed to load versions.");
@@ -162,6 +173,23 @@ function VersionsDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {versions !== null && error && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        {compatibilityFallback && (
+          <Alert>
+            <AlertTriangle />
+            <AlertTitle>No compatible versions found</AlertTitle>
+            <AlertDescription>
+              No installable versions matched this tab&apos;s content type, loader
+              {gameVersion ? ` and Minecraft ${gameVersion}` : ""}.
+              {" "}Showing all versions of this project. Check the game versions
+              and loaders before choosing one; compatibility is not guaranteed.
+            </AlertDescription>
+          </Alert>
+        )}
         <div className="flex max-h-[24rem] flex-col gap-2 overflow-y-auto">
           {versions === null ? (
             <div className="flex items-center justify-center py-6 text-muted-foreground">
@@ -173,11 +201,11 @@ function VersionsDialog({
             </div>
           ) : versions.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
-              No versions match this server&apos;s loader and game version.
+              This project has no available versions.
             </p>
           ) : (
             versions.map((version) => {
-              const file = version.files.find((f) => f.primary) ?? version.files[0];
+              const file = selectPluginVersionFile(version, projectType);
               const installed = version.versionId === installedVersionId;
               const incompatible =
                 gameVersion !== undefined &&
@@ -189,7 +217,7 @@ function VersionsDialog({
                   className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
                 >
                   <div className="flex min-w-0 flex-col gap-0.5">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate font-mono text-sm">
                         {version.versionNumber}
                       </span>
@@ -201,7 +229,10 @@ function VersionsDialog({
                         </Badge>
                       )}
                     </div>
-                    <span className="truncate text-xs text-muted-foreground">
+                    <span
+                      className="truncate text-xs text-muted-foreground"
+                      title={version.gameVersions.join(", ")}
+                    >
                       {[...version.gameVersions]
                         .sort((a, b) => compareGameVersions(b, a))
                         .slice(0, 3)
@@ -211,12 +242,16 @@ function VersionsDialog({
                         ? ` · ${formatRelative(version.datePublished)}`
                         : ""}
                     </span>
+                    <span className="break-all text-xs text-muted-foreground">
+                      {version.loaders.join(", ") || "Loader not specified"}
+                      {file ? ` · ${file.filename}` : " · No installable file for this tab"}
+                    </span>
                   </div>
                   <Button
                     type="button"
                     size="sm"
                     variant={installed ? "outline" : "default"}
-                    disabled={installingId !== null}
+                    disabled={installingId !== null || !file}
                     onClick={() => install(version)}
                   >
                     {installingId === version.versionId ? (
@@ -529,7 +564,9 @@ export function PluginsTab({ serverId }: { serverId: string }) {
           <CardTitle>{list?.support.label ?? "Plugins"}</CardTitle>
           <CardDescription>
             Search the catalog and install{" "}
-            {list?.support.projectType === "mod" ? "mods" : "plugins"} into{" "}
+            {list?.support.projectType === "datapack"
+              ? "datapacks"
+              : list?.support.projectType === "mod" ? "mods" : "plugins"} into{" "}
             <span className="font-mono">{list?.support.directory ?? "…"}</span>
             {list?.support.gameVersion
               ? ` for Minecraft ${list.support.gameVersion}`
@@ -756,6 +793,7 @@ export function PluginsTab({ serverId }: { serverId: string }) {
           )?.versionId}
           gameVersion={list?.support.gameVersion}
           open={versionPicker !== null}
+          projectType={list?.support.projectType ?? "plugin"}
           onOpenChange={(open) => {
             if (!open) setVersionPicker(null);
           }}
