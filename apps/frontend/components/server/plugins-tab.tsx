@@ -73,6 +73,7 @@ import { selectPluginVersionFile } from "@/lib/plugin-files";
 
 const compact = new Intl.NumberFormat("en", { notation: "compact" });
 const VERSION_PAGE_SIZE = 10;
+const SEARCH_PAGE_SIZE = 10;
 
 function ChannelBadge({ channel }: { channel: string }) {
   if (channel === "beta" || channel === "alpha") {
@@ -434,6 +435,8 @@ export function PluginsTab({ serverId }: { serverId: string }) {
   const [results, setResults] = React.useState<PluginSearchResult[] | null>(null);
   const [searching, setSearching] = React.useState(false);
   const [searchError, setSearchError] = React.useState<string | null>(null);
+  const [searchOffset, setSearchOffset] = React.useState(0);
+  const [searchTotal, setSearchTotal] = React.useState(0);
 
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [versionPicker, setVersionPicker] = React.useState<{
@@ -471,33 +474,52 @@ export function PluginsTab({ serverId }: { serverId: string }) {
     };
   }, [serverId, refreshKey]);
 
-  // Debounced search: 300ms after the last keystroke, matching the combobox
-  // pattern. Empty query clears rather than browsing.
+  // Debounce the first page; later pages fetch immediately. Ignore
+  // replies from a previous query or page after its effect has been cleaned up.
   React.useEffect(() => {
     const text = query.trim();
-    if (text.length < 2) {
-      setResults(null);
-      setSearchError(null);
-      setSearching(false);
-      return;
-    }
-    setSearching(true);
+    if (text.length < 2) return;
+    let cancelled = false;
     const timer = setTimeout(async () => {
+      setSearching(true);
       try {
-        const data = await searchServerPlugins(serverId, text);
-        setResults(data.results);
-        setSearchError(null);
+        const data = await searchServerPlugins(serverId, text, searchOffset);
+        if (!cancelled) {
+          setResults(data.results);
+          setSearchTotal(data.total);
+          setSearchError(null);
+        }
       } catch (err) {
-        setSearchError(
-          err instanceof ApiError ? err.message : "Search failed.",
-        );
-        setResults(null);
+        if (!cancelled) {
+          setSearchError(
+            err instanceof ApiError ? err.message : "Search failed.",
+          );
+          setResults(null);
+        }
       } finally {
-        setSearching(false);
+        if (!cancelled) setSearching(false);
       }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [serverId, query]);
+    }, searchOffset === 0 ? 300 : 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [serverId, query, searchOffset]);
+
+  const changeSearchQuery = (value: string) => {
+    setQuery(value);
+    setSearchOffset(0);
+    setSearchTotal(0);
+    setResults(null);
+    setSearchError(null);
+    setSearching(value.trim().length >= 2);
+  };
+
+  const changeSearchPage = (offset: number) => {
+    setSearchOffset(offset);
+    setSearchError(null);
+    setSearching(true);
+  };
 
   const reload = () => setRefreshKey((k) => k + 1);
 
@@ -628,7 +650,7 @@ export function PluginsTab({ serverId }: { serverId: string }) {
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => changeSearchQuery(e.target.value)}
               placeholder="Search the catalog…"
               className="pl-8"
               aria-label="Search the catalog"
@@ -671,6 +693,45 @@ export function PluginsTab({ serverId }: { serverId: string }) {
                 />
               ))}
             </div>
+          )}
+          {(searchTotal > SEARCH_PAGE_SIZE || searchOffset > 0) && (
+            <nav
+              data-slot="search-pagination"
+              aria-label="Catalog search pages"
+              className="flex items-center justify-between"
+            >
+              <p aria-live="polite" className="text-xs text-muted-foreground">
+                {searching
+                  ? "Loading results…"
+                  : searchError
+                    ? `Page ${searchOffset / SEARCH_PAGE_SIZE + 1}`
+                    : results && results.length > 0
+                      ? `${searchOffset + 1}–${searchOffset + results.length} of ${searchTotal.toLocaleString()} results`
+                      : "0 results"}
+              </p>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Previous search page"
+                  disabled={searching || searchOffset === 0}
+                  onClick={() => changeSearchPage(Math.max(0, searchOffset - SEARCH_PAGE_SIZE))}
+                >
+                  <ChevronLeft />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Next search page"
+                  disabled={searching || searchOffset + SEARCH_PAGE_SIZE >= searchTotal}
+                  onClick={() => changeSearchPage(searchOffset + SEARCH_PAGE_SIZE)}
+                >
+                  <ChevronRight />
+                </Button>
+              </div>
+            </nav>
           )}
         </CardContent>
       </Card>

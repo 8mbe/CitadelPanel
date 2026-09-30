@@ -48,7 +48,10 @@ export async function handleSearchServerPlugins(
 
   const url = new URL(request.url);
   const text = (url.searchParams.get("q") ?? "").trim().slice(0, 100);
-  const offset = Math.max(0, Math.min(Number(url.searchParams.get("offset") ?? 0) || 0, 500));
+  const offset = Number(url.searchParams.get("offset") ?? 0);
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw badRequest("Offset must be a non-negative integer.");
+  }
 
   return json(
     await engineSearch(ctx.support, { text, offset, limit: 10 }),

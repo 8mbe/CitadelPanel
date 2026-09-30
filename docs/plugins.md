@@ -103,6 +103,14 @@ malware, since mods are third-party code by nature.
 
 ## Game-version filtering
 
+Catalog search fetches ten projects per page through the panel's existing
+`offset` parameter and displays the provider's total with previous/next
+controls. Changing the query returns to the first page. Responses from a
+previous query or page are ignored so a slower request cannot replace the
+current results. Offsets are validated as non-negative safe integers rather
+than clamped to 500: clamping made later pages repeat the same results even
+while the provider reported more matches.
+
 Compatibility filtering uses the version the user sets: the profile's
 `gameVersionEnv` (minecraft-java: `VERSION`). A concrete value (`1.21.1`)
 drives the search facet, version-list filtering and auto-update selection, and
