@@ -144,6 +144,12 @@ selected filename. Versions with no file for the tab's content type remain
 visible with installation disabled; a game-version or loader mismatch alone
 does not prevent a deliberate manual install.
 
+Both filtered and fallback results are paged in the dialog, ten versions at a
+time, with a visible range and previous/next controls. Paging uses the fetched
+list locally: provider specs do not require a paginated version endpoint, and
+moving between pages should not repeat catalog requests. Opening a project
+starts on its newest page; changing pages resets the list's scroll position.
+
 This is an escape hatch for incomplete catalog metadata, not a claim that an
 unmatched release will work. The panel still resolves the chosen version on
 install and enforces the same project-id, filename and download-host guards.

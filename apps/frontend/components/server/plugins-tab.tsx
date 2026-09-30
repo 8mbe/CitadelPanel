@@ -5,6 +5,8 @@ import Link from "next/link";
 
 import {
   AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
   Download,
   ExternalLink,
   History,
@@ -70,6 +72,7 @@ import type {
 import { selectPluginVersionFile } from "@/lib/plugin-files";
 
 const compact = new Intl.NumberFormat("en", { notation: "compact" });
+const VERSION_PAGE_SIZE = 10;
 
 function ChannelBadge({ channel }: { channel: string }) {
   if (channel === "beta" || channel === "alpha") {
@@ -112,12 +115,16 @@ function VersionsDialog({
   const [compatibilityFallback, setCompatibilityFallback] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [installingId, setInstallingId] = React.useState<string | null>(null);
+  const [versionPage, setVersionPage] = React.useState(0);
+  const versionListRef = React.useRef<HTMLDivElement>(null);
+  const versionOffset = versionPage * VERSION_PAGE_SIZE;
 
   React.useEffect(() => {
     if (!open) return;
     let cancelled = false;
     (async () => {
       setVersions(null);
+      setVersionPage(0);
       setCompatibilityFallback(false);
       setError(null);
       try {
@@ -151,6 +158,11 @@ function VersionsDialog({
     } finally {
       setInstallingId(null);
     }
+  };
+
+  const changeVersionPage = (page: number) => {
+    setVersionPage(page);
+    versionListRef.current?.scrollTo({ top: 0 });
   };
 
   return (
@@ -190,7 +202,10 @@ function VersionsDialog({
             </AlertDescription>
           </Alert>
         )}
-        <div className="flex max-h-[24rem] flex-col gap-2 overflow-y-auto">
+        <div
+          ref={versionListRef}
+          className="flex max-h-[24rem] flex-col gap-2 overflow-y-auto"
+        >
           {versions === null ? (
             <div className="flex items-center justify-center py-6 text-muted-foreground">
               {error ? (
@@ -204,7 +219,7 @@ function VersionsDialog({
               This project has no available versions.
             </p>
           ) : (
-            versions.map((version) => {
+            versions.slice(versionOffset, versionOffset + VERSION_PAGE_SIZE).map((version) => {
               const file = selectPluginVersionFile(version, projectType);
               const installed = version.versionId === installedVersionId;
               const incompatible =
@@ -266,6 +281,40 @@ function VersionsDialog({
             })
           )}
         </div>
+        {versions !== null && versions.length > VERSION_PAGE_SIZE && (
+          <nav
+            data-slot="version-pagination"
+            aria-label="Version pages"
+            className="flex items-center justify-between"
+          >
+            <p aria-live="polite" className="text-xs text-muted-foreground">
+              {versionOffset + 1}–{Math.min(versionOffset + VERSION_PAGE_SIZE, versions.length)}
+              {" "}of {versions.length.toLocaleString()} versions
+            </p>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                aria-label="Previous version page"
+                disabled={versionPage === 0 || installingId !== null}
+                onClick={() => changeVersionPage(versionPage - 1)}
+              >
+                <ChevronLeft />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                aria-label="Next version page"
+                disabled={versionOffset + VERSION_PAGE_SIZE >= versions.length || installingId !== null}
+                onClick={() => changeVersionPage(versionPage + 1)}
+              >
+                <ChevronRight />
+              </Button>
+            </div>
+          </nav>
+        )}
       </DialogContent>
     </Dialog>
   );
