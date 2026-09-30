@@ -10,9 +10,12 @@ import { describe, expect, test } from "bun:test";
 import {
   parsePluginSupport,
   resolvePluginSupport,
+  resolvePluginTabs,
   type BlueprintPluginSupport,
 } from "./plugins";
 import { MODRINTH_PROVIDER_SPEC } from "@/lib/modrinth-preset";
+import { minecraftJava } from "./definitions/minecraft-java";
+import { HANGAR_PROVIDER_SPEC } from "@/lib/hangar-preset";
 import type { Blueprint, BlueprintEnvField } from "./types";
 
 const envSchema: Record<string, BlueprintEnvField> = {
@@ -120,17 +123,17 @@ describe("resolvePluginSupport", () => {
       default: { directory: "mods", projectType: "mod" },
       provider: MODRINTH_PROVIDER_SPEC as never,
     };
-    expect(
-      resolvePluginSupport(blueprintWith(unlabeled), {}).label,
-    ).toBe("Content");
+    expect(resolvePluginSupport(blueprintWith(unlabeled), {}).label).toBe(
+      "Content",
+    );
 
     const noSectionLabel: BlueprintPluginSupport = {
       default: { directory: "mods", projectType: "mod" },
       provider: MODRINTH_PROVIDER_SPEC as never,
     };
-    expect(
-      resolvePluginSupport(blueprintWith(noSectionLabel), {}).label,
-    ).toBe("Mods");
+    expect(resolvePluginSupport(blueprintWith(noSectionLabel), {}).label).toBe(
+      "Mods",
+    );
   });
 
   test("sentinel game versions don't filter (LATEST is not concrete)", () => {
@@ -170,7 +173,13 @@ describe("parsePluginSupport", () => {
   test("plain-http catalog origins are rejected", () => {
     expect(() =>
       parsePluginSupport(
-        { ...support, provider: { ...MODRINTH_PROVIDER_SPEC, baseUrl: "http://api.modrinth.com" } },
+        {
+          ...support,
+          provider: {
+            ...MODRINTH_PROVIDER_SPEC,
+            baseUrl: "http://api.modrinth.com",
+          },
+        },
         envSchema,
         allowAll,
       ),
@@ -178,9 +187,9 @@ describe("parsePluginSupport", () => {
   });
 
   test("catalog and download hosts must pass the SSRF blocklist", () => {
-    expect(() =>
-      parsePluginSupport(support, envSchema, blockAll),
-    ).toThrow(/not an allowed catalog host/);
+    expect(() => parsePluginSupport(support, envSchema, blockAll)).toThrow(
+      /not an allowed catalog host/,
+    );
 
     expect(() =>
       parsePluginSupport(
@@ -271,7 +280,10 @@ describe("parsePluginSupport", () => {
       parsePluginSupport(
         {
           ...support,
-          provider: { ...MODRINTH_PROVIDER_SPEC, siteUrl: "http://modrinth.com" },
+          provider: {
+            ...MODRINTH_PROVIDER_SPEC,
+            siteUrl: "http://modrinth.com",
+          },
         },
         envSchema,
         allowAll,
@@ -307,7 +319,10 @@ describe("parsePluginSupport", () => {
   });
 
   test("a site without a page path (or the reverse) is rejected", () => {
-    const withoutPath = { ...MODRINTH_PROVIDER_SPEC } as Record<string, unknown>;
+    const withoutPath = { ...MODRINTH_PROVIDER_SPEC } as Record<
+      string,
+      unknown
+    >;
     delete withoutPath.projectPath;
     expect(() =>
       parsePluginSupport(
@@ -317,7 +332,10 @@ describe("parsePluginSupport", () => {
       ),
     ).toThrow(/go together/);
 
-    const withoutSite = { ...MODRINTH_PROVIDER_SPEC } as Record<string, unknown>;
+    const withoutSite = { ...MODRINTH_PROVIDER_SPEC } as Record<
+      string,
+      unknown
+    >;
     delete withoutSite.siteUrl;
     expect(() =>
       parsePluginSupport(
@@ -349,5 +367,177 @@ describe("parsePluginSupport", () => {
         allowAll,
       ),
     ).toThrow(/nothing to resolve/);
+  });
+});
+
+describe("content tabs", () => {
+  const declaration = {
+    tabs: [
+      {
+        id: "plugins",
+        label: "Extensions",
+        envField: "TYPE",
+        variants: support.variants,
+        providers: [MODRINTH_PROVIDER_SPEC, HANGAR_PROVIDER_SPEC],
+      },
+      {
+        id: "datapacks",
+        label: "World packs",
+        default: {
+          directory: "world/datapacks",
+          projectType: "datapack",
+          loaders: ["datapack"],
+          gameVersionEnv: "VERSION",
+        },
+        providers: [MODRINTH_PROVIDER_SPEC],
+      },
+    ],
+  };
+
+  test("Paper resolves independent directories, labels and provider sets", () => {
+    const parsed = parsePluginSupport(declaration, envSchema, () => false);
+    const tabs = resolvePluginTabs(blueprintWith(parsed), {
+      TYPE: "PAPER",
+      VERSION: "26.2",
+    });
+    expect(tabs.map((tab) => tab.id)).toEqual(["plugins", "datapacks"]);
+    expect(tabs[0].providers.map((provider) => provider.id)).toEqual([
+      "modrinth",
+      "hangar",
+    ]);
+    expect(tabs[1]).toMatchObject({
+      label: "World packs",
+      directory: "world/datapacks",
+      loaders: ["datapack"],
+      gameVersion: "26.2",
+    });
+    expect(tabs[1].providers.map((provider) => provider.id)).toEqual([
+      "modrinth",
+    ]);
+  });
+
+  test("one unresolved tab does not hide an independent static tab", () => {
+    const parsed = parsePluginSupport(declaration, envSchema, () => false);
+    expect(
+      resolvePluginTabs(blueprintWith(parsed), { TYPE: "VANILLA" }).map(
+        (tab) => tab.id,
+      ),
+    ).toEqual(["datapacks"]);
+  });
+
+  test("legacy declarations retain the plugins tab ID", () => {
+    const tabs = resolvePluginTabs(blueprintWith(support), { TYPE: "FABRIC" });
+    expect(tabs[0]).toMatchObject({
+      id: "plugins",
+      directory: "mods",
+      label: "Mods",
+    });
+    expect(tabs[0].providers).toHaveLength(1);
+  });
+
+  test("built-in loader profiles limit sources without losing datapacks", () => {
+    parsePluginSupport(
+      minecraftJava.plugins,
+      minecraftJava.envSchema,
+      () => false,
+    );
+    for (const type of ["FABRIC", "FORGE", "SPIGOT"]) {
+      const tabs = resolvePluginTabs(minecraftJava, { TYPE: type });
+      expect(tabs[0].providers.map((provider) => provider.id)).toEqual([
+        "modrinth",
+      ]);
+      expect(tabs[1].id).toBe("datapacks");
+    }
+    expect(
+      resolvePluginTabs(minecraftJava, { TYPE: "PAPER" })[0].providers.map(
+        (provider) => provider.id,
+      ),
+    ).toEqual(["modrinth", "hangar"]);
+  });
+
+  test("duplicate IDs, unknown profile providers and mixed schemas are rejected", () => {
+    expect(() =>
+      parsePluginSupport(
+        { tabs: [declaration.tabs[0], declaration.tabs[0]] },
+        envSchema,
+        () => false,
+      ),
+    ).toThrow(/duplicate id/);
+    expect(() =>
+      parsePluginSupport(
+        {
+          tabs: [
+            {
+              ...declaration.tabs[0],
+              providers: [MODRINTH_PROVIDER_SPEC, MODRINTH_PROVIDER_SPEC],
+            },
+          ],
+        },
+        envSchema,
+        () => false,
+      ),
+    ).toThrow(/duplicate provider/);
+    expect(() =>
+      parsePluginSupport(
+        {
+          tabs: [
+            {
+              ...declaration.tabs[1],
+              default: {
+                ...declaration.tabs[1].default,
+                providerIds: ["missing"],
+              },
+            },
+          ],
+        },
+        envSchema,
+        () => false,
+      ),
+    ).toThrow(/unknown provider/);
+    expect(() =>
+      parsePluginSupport(
+        { ...declaration, provider: MODRINTH_PROVIDER_SPEC },
+        envSchema,
+        () => false,
+      ),
+    ).toThrow(/combined/);
+  });
+
+  test("every provider is validated, including non-default sources", () => {
+    const blocked = {
+      tabs: [
+        {
+          ...declaration.tabs[0],
+          providers: [
+            MODRINTH_PROVIDER_SPEC,
+            { ...HANGAR_PROVIDER_SPEC, baseUrl: "http://hangar.papermc.io" },
+          ],
+        },
+      ],
+    };
+    expect(() => parsePluginSupport(blocked, envSchema, () => false)).toThrow(
+      /https/,
+    );
+    expect(() =>
+      parsePluginSupport(
+        declaration,
+        envSchema,
+        (host) => host === "hangarcdn.papermc.io",
+      ),
+    ).toThrow(/not allowed/);
+  });
+
+  test("provider extensions survive validation and unknown templates fail", () => {
+    const parsed = parsePluginSupport(declaration, envSchema, () => false);
+    if (!("tabs" in parsed)) throw new Error("Expected tabs");
+    const hangar = parsed.tabs[0].providers[1];
+    expect(hangar.versions.fields.files.single).toBe(true);
+    expect(hangar.project?.fields.author).toBe("namespace.owner");
+    expect(hangar.search.query?.version).toBe("{gameVersion}");
+    const invalid = structuredClone(declaration);
+    invalid.tabs[0].providers[1].versions.fields.files.single = "true" as never;
+    expect(() => parsePluginSupport(invalid, envSchema, () => false)).toThrow(
+      /boolean/,
+    );
   });
 });

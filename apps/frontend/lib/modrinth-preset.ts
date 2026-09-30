@@ -12,9 +12,9 @@
  * `game_versions` query params and return newest-first.
  */
 
-import type { BlueprintPluginsSpec } from "./types";
+import type { BlueprintPluginProviderSpec } from "./types";
 
-export const MODRINTH_PROVIDER_SPEC: BlueprintPluginsSpec["provider"] = {
+export const MODRINTH_PROVIDER_SPEC: BlueprintPluginProviderSpec = {
   id: "modrinth",
   baseUrl: "https://api.modrinth.com",
   downloadHosts: ["cdn.modrinth.com"],

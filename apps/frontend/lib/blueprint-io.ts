@@ -22,6 +22,8 @@ import type {
 import { MODRINTH_PROVIDER_SPEC } from "./modrinth-preset";
 import type {
   BlueprintPluginProfileSpec,
+  BlueprintPluginProviderSpec,
+  BlueprintPluginTabSpec,
   BlueprintPluginsSpec,
 } from "./types";
 
@@ -61,7 +63,11 @@ export interface BlueprintFile {
    */
   defaultPorts: { container: number; primary?: boolean }[];
   envSchema?: Record<string, BlueprintFileEnvField>;
-  install?: { image: string; script: string; entrypoint?: string[] | null } | null;
+  install?: {
+    image: string;
+    script: string;
+    entrypoint?: string[] | null;
+  } | null;
   /**
    * Plugin/mod support, including the provider fetch spec. Travels with the
    * file (shareable like the rest of the blueprint); the backend validates it
@@ -110,13 +116,8 @@ export interface FormValues {
   installScript: string;
   /** Whitespace-separated; empty means the agent default (/bin/sh -c). */
   installEntrypoint: string;
-  // Plugins section. Profiles are structured rows; the provider fetch spec is
-  // edited as JSON (a "Modrinth preset" button fills the standard spec).
   pluginsEnabled: boolean;
-  /** Env key whose value selects the active profile; empty = static default. */
-  pluginEnvField: string;
-  pluginProfiles: PluginProfileRow[];
-  pluginProviderSpec: string;
+  pluginTabs: PluginTabFormRow[];
 }
 
 /**
@@ -125,8 +126,27 @@ export interface FormValues {
  * profile is a separate row). `enabled` marks which env values support plugins at all
  * (e.g. PAPER yes, VANILLA no).
  */
+export interface PluginTabFormRow {
+  id: string;
+  label: string;
+  envField: string;
+  profiles: PluginProfileRow[];
+  providerSpec: string;
+}
+
+export function emptyPluginTab(id = "plugins"): PluginTabFormRow {
+  return {
+    id,
+    label: "",
+    envField: "",
+    profiles: [{ ...EMPTY_PROFILE_ROW, envValue: "", enabled: true }],
+    providerSpec: JSON.stringify([MODRINTH_PROVIDER_SPEC], null, 2),
+  };
+}
+
 export interface PluginProfileRow {
   enabled: boolean;
+  providerIds: string;
   /** Empty for the static default profile. */
   envValue: string;
   label: string;
@@ -159,102 +179,113 @@ export function emptyForm(): FormValues {
     installScript: "",
     installEntrypoint: "",
     pluginsEnabled: false,
-    pluginEnvField: "",
-    pluginProfiles: [{ ...EMPTY_PROFILE_ROW, envValue: "", enabled: true }],
-    pluginProviderSpec: JSON.stringify(MODRINTH_PROVIDER_SPEC, null, 2),
+    pluginTabs: [emptyPluginTab()],
   };
 }
 
 const EMPTY_PROFILE_ROW: Omit<PluginProfileRow, "envValue" | "enabled"> = {
   label: "",
+  providerIds: "",
   directory: "",
   projectType: "plugin",
   loaders: "",
   gameVersionEnv: "",
 };
 
-/** A plugins section → the editable pieces of the form. */
+/** Legacy sections become one editable tab without changing its identity. */
 function pluginsToForm(
   plugins: BlueprintPluginsSpec | null | undefined,
-): Pick<FormValues, "pluginsEnabled" | "pluginEnvField" | "pluginProfiles" | "pluginProviderSpec"> {
-  if (!plugins) {
-    return {
-      pluginsEnabled: false,
-      pluginEnvField: "",
-      pluginProfiles: [{ ...EMPTY_PROFILE_ROW, envValue: "", enabled: true }],
-      pluginProviderSpec: JSON.stringify(MODRINTH_PROVIDER_SPEC, null, 2),
-    };
-  }
-
-  const toRow = (
-    envValue: string,
-    profile: BlueprintPluginProfileSpec,
-  ): PluginProfileRow => ({
-    enabled: true,
-    envValue,
-    label: profile.label ?? "",
-    directory: profile.directory,
-    projectType: profile.projectType,
-    loaders: (profile.loaders ?? []).join(", "),
-    gameVersionEnv: profile.gameVersionEnv ?? "",
-  });
-
-  const rows = Object.entries(plugins.variants ?? {}).map(([envValue, profile]) =>
-    toRow(envValue, profile),
-  );
-  if (plugins.default) rows.unshift(toRow("", plugins.default));
-
+): Pick<FormValues, "pluginsEnabled" | "pluginTabs"> {
+  if (!plugins)
+    return { pluginsEnabled: false, pluginTabs: [emptyPluginTab()] };
+  const tabs: BlueprintPluginTabSpec[] =
+    "tabs" in plugins
+      ? plugins.tabs
+      : [{ ...plugins, id: "plugins", providers: [plugins.provider] }];
   return {
     pluginsEnabled: true,
-    pluginEnvField: plugins.envField ?? "",
-    pluginProfiles: rows,
-    pluginProviderSpec: JSON.stringify(plugins.provider, null, 2),
+    pluginTabs: tabs.map((tab) => {
+      const toRow = (
+        envValue: string,
+        profile: BlueprintPluginProfileSpec,
+      ): PluginProfileRow => ({
+        enabled: true,
+        envValue,
+        label: profile.label ?? "",
+        directory: profile.directory,
+        projectType: profile.projectType,
+        loaders: (profile.loaders ?? []).join(", "),
+        gameVersionEnv: profile.gameVersionEnv ?? "",
+        providerIds: (profile.providerIds ?? []).join(", "),
+      });
+      const profiles = Object.entries(tab.variants ?? {}).map(
+        ([envValue, profile]) => toRow(envValue, profile),
+      );
+      if (tab.default) profiles.unshift(toRow("", tab.default));
+      return {
+        id: tab.id,
+        label: tab.label ?? "",
+        envField: tab.envField ?? "",
+        profiles,
+        providerSpec: JSON.stringify(tab.providers, null, 2),
+      };
+    }),
   };
 }
 
-/** Form values → the plugins section of an API payload. */
-function formToPlugins(
-  values: FormValues,
-): BlueprintPluginsSpec | null {
+/** Form values retain all tabs, profiles and provider specs on import/export. */
+function formToPlugins(values: FormValues): BlueprintPluginsSpec | null {
   if (!values.pluginsEnabled) return null;
-
-  let provider: BlueprintPluginsSpec["provider"];
-  try {
-    provider = JSON.parse(values.pluginProviderSpec);
-  } catch {
-    throw new Error("The plugin provider spec is not valid JSON.");
-  }
-
-  const variants: Record<string, BlueprintPluginProfileSpec> = {};
-  let defaultProfile: BlueprintPluginProfileSpec | undefined;
-  for (const row of values.pluginProfiles) {
-    if (!row.enabled) continue;
-    const loaders = row.loaders
-      .split(",")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
-    const profile: BlueprintPluginsSpec["default"] = {
-      ...(row.label.trim() ? { label: row.label.trim() } : {}),
-      directory: row.directory.trim(),
-      projectType: row.projectType,
-      ...(loaders.length > 0 ? { loaders } : {}),
-      ...(row.gameVersionEnv ? { gameVersionEnv: row.gameVersionEnv } : {}),
-    };
-    if (row.envValue.trim()) variants[row.envValue.trim()] = profile;
-    else defaultProfile = profile;
-  }
-
   return {
-    ...(values.pluginEnvField ? { envField: values.pluginEnvField } : {}),
-    ...(Object.keys(variants).length > 0 ? { variants } : {}),
-    ...(defaultProfile ? { default: defaultProfile } : {}),
-    provider,
+    tabs: values.pluginTabs.map((tab) => {
+      let providers: BlueprintPluginProviderSpec[];
+      try {
+        const parsed = JSON.parse(tab.providerSpec);
+        providers = Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        throw new Error(
+          `The providers for tab "${tab.id}" are not valid JSON.`,
+        );
+      }
+      const variants: Record<string, BlueprintPluginProfileSpec> = {};
+      let defaultProfile: BlueprintPluginProfileSpec | undefined;
+      for (const row of tab.profiles) {
+        if (!row.enabled) continue;
+        const loaders = row.loaders
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean);
+        const providerIds = row.providerIds
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean);
+        const profile: BlueprintPluginProfileSpec = {
+          ...(row.label.trim() ? { label: row.label.trim() } : {}),
+          directory: row.directory.trim(),
+          projectType: row.projectType,
+          ...(loaders.length ? { loaders } : {}),
+          ...(providerIds.length ? { providerIds } : {}),
+          ...(row.gameVersionEnv ? { gameVersionEnv: row.gameVersionEnv } : {}),
+        };
+        if (row.envValue.trim()) variants[row.envValue.trim()] = profile;
+        else defaultProfile = profile;
+      }
+      return {
+        id: tab.id.trim(),
+        ...(tab.label.trim() ? { label: tab.label.trim() } : {}),
+        ...(tab.envField ? { envField: tab.envField } : {}),
+        ...(Object.keys(variants).length ? { variants } : {}),
+        ...(defaultProfile ? { default: defaultProfile } : {}),
+        providers,
+      };
+    }),
   };
 }
 
 /** Guarantee exactly one primary port, promoting the first when none is set. */
 function ensurePrimary(ports: PortRow[]): PortRow[] {
-  if (ports.length > 0 && !ports.some((p) => p.primary)) ports[0]!.primary = true;
+  if (ports.length > 0 && !ports.some((p) => p.primary))
+    ports[0]!.primary = true;
   return ports;
 }
 
@@ -450,14 +481,18 @@ export function parseBlueprintFile(text: string): BlueprintFile {
   }
   if (
     obj.expectedResourceProfile !== undefined &&
-    !RESOURCE_PROFILES.includes(obj.expectedResourceProfile as BlueprintResourceProfile)
+    !RESOURCE_PROFILES.includes(
+      obj.expectedResourceProfile as BlueprintResourceProfile,
+    )
   ) {
     throw new Error(
       `"expectedResourceProfile" must be one of: ${RESOURCE_PROFILES.join(", ")}.`,
     );
   }
   if (typeof obj.minimums !== "object" || obj.minimums === null) {
-    throw new Error('"minimums" is required (cpuLimit, memoryLimitMb, diskLimitMb).');
+    throw new Error(
+      '"minimums" is required (cpuLimit, memoryLimitMb, diskLimitMb).',
+    );
   }
   if (
     obj.plugins !== undefined &&

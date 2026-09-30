@@ -6,6 +6,7 @@
  * through environment variables, so no separate install step is needed.
  */
 
+import { HANGAR_PROVIDER_SPEC } from "@/lib/hangar-preset";
 import { MODRINTH_PROVIDER_SPEC } from "@/lib/modrinth-preset";
 import type { Blueprint } from "../types";
 
@@ -37,7 +38,8 @@ export const minecraftJava: Blueprint = {
     ENABLE_RCON: {
       required: false,
       default: "FALSE",
-      description: "RCON is disabled; the panel console uses the container console.",
+      description:
+        "RCON is disabled; the panel console uses the container console.",
     },
     TYPE: {
       required: false,
@@ -117,8 +119,7 @@ export const minecraftJava: Blueprint = {
     },
     JVM_XX_OPTS: {
       required: false,
-      description:
-        "Extra -XX JVM options, e.g. -XX:MaxGCPauseMillis=50.",
+      description: "Extra -XX JVM options, e.g. -XX:MaxGCPauseMillis=50.",
       editable: true,
     },
     JVM_DD_OPTS: {
@@ -132,53 +133,67 @@ export const minecraftJava: Blueprint = {
   // The itzg image manages its own jar download and startup, so the blueprint
   // relies on the image entrypoint rather than a custom startup command.
 
-  // Plugin/mod support via Modrinth, declared entirely as data (the panel's
-  // fetch engine interprets it, see plugins/engine.ts). The active profile
-  // follows the TYPE env: Paper/Purpur/Spigot load Bukkit-style plugins from
-  // /plugins, Fabric/Forge load mods from /mods, and vanilla (VANILLA) has no
-  // variant, so those servers simply don't get the tab. Purpur also lists
-  // paper/spigot loaders because many plugin projects only tag one of the
-  // compatible loaders.
+  // Plugins/mods follow TYPE. Datapacks apply to every Java server and live
+  // in the default world's directory. Each tab carries its own catalog specs.
   plugins: {
-    envField: "TYPE",
-    variants: {
-      PAPER: {
-        label: "Plugins",
-        directory: "plugins",
-        projectType: "plugin",
-        loaders: ["paper"],
-        gameVersionEnv: "VERSION",
+    tabs: [
+      {
+        id: "plugins",
+        envField: "TYPE",
+        variants: {
+          PAPER: {
+            label: "Plugins",
+            directory: "plugins",
+            projectType: "plugin",
+            loaders: ["paper"],
+            gameVersionEnv: "VERSION",
+          },
+          PURPUR: {
+            label: "Plugins",
+            directory: "plugins",
+            projectType: "plugin",
+            loaders: ["purpur", "paper", "spigot"],
+            gameVersionEnv: "VERSION",
+          },
+          SPIGOT: {
+            providerIds: ["modrinth"],
+            label: "Plugins",
+            directory: "plugins",
+            projectType: "plugin",
+            loaders: ["spigot", "paper"],
+            gameVersionEnv: "VERSION",
+          },
+          FABRIC: {
+            providerIds: ["modrinth"],
+            label: "Mods",
+            directory: "mods",
+            projectType: "mod",
+            loaders: ["fabric"],
+            gameVersionEnv: "VERSION",
+          },
+          FORGE: {
+            providerIds: ["modrinth"],
+            label: "Mods",
+            directory: "mods",
+            projectType: "mod",
+            loaders: ["forge"],
+            gameVersionEnv: "VERSION",
+          },
+        },
+        providers: [MODRINTH_PROVIDER_SPEC, HANGAR_PROVIDER_SPEC],
       },
-      PURPUR: {
-        label: "Plugins",
-        directory: "plugins",
-        projectType: "plugin",
-        loaders: ["purpur", "paper", "spigot"],
-        gameVersionEnv: "VERSION",
+      {
+        id: "datapacks",
+        label: "Datapacks",
+        default: {
+          directory: "world/datapacks",
+          projectType: "datapack",
+          loaders: ["datapack"],
+          gameVersionEnv: "VERSION",
+        },
+        providers: [MODRINTH_PROVIDER_SPEC],
       },
-      SPIGOT: {
-        label: "Plugins",
-        directory: "plugins",
-        projectType: "plugin",
-        loaders: ["spigot", "paper"],
-        gameVersionEnv: "VERSION",
-      },
-      FABRIC: {
-        label: "Mods",
-        directory: "mods",
-        projectType: "mod",
-        loaders: ["fabric"],
-        gameVersionEnv: "VERSION",
-      },
-      FORGE: {
-        label: "Mods",
-        directory: "mods",
-        projectType: "mod",
-        loaders: ["forge"],
-        gameVersionEnv: "VERSION",
-      },
-    },
-    provider: MODRINTH_PROVIDER_SPEC,
+    ],
   },
 
   // The image traps SIGTERM and saves the world on stop, but sending an

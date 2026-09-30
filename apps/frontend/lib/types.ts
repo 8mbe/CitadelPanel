@@ -288,6 +288,7 @@ export interface ServerView {
     label: string;
     providerId: string;
     directory: string;
+    tabs: { id: string; label: string; directory: string; providerIds: string[] }[];
   } | null;
 }
 
@@ -310,6 +311,9 @@ export interface ServerInstallLogView {
 /** One installed plugin, as the plugins tab displays it. */
 export interface InstalledPluginView {
   id: string;
+  providerId: string;
+  tabId: string;
+  directory: string;
   projectId: string;
   slug: string | null;
   title: string;
@@ -330,12 +334,14 @@ export interface InstalledPluginView {
 
 export interface ServerPluginList {
   support: {
+    id: string;
     label: string;
     directory: string;
     projectType: string;
     gameVersion?: string;
     /** Shown in the tab so the content source is never hidden. */
     provider: { id: string; baseUrl: string; downloadHosts: string[] };
+    providers: { id: string; baseUrl: string; downloadHosts: string[] }[];
   };
   autoUpdate: boolean;
   /** False when the directory listing failed (node down): DB state only. */
@@ -384,6 +390,7 @@ export interface PluginVersionView {
 // because client code never imports server modules. Keep the two in sync.
 
 export interface BlueprintPluginProfileSpec {
+  providerIds?: string[];
   label?: string;
   directory: string;
   projectType: "mod" | "plugin" | "datapack";
@@ -406,6 +413,7 @@ interface BlueprintVersionEndpointSpec {
     datePublished?: string;
     files: {
       path: string;
+      single?: boolean;
       fields: {
         url: string;
         filename: string;
@@ -420,6 +428,7 @@ export interface BlueprintPluginProviderSpec {
   id: string;
   baseUrl: string;
   downloadHosts: string[];
+  releaseChannels?: string[];
   siteUrl?: string;
   projectPath?: string;
   facets?: { source: "projectType" | "loaders" | "gameVersion"; prefix: string }[];
@@ -446,6 +455,7 @@ export interface BlueprintPluginProviderSpec {
       projectId: string;
       title: string;
       slug?: string;
+      author?: string;
       iconUrl?: string;
       description?: string;
     };
@@ -454,13 +464,22 @@ export interface BlueprintPluginProviderSpec {
   version?: BlueprintVersionEndpointSpec;
 }
 
-export interface BlueprintPluginsSpec {
+export interface BlueprintPluginLegacySpec {
   label?: string;
   envField?: string;
   variants?: Record<string, BlueprintPluginProfileSpec>;
   default?: BlueprintPluginProfileSpec;
   provider: BlueprintPluginProviderSpec;
 }
+
+export interface BlueprintPluginTabSpec extends Omit<BlueprintPluginLegacySpec, "provider"> {
+  id: string;
+  providers: BlueprintPluginProviderSpec[];
+}
+
+export type BlueprintPluginsSpec = BlueprintPluginLegacySpec | {
+  tabs: BlueprintPluginTabSpec[];
+};
 
 /** A per-server delegated user. */
 export interface SubuserView {

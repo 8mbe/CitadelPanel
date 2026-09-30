@@ -53,51 +53,68 @@ export function sectionFromPathname(pathname: string): ServerSectionKey {
  *
  * Two things hide a section: the viewer lacking its permission (a console-only
  * subuser sees Console and Activity and nothing else), and the blueprint not
- * supporting it. The plugins tab only exists when the server's blueprint
- * declares plugin support that resolves for its current configuration (a
- * vanilla Minecraft server has no tab even though the blueprint is the same).
- * Its label comes from the blueprint too ("Plugins" for Paper, "Mods" for
- * Fabric). The backend enforces the same rules per route, so this is
+ * supporting it. Each content tab must resolve for the current configuration;
+ * vanilla Java still gets Datapacks while Paper also gets Plugins. Labels and
+ * tab identities come from the blueprint. The backend enforces the same rules
+ * per route, so this is
  * presentation, not the security boundary.
  */
 export function ServerTabs({ serverId }: { serverId: string }) {
   const pathname = usePathname();
   const active = sectionFromPathname(pathname);
   const { server } = useServerData();
+  const contentTabs = server.pluginSupport?.tabs ?? [];
+  const sections = SERVER_SECTIONS.flatMap((section) =>
+    section.key === "plugins"
+      ? contentTabs.map((tab) => ({
+          key: `plugins/${tab.id}`,
+          label: tab.label,
+          icon: Puzzle,
+          permission: "plugins" as ServerSectionKey,
+          href: `/servers/${serverId}/plugins${tab.id === "plugins" ? "" : `/${tab.id}`}`,
+        }))
+      : [
+          {
+            ...section,
+            permission: section.key as ServerSectionKey,
+            href: `/servers/${serverId}/${section.key}`,
+          },
+        ],
+  );
+  const currentTab =
+    pathname.split("/").filter(Boolean)[3] ?? contentTabs[0]?.id;
 
   return (
     <nav
       aria-label="Server sections"
       className="-mx-4 flex gap-1 overflow-x-auto border-b px-4 md:mx-0 md:px-0 [&::-webkit-scrollbar]:hidden"
     >
-      {SERVER_SECTIONS.filter(
-        (section) =>
-          sectionAllowed(section.key, server.viewer) &&
-          (section.key !== "plugins" || server.pluginSupport),
-      ).map((section) => {
-        const href = `/servers/${serverId}/${section.key}`;
-        const isActive = active === section.key;
-        const label =
-          section.key === "plugins"
-            ? (server.pluginSupport?.label ?? section.label)
-            : section.label;
-        return (
-          <Link
-            key={section.key}
-            href={href}
-            aria-current={isActive ? "page" : undefined}
-            className={cn(
-              "-mb-px inline-flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
-              isActive
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <section.icon className="size-4" />
-            {label}
-          </Link>
-        );
-      })}
+      {sections
+        .filter((section) => sectionAllowed(section.permission, server.viewer))
+        .map((section) => {
+          const href = section.href;
+          const isActive =
+            section.permission === "plugins"
+              ? active === "plugins" && section.key === `plugins/${currentTab}`
+              : active === section.key;
+          const label = section.label;
+          return (
+            <Link
+              key={section.key}
+              href={href}
+              aria-current={isActive ? "page" : undefined}
+              className={cn(
+                "-mb-px inline-flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+                isActive
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <section.icon className="size-4" />
+              {label}
+            </Link>
+          );
+        })}
     </nav>
   );
 }
