@@ -26,6 +26,17 @@ import {
 
 /** Catalog project ids/slugs: base62-ish, no path or query material. */
 const PROJECT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const SELECTION_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+function selection(request: Request): { tabId?: string; providerId?: string } {
+  const params = new URL(request.url).searchParams;
+  const tabId = params.get("tab") ?? undefined;
+  const providerId = params.get("provider") ?? undefined;
+  if ((tabId !== undefined && !SELECTION_ID.test(tabId)) || (providerId !== undefined && !SELECTION_ID.test(providerId))) {
+    throw badRequest("Invalid tab or provider id.");
+  }
+  return { tabId, providerId };
+}
 
 /** GET /api/servers/:id/plugins. Installed plugins, reconciled with disk. */
 export async function handleListServerPlugins(
@@ -34,7 +45,7 @@ export async function handleListServerPlugins(
 ): Promise<Response> {
   const id = requireUuidParam(serverId, "serverId");
   await requireServerPermission(request, id, "files");
-  return json(await listServerPlugins(id));
+  return json(await listServerPlugins(id, selection(request).tabId));
 }
 
 /** GET /api/servers/:id/plugins/search?q=&offset=. Catalog search proxy. */
@@ -44,7 +55,7 @@ export async function handleSearchServerPlugins(
 ): Promise<Response> {
   const id = requireUuidParam(serverId, "serverId");
   await requireServerPermission(request, id, "files");
-  const ctx = await requirePluginContext(id);
+  const ctx = await requirePluginContext(id, selection(request));
 
   const url = new URL(request.url);
   const text = (url.searchParams.get("q") ?? "").trim().slice(0, 100);
@@ -66,7 +77,7 @@ export async function handleListPluginVersions(
 ): Promise<Response> {
   const id = requireUuidParam(serverId, "serverId");
   await requireServerPermission(request, id, "files");
-  const ctx = await requirePluginContext(id);
+  const ctx = await requirePluginContext(id, selection(request));
 
   if (!PROJECT_ID.test(projectId)) {
     throw badRequest("Invalid project id.");
@@ -95,7 +106,16 @@ export async function handleInstallPlugin(
     throw badRequest('"versionId" is required');
   }
 
-  await installPlugin(id, user.id, body.projectId, body.versionId);
+  for (const key of ["tabId", "providerId"] as const) {
+    if (body[key] !== undefined && (typeof body[key] !== "string" || !SELECTION_ID.test(body[key] as string))) throw badRequest(`Invalid ${key}.`);
+  }
+  if (body.allowIncompatible !== undefined && typeof body.allowIncompatible !== "boolean") {
+    throw badRequest('"allowIncompatible" must be a boolean.');
+  }
+  await installPlugin(id, user.id, body.projectId, body.versionId, {
+    tabId: body.tabId as string | undefined, providerId: body.providerId as string | undefined,
+    allowIncompatible: body.allowIncompatible as boolean | undefined,
+  });
   return json({ installed: true }, 201);
 }
 

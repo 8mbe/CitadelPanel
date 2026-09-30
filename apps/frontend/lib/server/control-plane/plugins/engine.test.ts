@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { MODRINTH_PROVIDER_SPEC } from "@/lib/modrinth-preset";
+import { HANGAR_PROVIDER_SPEC } from "@/lib/hangar-preset";
 import type { PluginFetchSpec, ResolvedPluginSupport } from "../blueprints/plugins";
 
 mock.module("server-only", () => ({}));
@@ -42,6 +43,44 @@ function catalog(responses: unknown[], status = 200): URL[] {
 }
 
 describe("manual version picker fallback", () => {
+  test("Hangar fallback removes the plain game-version filter and preserves numeric IDs", async () => {
+    const raw = {
+      id: 123,
+      projectId: 42,
+      name: "1.1.0",
+      channel: { name: "Release" },
+      platformDependencies: { PAPER: ["1.21.1"] },
+      downloads: { PAPER: {
+        downloadUrl: "https://hangarcdn.papermc.io/clumps.jar",
+        fileInfo: { name: "clumps.jar", sizeBytes: 100 },
+      } },
+      createdAt: "2026-07-01T00:00:00Z",
+    };
+    const requests = catalog([{ result: [] }, { result: [raw] }]);
+    const result = await engineListInstallVersions({
+      ...support, projectType: "plugin", loaders: ["paper"],
+      provider: HANGAR_PROVIDER_SPEC as PluginFetchSpec,
+    }, "42");
+    expect(result.compatibilityFallback).toBe(true);
+    expect(result.versions[0]?.versionId).toBe("123");
+    expect(requests[0]!.searchParams.get("platformVersion")).toBe("26.2");
+    expect(requests[1]!.searchParams.has("platformVersion")).toBe(false);
+    expect(requests[1]!.hostname).toBe("hangar.papermc.io");
+    expect(requests[1]!.searchParams.get("platform")).toBe("PAPER");
+  });
+
+  test("fallback keeps every returned file type and orders releases newest first", async () => {
+    catalog([[], [
+      release("old", { date_published: "2025-01-01T00:00:00Z" }),
+      release("new", { date_published: "2026-08-01T00:00:00Z", files: [
+        { url: "https://cdn.modrinth.com/clumps.jar", filename: "clumps.jar", primary: true },
+      ] }),
+    ]]);
+    const result = await engineListInstallVersions(support, "clumps");
+    expect(result.versions.map((version) => version.versionId)).toEqual(["new", "old"]);
+    expect(result.versions[0]?.files[0]?.filename).toBe("clumps.jar");
+  });
+
   test("keeps compatible datapack results without a second request", async () => {
     const requests = catalog([[release()]]);
     const result = await engineListInstallVersions(support, "clumps");

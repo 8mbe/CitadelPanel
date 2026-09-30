@@ -318,6 +318,7 @@ export interface ApiServerSummary {
     label: string;
     providerId: string;
     directory: string;
+    tabs: { id: string; label: string; directory: string; providerIds: string[] }[];
   } | null;
 }
 
@@ -1615,8 +1616,10 @@ export async function pullServerFileFromUrl(
  * actual directory, plus the resolved support (label, directory, provider
  * hosts) and the auto-update setting.
  */
-export function getServerPlugins(serverId: string): Promise<ServerPluginList> {
-  return request<ServerPluginList>(`/api/servers/${serverId}/plugins`);
+export function getServerPlugins(serverId: string, tabId?: string): Promise<ServerPluginList> {
+  const params = new URLSearchParams();
+  if (tabId) params.set("tab", tabId);
+  return request<ServerPluginList>(`/api/servers/${serverId}/plugins?${params}`);
 }
 
 /** GET /api/servers/:id/plugins/search?q=. Catalog search, proxied by the panel. */
@@ -1624,8 +1627,11 @@ export function searchServerPlugins(
   serverId: string,
   q: string,
   offset = 0,
+  selection?: { tabId?: string; providerId?: string },
 ): Promise<{ total: number; results: PluginSearchResult[] }> {
   const params = new URLSearchParams({ q, offset: String(offset) });
+  if (selection?.tabId) params.set("tab", selection.tabId);
+  if (selection?.providerId) params.set("provider", selection.providerId);
   return request<{ total: number; results: PluginSearchResult[] }>(
     `/api/servers/${serverId}/plugins/search?${params}`,
   );
@@ -1635,9 +1641,13 @@ export function searchServerPlugins(
 export async function getServerPluginVersions(
   serverId: string,
   projectId: string,
+  selection?: { tabId?: string; providerId?: string },
 ): Promise<PluginVersionList> {
+  const params = new URLSearchParams();
+  if (selection?.tabId) params.set("tab", selection.tabId);
+  if (selection?.providerId) params.set("provider", selection.providerId);
   return request<PluginVersionList>(
-    `/api/servers/${serverId}/plugins/versions/${encodeURIComponent(projectId)}`,
+    `/api/servers/${serverId}/plugins/versions/${encodeURIComponent(projectId)}?${params}`,
   );
 }
 
@@ -1650,10 +1660,11 @@ export function installServerPlugin(
   serverId: string,
   projectId: string,
   versionId: string,
+  selection?: { tabId?: string; providerId?: string; allowIncompatible?: boolean },
 ): Promise<{ installed: boolean }> {
   return request(`/api/servers/${serverId}/plugins/install`, {
     method: "POST",
-    body: JSON.stringify({ projectId, versionId }),
+    body: JSON.stringify({ projectId, versionId, ...selection }),
   });
 }
 

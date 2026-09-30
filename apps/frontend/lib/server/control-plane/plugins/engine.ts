@@ -19,7 +19,7 @@
  *     entry and pass the blocklist before the agent is ever asked to fetch.
  *
  * Nothing a catalog returns reaches a command line, a container or anything
- * executable. The only side effect downstream is an inert `.jar` file write
+ * executable. The only side effect downstream is an inert `.jar`/`.zip` file write
  * through the agent's contained `files/pull`.
  *
  * Dot-path reads, field coercion and the project-page URL are the pure half.
@@ -34,9 +34,8 @@ import type {
 } from "../blueprints/plugins";
 import { badRequest } from "../lib/http";
 import { isBlockedHost } from "../lib/ssrf";
-import { selectPluginVersionFile } from "@/lib/plugin-files";
+import { isContentFilename } from "./files";
 import {
-  asChannel,
   asGameVersionList,
   asNumber,
   asString,
@@ -45,9 +44,15 @@ import {
   isRecord,
   pick,
   providerProjectUrl,
+  mapVersion,
+  versionMatchesSupport,
 } from "./mapping";
 
-export { providerProjectUrl } from "./mapping";
+export {
+  providerProjectUrl,
+  mapVersion,
+  versionMatchesSupport,
+} from "./mapping";
 
 // --- Normalized results --------------------------------------------------------
 
@@ -77,6 +82,7 @@ export interface ProviderVersionFile {
 
 /** Catalog metadata for a project, recorded on install. */
 export interface ProviderProject {
+  author?: string;
   projectId: string;
   slug?: string;
   title: string;
@@ -113,7 +119,13 @@ const MAX_SEARCH_LIMIT = 20;
 function templateVars(
   spec: PluginFetchSpec,
   profile: ResolvedPluginSupport,
-  extra: { text?: string; offset?: number; limit?: number; projectId?: string; versionId?: string },
+  extra: {
+    text?: string;
+    offset?: number;
+    limit?: number;
+    projectId?: string;
+    versionId?: string;
+  },
 ): Record<string, string> {
   const groups: string[][] = [];
   for (const group of spec.facets ?? []) {
@@ -136,6 +148,7 @@ function templateVars(
     gameVersions: profile.gameVersion
       ? JSON.stringify([profile.gameVersion])
       : "",
+    gameVersion: profile.gameVersion ?? "",
     facets: groups.length > 0 ? JSON.stringify(groups) : "",
   };
 }
@@ -190,7 +203,9 @@ async function fetchEndpoint(
   // Followed redirects may only land on public hosts. A catalog 3xx must not
   // turn the panel into an internal-network client.
   if (isBlockedHost(new URL(response.url).hostname)) {
-    throw badRequest(`Plugin catalog "${spec.id}" redirected to a blocked host.`);
+    throw badRequest(
+      `Plugin catalog "${spec.id}" redirected to a blocked host.`,
+    );
   }
 
   if (response.status === 404) return null;
@@ -207,7 +222,9 @@ async function fetchEndpoint(
   try {
     return JSON.parse(text);
   } catch {
-    throw badRequest(`Plugin catalog "${spec.id}" returned an unreadable response.`);
+    throw badRequest(
+      `Plugin catalog "${spec.id}" returned an unreadable response.`,
+    );
   }
 }
 
@@ -224,14 +241,21 @@ export async function engineSearch(
     offset: query.offset,
     limit: Math.min(Math.max(1, query.limit), MAX_SEARCH_LIMIT),
   });
-  const body = await fetchEndpoint(spec, spec.search.path, spec.search.query, vars);
+  const body = await fetchEndpoint(
+    spec,
+    spec.search.path,
+    spec.search.query,
+    vars,
+  );
   if (body === null) {
     throw badRequest(`Plugin catalog "${spec.id}" returned no search result.`);
   }
 
   const list = spec.search.root ? pick(body, spec.search.root) : body;
   if (!Array.isArray(list)) {
-    throw badRequest(`Plugin catalog "${spec.id}" returned an unexpected search response.`);
+    throw badRequest(
+      `Plugin catalog "${spec.id}" returned an unexpected search response.`,
+    );
   }
   const total = spec.search.total
     ? asNumber(pick(body, spec.search.total))
@@ -251,18 +275,25 @@ export async function engineSearch(
       projectId,
       slug,
       projectType: support.projectType,
+      author: fields.author ? asString(pick(hit, fields.author)) : undefined,
     });
     results.push({
       projectId,
       ...(slug ? { slug } : {}),
       ...(projectUrl ? { projectUrl } : {}),
       title,
-      description: fields.description ? asString(pick(hit, fields.description)) : "",
+      description: fields.description
+        ? asString(pick(hit, fields.description))
+        : "",
       author: fields.author ? asString(pick(hit, fields.author)) : "",
       ...(iconUrl ? { iconUrl } : {}),
       downloads: fields.downloads ? asNumber(pick(hit, fields.downloads)) : 0,
-      categories: fields.categories ? asStringList(pick(hit, fields.categories), 6) : [],
-      gameVersions: fields.gameVersions ? asGameVersionList(pick(hit, fields.gameVersions)) : [],
+      categories: fields.categories
+        ? asStringList(pick(hit, fields.categories), 6)
+        : [],
+      gameVersions: fields.gameVersions
+        ? asGameVersionList(pick(hit, fields.gameVersions))
+        : [],
     });
   }
 
@@ -289,53 +320,12 @@ export async function engineGetProject(
     ...(fields.slug && asString(pick(body, fields.slug))
       ? { slug: asString(pick(body, fields.slug)) }
       : {}),
+    ...(fields.author ? { author: asString(pick(body, fields.author)) } : {}),
     title: title || projectId,
     ...(iconUrl ? { iconUrl } : {}),
     ...(fields.description
       ? { description: asString(pick(body, fields.description)) }
       : {}),
-  };
-}
-
-function mapVersion(
-  spec: PluginFetchSpec,
-  endpoint: NonNullable<PluginFetchSpec["version"]>,
-  raw: unknown,
-): ProviderVersion | null {
-  if (!isRecord(raw)) return null;
-  const f = endpoint.fields;
-
-  const versionId = asString(pick(raw, f.versionId));
-  const versionNumber = asString(pick(raw, f.versionNumber));
-  if (!versionId || !versionNumber) return null;
-
-  const rawFiles = pick(raw, f.files.path);
-  const files: ProviderVersionFile[] = Array.isArray(rawFiles)
-    ? rawFiles
-        .filter(isRecord)
-        .map((file) => ({
-          url: asString(pick(file, f.files.fields.url)),
-          filename: asString(pick(file, f.files.fields.filename)),
-          sizeBytes: f.files.fields.sizeBytes
-            ? asNumber(pick(file, f.files.fields.sizeBytes))
-            : 0,
-          primary: f.files.fields.primary
-            ? Boolean(pick(file, f.files.fields.primary))
-            : false,
-        }))
-        .filter((file) => file.url !== "" && file.filename !== "")
-    : [];
-
-  return {
-    versionId,
-    projectId: f.projectId ? asString(pick(raw, f.projectId)) : "",
-    name: f.name ? asString(pick(raw, f.name)) : versionNumber,
-    versionNumber,
-    channel: f.channel ? asChannel(pick(raw, f.channel)) : "release",
-    gameVersions: f.gameVersions ? asGameVersionList(pick(raw, f.gameVersions)) : [],
-    loaders: f.loaders ? asStringList(pick(raw, f.loaders), 8) : [],
-    datePublished: f.datePublished ? asString(pick(raw, f.datePublished)) : "",
-    files,
   };
 }
 
@@ -350,34 +340,44 @@ export async function engineListVersions(
     ? { ...support, loaders: [], gameVersion: undefined }
     : support;
   const vars = templateVars(spec, profile, { projectId });
-  const body = await fetchEndpoint(spec, spec.versions.path, spec.versions.query, vars);
+  const body = await fetchEndpoint(
+    spec,
+    spec.versions.path,
+    spec.versions.query,
+    vars,
+  );
   if (body === null) {
     throw badRequest("That plugin does not exist in the catalog.");
   }
   const list = spec.versions.root ? pick(body, spec.versions.root) : body;
   if (!Array.isArray(list)) {
-    throw badRequest(`Plugin catalog "${spec.id}" returned an unexpected version list.`);
+    throw badRequest(
+      `Plugin catalog "${spec.id}" returned an unexpected version list.`,
+    );
   }
-  return list
+  const versions = list
     .map((raw) => mapVersion(spec, spec.versions, raw))
-    .filter((v): v is ProviderVersion => v !== null);
+    .filter((version): version is ProviderVersion => version !== null)
+    .sort((a, b) => b.datePublished.localeCompare(a.datePublished));
+  if (options.unfiltered) return versions;
+  return versions
+    .filter((version) => versionMatchesSupport(support, version))
+    .map((version) => ({
+      ...version,
+      files: version.files.filter((file) =>
+        isContentFilename(file.filename, support.projectType),
+      ),
+    }))
+    .filter((version) => version.files.length > 0);
 }
 
-/** Manual selection alone may fall back to releases outside the profile. */
+/** Only the manual picker can fall back to releases outside the active profile. */
 export async function engineListInstallVersions(
   support: ResolvedPluginSupport,
   projectId: string,
 ): Promise<{ versions: ProviderVersion[]; compatibilityFallback: boolean }> {
-  const filtered = await engineListVersions(support, projectId);
-  const versions = filtered.filter((version) =>
-    selectPluginVersionFile(version, support.projectType) !== undefined &&
-    (!support.gameVersion || version.gameVersions.length === 0 ||
-      version.gameVersions.includes(support.gameVersion)) &&
-    (support.loaders.length === 0 || version.loaders.length === 0 ||
-      version.loaders.some((loader) => support.loaders.includes(loader))),
-  );
+  const versions = await engineListVersions(support, projectId);
   if (versions.length > 0) return { versions, compatibilityFallback: false };
-
   return {
     versions: await engineListVersions(support, projectId, { unfiltered: true }),
     compatibilityFallback: true,
@@ -386,7 +386,7 @@ export async function engineListInstallVersions(
 
 /**
  * One version by id: via the spec's single-version endpoint when configured,
- * else by scanning all project versions so a manual fallback can be installed.
+ * else by scanning all versions so an explicit fallback choice can resolve.
  */
 export async function engineGetVersion(
   support: ResolvedPluginSupport,
@@ -395,8 +395,13 @@ export async function engineGetVersion(
 ): Promise<ProviderVersion | null> {
   const spec = support.provider;
   if (spec.version) {
-    const vars = templateVars(spec, support, { versionId });
-    const body = await fetchEndpoint(spec, spec.version.path, spec.version.query, vars);
+    const vars = templateVars(spec, support, { projectId, versionId });
+    const body = await fetchEndpoint(
+      spec,
+      spec.version.path,
+      spec.version.query,
+      vars,
+    );
     return body === null ? null : mapVersion(spec, spec.version, body);
   }
   const versions = await engineListVersions(support, projectId, { unfiltered: true });
@@ -420,7 +425,10 @@ export function assertDownloadUrl(spec: PluginFetchSpec, url: string): URL {
   if (parsed.protocol !== "https:") {
     throw badRequest("The catalog returned a non-https file URL.");
   }
-  if (!spec.downloadHosts.includes(parsed.hostname) || isBlockedHost(parsed.hostname)) {
+  if (
+    !spec.downloadHosts.includes(parsed.hostname) ||
+    isBlockedHost(parsed.hostname)
+  ) {
     // Unreachable for honest catalogs; exists so a compromised or buggy
     // upstream response can't redirect installs anywhere it likes.
     throw badRequest(
@@ -428,6 +436,11 @@ export function assertDownloadUrl(spec: PluginFetchSpec, url: string): URL {
     );
   }
   return parsed;
+}
+
+/** The file a version install should write: the primary, else the first. */
+export function pickVersionFile(version: ProviderVersion): ProviderVersionFile {
+  return version.files.find((file) => file.primary) ?? version.files[0];
 }
 
 /** Facet composition, exported for tests. */

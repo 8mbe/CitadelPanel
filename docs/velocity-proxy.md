@@ -20,7 +20,7 @@ The blueprint runs [`itzg/mc-proxy`](https://github.com/itzg/docker-mc-proxy)
 with `TYPE=VELOCITY`. That image downloads the Velocity jar itself and
 understands the same JVM/plugin env vars as the Minecraft images, so the
 blueprint is mostly ordinary: data at `/server`, pinned to uid 1000, one
-primary TCP port (25565 preferred), plugins from Modrinth.
+primary TCP port (25565 preferred), plugins from Modrinth and Hangar.
 
 Two things are not ordinary, and both are about `velocity.toml`.
 
@@ -120,10 +120,13 @@ because it carries no forwarded player data.
 
 - **Plugins** resolve from a *static* profile rather than an env-driven one.
   A Velocity proxy only ever loads Velocity plugins from `plugins/`, so there
-  is nothing to switch on (contrast minecraft-java's `TYPE`). Compatibility
-  filtering reads `MINECRAFT_VERSION`, the image's own name for "which
+  is nothing to switch on (contrast minecraft-java's `TYPE`). Its Plugins tab
+  offers Modrinth and Hangar; a proxy has no world and therefore no datapack tab.
+  Modrinth compatibility filtering reads `MINECRAFT_VERSION`, the image's own name for "which
   Minecraft version are the backends"; leave it on `LATEST` and filtering is
-  simply unversioned (`plugins.md`).
+  simply unversioned. Hangar's Velocity platform versions describe the proxy,
+  so its preset does not filter them using a backend Minecraft version. See
+  [plugins.md](plugins.md) for source selection and shared auto-update behavior.
 - **`VELOCITY_VERSION` is pinned to a stable 3.x release, not `latest`.** The
   image resolves `latest` to the newest build PaperMC publishes, which is
   currently a 4.x development snapshot; practically every Velocity plugin still

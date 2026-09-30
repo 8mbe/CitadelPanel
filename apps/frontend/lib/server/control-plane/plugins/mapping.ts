@@ -9,22 +9,24 @@
  * `encodeURIComponent` silently breaks.
  */
 
+import type { ProviderVersion, ProviderVersionFile } from "./engine";
+import type { ResolvedPluginSupport } from "../blueprints/plugins";
 import type { PluginFetchSpec, PluginProjectType } from "../blueprints/plugins";
 import { isBlockedHost } from "../lib/ssrf";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
-  return (
-    typeof value === "object" && value !== null && !Array.isArray(value)
-  );
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Read a dot-path ("a.b") out of a JSON value; missing keys read as undefined. */
 export function pick(source: unknown, path: string | undefined): unknown {
   if (!path) return undefined;
-  return path.split(".").reduce<unknown>(
-    (acc, key) => (isRecord(acc) ? acc[key] : undefined),
-    source,
-  );
+  return path
+    .split(".")
+    .reduce<unknown>(
+      (acc, key) => (isRecord(acc) ? acc[key] : undefined),
+      source,
+    );
 }
 
 /** Substitute `{var}` templates. Unknown names are left empty by construction:
@@ -33,13 +35,20 @@ export function interpolate(
   template: string,
   vars: Record<string, string>,
 ): string {
-  return template.replace(/\{([A-Za-z]+)\}/g, (_, name: string) => vars[name] ?? "");
+  return template.replace(
+    /\{([A-Za-z]+)\}/g,
+    (_, name: string) => vars[name] ?? "",
+  );
 }
 
 // --- Coercion of mapped fields ---------------------------------------------------
 
 export function asString(value: unknown): string {
-  return typeof value === "string" ? value : "";
+  return typeof value === "string"
+    ? value
+    : typeof value === "number" && Number.isFinite(value)
+      ? String(value)
+      : "";
 }
 
 export function asNumber(value: unknown): number {
@@ -69,8 +78,17 @@ export function asGameVersionList(value: unknown): string[] {
     : [];
 }
 
-export function asChannel(value: unknown): "release" | "beta" | "alpha" {
-  return value === "beta" || value === "alpha" ? value : "release";
+export function asChannel(
+  value: unknown,
+  releaseChannels?: string[],
+): "release" | "beta" | "alpha" {
+  const channel = asString(value).toLowerCase();
+  if (releaseChannels) {
+    if (releaseChannels.some((release) => release.toLowerCase() === channel))
+      return "release";
+    return channel === "alpha" ? "alpha" : "beta";
+  }
+  return channel === "beta" || channel === "alpha" ? channel : "release";
 }
 
 // --- Project page link -----------------------------------------------------------
@@ -92,6 +110,7 @@ export function providerProjectUrl(
   project: {
     projectId: string;
     slug?: string | null;
+    author?: string | null;
     projectType: PluginProjectType;
   },
 ): string | undefined {
@@ -105,14 +124,80 @@ export function providerProjectUrl(
   if (site.protocol !== "https:" || isBlockedHost(site.hostname)) {
     return undefined;
   }
+  if (spec.projectPath.includes("{author}") && !project.author)
+    return undefined;
   const vars: Record<string, string> = {
+    author: project.author ?? "",
     projectId: project.projectId,
     slug: project.slug || project.projectId,
     projectType: project.projectType,
   };
-  const path = spec.projectPath.replace(
-    /\{([A-Za-z]+)\}/g,
-    (_, name: string) => encodeURIComponent(vars[name] ?? ""),
+  const path = spec.projectPath.replace(/\{([A-Za-z]+)\}/g, (_, name: string) =>
+    encodeURIComponent(vars[name] ?? ""),
   );
   return new URL(path, site).toString();
+}
+
+export function mapVersion(
+  spec: PluginFetchSpec,
+  endpoint: NonNullable<PluginFetchSpec["version"]>,
+  raw: unknown,
+): ProviderVersion | null {
+  if (!isRecord(raw)) return null;
+  const f = endpoint.fields;
+
+  const versionId = asString(pick(raw, f.versionId));
+  const versionNumber = asString(pick(raw, f.versionNumber));
+  if (!versionId || !versionNumber) return null;
+
+  const mappedFiles = pick(raw, f.files.path);
+  const rawFiles = f.files.single ? [mappedFiles] : mappedFiles;
+  const files: ProviderVersionFile[] = Array.isArray(rawFiles)
+    ? rawFiles
+        .filter(isRecord)
+        .map((file) => ({
+          url: asString(pick(file, f.files.fields.url)),
+          filename: asString(pick(file, f.files.fields.filename)),
+          sizeBytes: f.files.fields.sizeBytes
+            ? asNumber(pick(file, f.files.fields.sizeBytes))
+            : 0,
+          primary: f.files.fields.primary
+            ? Boolean(pick(file, f.files.fields.primary))
+            : false,
+        }))
+        .filter((file) => file.url !== "" && file.filename !== "")
+    : [];
+
+  return {
+    versionId,
+    projectId: f.projectId ? asString(pick(raw, f.projectId)) : "",
+    name: f.name ? asString(pick(raw, f.name)) : versionNumber,
+    versionNumber,
+    channel: f.channel
+      ? asChannel(pick(raw, f.channel), spec.releaseChannels)
+      : spec.releaseChannels
+        ? "beta"
+        : "release",
+    gameVersions: f.gameVersions
+      ? asGameVersionList(pick(raw, f.gameVersions))
+      : [],
+    loaders: f.loaders ? asStringList(pick(raw, f.loaders), 8) : [],
+    datePublished: f.datePublished ? asString(pick(raw, f.datePublished)) : "",
+    files,
+  };
+}
+
+/** Check single-version lookups too: their endpoints may ignore search filters. */
+export function versionMatchesSupport(
+  support: ResolvedPluginSupport,
+  version: ProviderVersion,
+): boolean {
+  return (
+    (!support.gameVersion ||
+      version.gameVersions.length === 0 ||
+      version.gameVersions.includes(support.gameVersion)) &&
+    (support.loaders.length === 0 ||
+      version.loaders.length === 0 ||
+      version.loaders.some((loader) => support.loaders.includes(loader)))
+  );
 }

@@ -44,6 +44,14 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -95,6 +103,8 @@ function StatusBadge({ status }: { status: InstalledPluginView["status"] }) {
  */
 function VersionsDialog({
   serverId,
+  tabId,
+  providerId,
   project,
   installedVersionId,
   gameVersion,
@@ -104,6 +114,8 @@ function VersionsDialog({
   onInstalled,
 }: {
   serverId: string;
+  tabId: string;
+  providerId: string;
   project: { projectId: string; title: string; projectUrl?: string };
   installedVersionId?: string;
   gameVersion?: string;
@@ -129,7 +141,9 @@ function VersionsDialog({
       setCompatibilityFallback(false);
       setError(null);
       try {
-        const list = await getServerPluginVersions(serverId, project.projectId);
+        const list = await getServerPluginVersions(
+          serverId, project.projectId, { tabId, providerId },
+        );
         if (!cancelled) {
           setVersions([...list.versions].sort((a, b) =>
             b.datePublished.localeCompare(a.datePublished),
@@ -138,20 +152,27 @@ function VersionsDialog({
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof ApiError ? err.message : "Failed to load versions.");
+          setError(
+            err instanceof ApiError ? err.message : "Failed to load versions.",
+          );
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [open, serverId, project.projectId]);
+  }, [open, serverId, project.projectId, tabId, providerId]);
 
   const install = async (version: PluginVersionView) => {
     setInstallingId(version.versionId);
     setError(null);
     try {
-      await installServerPlugin(serverId, project.projectId, version.versionId);
+      await installServerPlugin(
+        serverId,
+        project.projectId,
+        version.versionId,
+        { tabId, providerId, allowIncompatible: compatibilityFallback },
+      );
       onInstalled();
       onOpenChange(false);
     } catch (err) {
@@ -380,9 +401,7 @@ function SearchResultRow({
         className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2 text-left"
       >
         <Avatar className="size-8 rounded-md">
-          {result.iconUrl ? (
-            <AvatarImage src={result.iconUrl} alt="" />
-          ) : null}
+          {result.iconUrl ? <AvatarImage src={result.iconUrl} alt="" /> : null}
           <AvatarFallback className="rounded-md text-xs">
             {initials(result.title)}
           </AvatarFallback>
@@ -409,20 +428,17 @@ function SearchResultRow({
 }
 
 /**
- * The Plugins/Mods tab.
- *
- * Search and installs go through the panel, which executes the blueprint's
- * provider fetch spec (Modrinth for the built-in Minecraft blueprints) and
- * pins every download to the spec's declared hosts. The tab footer always
- * shows which catalog serves this server, so the content source is never
- * hidden. The installed list is reconciled against the server's actual
- * directory: jars deleted through the Files tab show as missing, manually
- * added ones as untracked.
- *
- * Plugin changes apply the next time the server starts, or on a restart, which
- * also runs the release-channel auto-updater first when enabled.
+ * One blueprint-defined content tab. Catalog browsing selects a source;
+ * installed rows retain their own provider for version selection and updates.
+ * Every request goes through the panel and its host-pinned fetch engine.
  */
-export function PluginsTab({ serverId }: { serverId: string }) {
+export function PluginsTab({
+  serverId,
+  tabId,
+}: {
+  serverId: string;
+  tabId?: string;
+}) {
   const [list, setList] = React.useState<ServerPluginList | null>(null);
   const [denied, setDenied] = React.useState(false);
   const [unsupported, setUnsupported] = React.useState(false);
@@ -431,22 +447,30 @@ export function PluginsTab({ serverId }: { serverId: string }) {
   const [note, setNote] = React.useState<string | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
 
+  const [providerId, setProviderId] = React.useState("");
   const [query, setQuery] = React.useState("");
-  const [results, setResults] = React.useState<PluginSearchResult[] | null>(null);
+  const [results, setResults] = React.useState<PluginSearchResult[] | null>(
+    null,
+  );
   const [searching, setSearching] = React.useState(false);
   const [searchError, setSearchError] = React.useState<string | null>(null);
-  const [searchOffset, setSearchOffset] = React.useState(0);
+  const [searchPage, setSearchPage] = React.useState({ scope: "", offset: 0 });
+  const searchScope = JSON.stringify([serverId, tabId, providerId, query.trim()]);
+  const searchOffset = searchPage.scope === searchScope ? searchPage.offset : 0;
+  const [completedSearch, setCompletedSearch] = React.useState("");
+  const searchKey = JSON.stringify([searchScope, searchOffset]);
   const [searchTotal, setSearchTotal] = React.useState(0);
 
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [versionPicker, setVersionPicker] = React.useState<{
     projectId: string;
+    providerId: string;
     title: string;
     projectUrl?: string;
   } | null>(null);
-  // Removal goes through a confirm dialog: the jar always goes, the plugin's
-  // config/data folder only when the (default-on) checkbox says so.
-  const [removeTarget, setRemoveTarget] = React.useState<InstalledPluginView | null>(null);
+  // Only plugin profiles offer deletion of a matching config/data folder.
+  const [removeTarget, setRemoveTarget] =
+    React.useState<InstalledPluginView | null>(null);
   const [removeConfigs, setRemoveConfigs] = React.useState(true);
 
   React.useEffect(() => {
@@ -455,15 +479,24 @@ export function PluginsTab({ serverId }: { serverId: string }) {
       setLoading(true);
       setError(null);
       try {
-        const data = await getServerPlugins(serverId);
-        if (!cancelled) setList(data);
+        const data = await getServerPlugins(serverId, tabId);
+        if (!cancelled) {
+          setList(data);
+          setProviderId((current) =>
+            data.support.providers.some((provider) => provider.id === current)
+              ? current
+              : data.support.providers[0].id,
+          );
+        }
       } catch (err) {
         if (err instanceof ApiError && err.status === 403) {
           if (!cancelled) setDenied(true);
         } else if (err instanceof ApiError && err.status === 404) {
           if (!cancelled) setUnsupported(true);
         } else if (!cancelled) {
-          setError(err instanceof ApiError ? err.message : "Failed to load plugins.");
+          setError(
+            err instanceof ApiError ? err.message : "Failed to load plugins.",
+          );
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -472,18 +505,19 @@ export function PluginsTab({ serverId }: { serverId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [serverId, refreshKey]);
+  }, [serverId, tabId, refreshKey]);
 
   // Debounce the first page; later pages fetch immediately. Ignore
   // replies from a previous query or page after its effect has been cleaned up.
   React.useEffect(() => {
-    const text = query.trim();
-    if (text.length < 2) return;
     let cancelled = false;
+    const text = query.trim();
+    if (text.length < 2 || !providerId) return;
     const timer = setTimeout(async () => {
+      setSearchPage({ scope: searchScope, offset: searchOffset });
       setSearching(true);
       try {
-        const data = await searchServerPlugins(serverId, text, searchOffset);
+        const data = await searchServerPlugins(serverId, text, searchOffset, { tabId, providerId });
         if (!cancelled) {
           setResults(data.results);
           setSearchTotal(data.total);
@@ -497,18 +531,21 @@ export function PluginsTab({ serverId }: { serverId: string }) {
           setResults(null);
         }
       } finally {
-        if (!cancelled) setSearching(false);
+        if (!cancelled) {
+          setSearching(false);
+          setCompletedSearch(searchKey);
+        }
       }
     }, searchOffset === 0 ? 300 : 0);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [serverId, query, searchOffset]);
+  }, [serverId, tabId, providerId, query, searchScope, searchOffset, searchKey]);
 
   const changeSearchQuery = (value: string) => {
     setQuery(value);
-    setSearchOffset(0);
+    setSearchPage({ scope: "", offset: 0 });
     setSearchTotal(0);
     setResults(null);
     setSearchError(null);
@@ -516,7 +553,7 @@ export function PluginsTab({ serverId }: { serverId: string }) {
   };
 
   const changeSearchPage = (offset: number) => {
-    setSearchOffset(offset);
+    setSearchPage({ scope: searchScope, offset });
     setSearchError(null);
     setSearching(true);
   };
@@ -536,7 +573,9 @@ export function PluginsTab({ serverId }: { serverId: string }) {
       );
       reload();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to toggle plugin.");
+      setError(
+        err instanceof ApiError ? err.message : "Failed to toggle plugin.",
+      );
     } finally {
       setBusyId(null);
     }
@@ -557,7 +596,9 @@ export function PluginsTab({ serverId }: { serverId: string }) {
       setRemoveTarget(null);
       reload();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to remove plugin.");
+      setError(
+        err instanceof ApiError ? err.message : "Failed to remove plugin.",
+      );
     } finally {
       setBusyId(null);
     }
@@ -646,6 +687,41 @@ export function PluginsTab({ serverId }: { serverId: string }) {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          {list && list.support.providers.length > 1 && (
+            <div className="flex items-center gap-3">
+              <label
+                htmlFor="content-provider"
+                className="text-sm text-muted-foreground"
+              >
+                Source
+              </label>
+              <Select
+                value={providerId}
+                onValueChange={(value) => {
+                  if (value && value !== providerId) {
+                    setProviderId(value);
+                    setSearchPage({ scope: "", offset: 0 });
+                    setSearchTotal(0);
+                    setResults(null);
+                    setSearchError(null);
+                  }
+                }}
+              >
+                <SelectTrigger id="content-provider" className="w-full sm:w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {list.support.providers.map((provider) => (
+                      <SelectItem key={provider.id} value={provider.id}>
+                        {provider.id}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -657,13 +733,17 @@ export function PluginsTab({ serverId }: { serverId: string }) {
             />
           </div>
 
-          {searching ? (
+          {query.trim().length >= 2 &&
+          providerId &&
+          (searching || completedSearch !== searchKey) ? (
             <div className="flex items-center justify-center py-4 text-muted-foreground">
               <Spinner />
             </div>
-          ) : searchError ? (
+          ) : completedSearch === searchKey && searchError ? (
             <p className="text-sm text-destructive">{searchError}</p>
-          ) : results === null ? (
+          ) : results === null ||
+            query.trim().length < 2 ||
+            completedSearch !== searchKey ? (
             <p className="py-2 text-center text-xs text-muted-foreground">
               Type at least two characters to search.
             </p>
@@ -677,13 +757,18 @@ export function PluginsTab({ serverId }: { serverId: string }) {
                 <SearchResultRow
                   key={result.projectId}
                   result={result}
-                  installed={list?.plugins.some(
-                    (p) => p.projectId === result.projectId,
-                  ) === true}
+                  installed={
+                    list?.plugins.some(
+                      (p) =>
+                        p.projectId === result.projectId &&
+                        p.providerId === providerId,
+                    ) === true
+                  }
                   gameVersion={list?.support.gameVersion}
                   onPick={() =>
                     setVersionPicker({
                       projectId: result.projectId,
+                      providerId,
                       title: result.title,
                       ...(result.projectUrl
                         ? { projectUrl: result.projectUrl }
@@ -694,7 +779,8 @@ export function PluginsTab({ serverId }: { serverId: string }) {
               ))}
             </div>
           )}
-          {(searchTotal > SEARCH_PAGE_SIZE || searchOffset > 0) && (
+          {completedSearch === searchKey &&
+          (searchTotal > SEARCH_PAGE_SIZE || searchOffset > 0) && (
             <nav
               data-slot="search-pagination"
               aria-label="Catalog search pages"
@@ -780,7 +866,8 @@ export function PluginsTab({ serverId }: { serverId: string }) {
                         <StatusBadge status={plugin.status} />
                       </div>
                       <span className="truncate font-mono text-xs text-muted-foreground">
-                        {plugin.versionNumber} · {plugin.filename}
+                        {plugin.providerId} · {plugin.versionNumber} ·{" "}
+                        {plugin.directory}/{plugin.filename}
                         {plugin.fileSizeBytes !== null
                           ? ` · ${formatBytes(plugin.fileSizeBytes)}`
                           : ""}
@@ -808,10 +895,16 @@ export function PluginsTab({ serverId }: { serverId: string }) {
                       variant="ghost"
                       size="icon-sm"
                       aria-label={`Versions for ${plugin.title}`}
-                      disabled={busyId === plugin.id}
+                      disabled={
+                        busyId === plugin.id ||
+                        !list?.support.providers.some(
+                          (provider) => provider.id === plugin.providerId,
+                        )
+                      }
                       onClick={() =>
                         setVersionPicker({
                           projectId: plugin.projectId,
+                          providerId: plugin.providerId,
                           title: plugin.title,
                           ...(plugin.projectUrl
                             ? { projectUrl: plugin.projectUrl }
@@ -828,7 +921,9 @@ export function PluginsTab({ serverId }: { serverId: string }) {
                       aria-label={`Remove ${plugin.title}`}
                       disabled={busyId === plugin.id}
                       onClick={() => {
-                        setRemoveConfigs(true);
+                        setRemoveConfigs(
+                          list?.support.projectType === "plugin",
+                        );
                         setRemoveTarget(plugin);
                       }}
                     >
@@ -843,11 +938,15 @@ export function PluginsTab({ serverId }: { serverId: string }) {
           {list && list.untracked.length > 0 && (
             <div className="rounded-lg border border-dashed px-3 py-2">
               <p className="text-xs font-medium text-muted-foreground">
-                Present in {list.support.directory} but not managed by the panel:
+                Present in {list.support.directory} but not managed by the
+                panel:
               </p>
               <ul className="mt-1 flex flex-col gap-0.5">
                 {list.untracked.map((name) => (
-                  <li key={name} className="font-mono text-xs text-muted-foreground">
+                  <li
+                    key={name}
+                    className="font-mono text-xs text-muted-foreground"
+                  >
                     {name}
                   </li>
                 ))}
@@ -866,9 +965,10 @@ export function PluginsTab({ serverId }: { serverId: string }) {
         <CardHeader>
           <CardTitle>Auto-update</CardTitle>
           <CardDescription>
-            Check every installed plugin for a newer release-channel version
-            before each start, and install it automatically. Beta and alpha
-            versions are never taken automatically.
+            Check enabled content across all tabs and sources for a newer
+            release-channel version before each start, and install it
+            automatically. Beta and alpha versions are never taken
+            automatically.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex items-center justify-between gap-4">
@@ -876,7 +976,7 @@ export function PluginsTab({ serverId }: { serverId: string }) {
             htmlFor="plugin-auto-update"
             className="text-sm text-muted-foreground"
           >
-            Update plugins automatically before start
+            Update content across all tabs before start
           </label>
           <Switch
             id="plugin-auto-update"
@@ -887,20 +987,29 @@ export function PluginsTab({ serverId }: { serverId: string }) {
       </Card>
 
       {list && (
-        <p className="text-xs text-muted-foreground">
-          Content via {list.support.provider.id} at{" "}
-          {list.support.provider.baseUrl}, downloads from{" "}
-          {list.support.provider.downloadHosts.join(", ")}.
-        </p>
+        <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+          {list.support.providers.map((provider) => (
+            <p key={provider.id}>
+              Content via {provider.id} at {provider.baseUrl}, downloads from{" "}
+              {provider.downloadHosts.join(", ")}.
+            </p>
+          ))}
+        </div>
       )}
 
       {versionPicker && (
         <VersionsDialog
           serverId={serverId}
+          tabId={list?.support.id ?? tabId ?? "plugins"}
+          providerId={versionPicker.providerId}
           project={versionPicker}
-          installedVersionId={list?.plugins.find(
-            (p) => p.projectId === versionPicker.projectId,
-          )?.versionId}
+          installedVersionId={
+            list?.plugins.find(
+              (p) =>
+                p.projectId === versionPicker.projectId &&
+                p.providerId === versionPicker.providerId,
+            )?.versionId
+          }
           gameVersion={list?.support.gameVersion}
           open={versionPicker !== null}
           projectType={list?.support.projectType ?? "plugin"}
@@ -926,29 +1035,31 @@ export function PluginsTab({ serverId }: { serverId: string }) {
             <DialogDescription>
               Deletes{" "}
               <span className="font-mono">{removeTarget?.filename}</span> from{" "}
-              <span className="font-mono">
-                {list?.support.directory}
-              </span>{" "}
-              and removes it from this list.
+              <span className="font-mono">{removeTarget?.directory}</span> and
+              removes it from this list.
             </DialogDescription>
           </DialogHeader>
 
-          <label className="flex items-start gap-2 text-sm">
-            <Checkbox
-              className="mt-0.5"
-              checked={removeConfigs}
-              onCheckedChange={(checked) => setRemoveConfigs(checked === true)}
-              aria-label="Also delete the plugin's config folder"
-            />
-            <span className="text-muted-foreground">
-              Also delete the plugin&apos;s config folder (
-              <span className="font-mono">
-                {list?.support.directory}/{removeTarget?.title}/
+          {list?.support.projectType === "plugin" && (
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox
+                className="mt-0.5"
+                checked={removeConfigs}
+                onCheckedChange={(checked) =>
+                  setRemoveConfigs(checked === true)
+                }
+                aria-label="Also delete the plugin's config folder"
+              />
+              <span className="text-muted-foreground">
+                Also delete the plugin&apos;s config folder (
+                <span className="font-mono">
+                  {removeTarget?.directory}/{removeTarget?.title}/
+                </span>
+                ) with its settings and data. Uncheck to keep configs for a
+                reinstall.
               </span>
-              ) with its settings and data. Uncheck to keep configs for a
-              reinstall.
-            </span>
-          </label>
+            </label>
+          )}
 
           <DialogFooter>
             <Button
