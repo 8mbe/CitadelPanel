@@ -337,7 +337,7 @@ export interface ServerPluginList {
     id: string;
     label: string;
     directory: string;
-    projectType: string;
+    projectType: "mod" | "plugin" | "datapack";
     gameVersion?: string;
     /** Shown in the tab so the content source is never hidden. */
     provider: { id: string; baseUrl: string; downloadHosts: string[] };
@@ -363,6 +363,12 @@ export interface PluginSearchResult {
   gameVersions: string[];
   /** The catalog's page for this project, when the provider declares a site. */
   projectUrl?: string;
+}
+
+/** Manual picker results, including the unfiltered compatibility fallback. */
+export interface PluginVersionList {
+  versions: PluginVersionView[];
+  compatibilityFallback: boolean;
 }
 
 /** A catalog version offered for install. */

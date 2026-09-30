@@ -109,9 +109,36 @@ accept `?provider=...`. Installs carry `tabId`, `providerId`, `projectId` and
 then re-resolves the catalog version before touching files. Single-version
 endpoints may ignore search filters, so installation checks compatibility again.
 
+Catalog search fetches ten projects per page through the panel's `offset`
+parameter and displays the provider's total with previous/next controls.
+Changing the query, tab or source returns to the first page. Responses from an
+older search are ignored, and the displayed results are keyed by server, tab,
+provider, query and offset. Offsets are non-negative safe integers rather than
+clamped to 500, so later pages do not repeat earlier results.
+
 Concrete versions such as `1.21.1` or `26.2` filter search and versions. Sentinels
 such as `LATEST` leave game-version filtering off. The UI asks the operator to
 set a concrete version instead of guessing. Loader filtering still applies.
+
+The manual version picker tries the compatible, installable list first. If
+that list is empty, the panel fetches the selected provider's project versions
+again with loader and game-version filters removed, including providers using
+the plain `{gameVersion}` template. `compatibilityFallback` marks this result,
+and the dialog warns before listing all project versions. Rows show their game
+versions, loaders and selected filename; versions without a JAR/ZIP for the
+active tab remain visible with installation disabled. Both lists are paged
+locally, ten versions at a time, because a provider need not offer a paginated
+version endpoint. Opening another project or source resets the page; moving
+between pages resets the list's scroll position.
+
+Choosing a fallback release explicitly sends `allowIncompatible: true` on the
+install request. Without that boolean, the install route retains its normal
+loader/game-version check. The override is recorded in the install audit row
+when a chosen release mismatches the profile. It only relaxes compatibility:
+project identity, tab/provider selection, file type, filename collision checks
+and pinned download hosts still apply. Providers without a single-version
+endpoint resolve the chosen ID through the unfiltered project list. Automatic
+updates keep using the compatible list and never enter this fallback.
 
 Plugins and mods select `.jar` files; datapacks select `.zip` files. A Modrinth
 project can offer both, and a datapack install must select its ZIP even if the

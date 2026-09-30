@@ -507,7 +507,7 @@ export async function installPlugin(
   actorId: string,
   projectId: string,
   versionId: string,
-  selection?: { tabId?: string; providerId?: string },
+  selection?: { tabId?: string; providerId?: string; allowIncompatible?: boolean },
 ): Promise<void> {
   const ctx = await requirePluginContext(serverId, selection);
 
@@ -516,7 +516,8 @@ export async function installPlugin(
   if (version.projectId && version.projectId !== projectId) {
     throw badRequest("That version belongs to a different plugin.");
   }
-  if (!versionMatchesSupport(ctx.support, version))
+  const incompatible = !versionMatchesSupport(ctx.support, version);
+  if (incompatible && selection?.allowIncompatible !== true)
     throw badRequest(
       "That version does not match this tab's loader and game version.",
     );
@@ -543,6 +544,7 @@ export async function installPlugin(
     metadata: {
       provider: ctx.support.provider.id,
       tab: ctx.tabId,
+      compatibilityOverride: incompatible,
       plugin: project?.title || projectId,
       version: version.versionNumber,
       path: `${ctx.support.directory}/*`,

@@ -333,9 +333,13 @@ export async function engineGetProject(
 export async function engineListVersions(
   support: ResolvedPluginSupport,
   projectId: string,
+  options: { unfiltered?: boolean } = {},
 ): Promise<ProviderVersion[]> {
   const spec = support.provider;
-  const vars = templateVars(spec, support, { projectId });
+  const profile = options.unfiltered
+    ? { ...support, loaders: [], gameVersion: undefined }
+    : support;
+  const vars = templateVars(spec, profile, { projectId });
   const body = await fetchEndpoint(
     spec,
     spec.versions.path,
@@ -351,25 +355,38 @@ export async function engineListVersions(
       `Plugin catalog "${spec.id}" returned an unexpected version list.`,
     );
   }
-  return list
+  const versions = list
     .map((raw) => mapVersion(spec, spec.versions, raw))
-    .filter(
-      (v): v is ProviderVersion =>
-        v !== null && versionMatchesSupport(support, v),
-    )
+    .filter((version): version is ProviderVersion => version !== null)
+    .sort((a, b) => b.datePublished.localeCompare(a.datePublished));
+  if (options.unfiltered) return versions;
+  return versions
+    .filter((version) => versionMatchesSupport(support, version))
     .map((version) => ({
       ...version,
       files: version.files.filter((file) =>
         isContentFilename(file.filename, support.projectType),
       ),
     }))
-    .filter((version) => version.files.length > 0)
-    .sort((a, b) => b.datePublished.localeCompare(a.datePublished));
+    .filter((version) => version.files.length > 0);
+}
+
+/** Only the manual picker can fall back to releases outside the active profile. */
+export async function engineListInstallVersions(
+  support: ResolvedPluginSupport,
+  projectId: string,
+): Promise<{ versions: ProviderVersion[]; compatibilityFallback: boolean }> {
+  const versions = await engineListVersions(support, projectId);
+  if (versions.length > 0) return { versions, compatibilityFallback: false };
+  return {
+    versions: await engineListVersions(support, projectId, { unfiltered: true }),
+    compatibilityFallback: true,
+  };
 }
 
 /**
  * One version by id: via the spec's single-version endpoint when configured,
- * else by scanning the project's version list (still profile-filtered).
+ * else by scanning all versions so an explicit fallback choice can resolve.
  */
 export async function engineGetVersion(
   support: ResolvedPluginSupport,
@@ -387,7 +404,7 @@ export async function engineGetVersion(
     );
     return body === null ? null : mapVersion(spec, spec.version, body);
   }
-  const versions = await engineListVersions(support, projectId);
+  const versions = await engineListVersions(support, projectId, { unfiltered: true });
   return versions.find((v) => v.versionId === versionId) ?? null;
 }
 

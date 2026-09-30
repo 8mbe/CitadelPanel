@@ -22,7 +22,7 @@ import type {
   BlueprintPluginsSpec,
   BlueprintView,
   PluginSearchResult,
-  PluginVersionView,
+  PluginVersionList,
   ServerArchiveView,
   ServerInstallLogView,
   ServerPluginList,
@@ -1642,14 +1642,13 @@ export async function getServerPluginVersions(
   serverId: string,
   projectId: string,
   selection?: { tabId?: string; providerId?: string },
-): Promise<PluginVersionView[]> {
+): Promise<PluginVersionList> {
   const params = new URLSearchParams();
   if (selection?.tabId) params.set("tab", selection.tabId);
   if (selection?.providerId) params.set("provider", selection.providerId);
-  const data = await request<{ versions: PluginVersionView[] }>(
+  return request<PluginVersionList>(
     `/api/servers/${serverId}/plugins/versions/${encodeURIComponent(projectId)}?${params}`,
   );
-  return data.versions;
 }
 
 /**
@@ -1661,7 +1660,7 @@ export function installServerPlugin(
   serverId: string,
   projectId: string,
   versionId: string,
-  selection?: { tabId?: string; providerId?: string },
+  selection?: { tabId?: string; providerId?: string; allowIncompatible?: boolean },
 ): Promise<{ installed: boolean }> {
   return request(`/api/servers/${serverId}/plugins/install`, {
     method: "POST",

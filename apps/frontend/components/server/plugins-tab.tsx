@@ -4,6 +4,9 @@ import * as React from "react";
 import Link from "next/link";
 
 import {
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
   Download,
   ExternalLink,
   History,
@@ -74,8 +77,11 @@ import type {
   PluginVersionView,
   ServerPluginList,
 } from "@/lib/types";
+import { selectPluginVersionFile } from "@/lib/plugin-files";
 
 const compact = new Intl.NumberFormat("en", { notation: "compact" });
+const VERSION_PAGE_SIZE = 10;
+const SEARCH_PAGE_SIZE = 10;
 
 function ChannelBadge({ channel }: { channel: string }) {
   if (channel === "beta" || channel === "alpha") {
@@ -102,6 +108,7 @@ function VersionsDialog({
   project,
   installedVersionId,
   gameVersion,
+  projectType,
   open,
   onOpenChange,
   onInstalled,
@@ -112,29 +119,37 @@ function VersionsDialog({
   project: { projectId: string; title: string; projectUrl?: string };
   installedVersionId?: string;
   gameVersion?: string;
+  projectType: ServerPluginList["support"]["projectType"];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onInstalled: () => void;
 }) {
-  const [versions, setVersions] = React.useState<PluginVersionView[] | null>(
-    null,
-  );
+  const [versions, setVersions] = React.useState<PluginVersionView[] | null>(null);
+  const [compatibilityFallback, setCompatibilityFallback] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [installingId, setInstallingId] = React.useState<string | null>(null);
+  const [versionPage, setVersionPage] = React.useState(0);
+  const versionListRef = React.useRef<HTMLDivElement>(null);
+  const versionOffset = versionPage * VERSION_PAGE_SIZE;
 
   React.useEffect(() => {
     if (!open) return;
     let cancelled = false;
     (async () => {
       setVersions(null);
+      setVersionPage(0);
+      setCompatibilityFallback(false);
       setError(null);
       try {
         const list = await getServerPluginVersions(
-          serverId,
-          project.projectId,
-          { tabId, providerId },
+          serverId, project.projectId, { tabId, providerId },
         );
-        if (!cancelled) setVersions(list);
+        if (!cancelled) {
+          setVersions([...list.versions].sort((a, b) =>
+            b.datePublished.localeCompare(a.datePublished),
+          ));
+          setCompatibilityFallback(list.compatibilityFallback);
+        }
       } catch (err) {
         if (!cancelled) {
           setError(
@@ -156,7 +171,7 @@ function VersionsDialog({
         serverId,
         project.projectId,
         version.versionId,
-        { tabId, providerId },
+        { tabId, providerId, allowIncompatible: compatibilityFallback },
       );
       onInstalled();
       onOpenChange(false);
@@ -165,6 +180,11 @@ function VersionsDialog({
     } finally {
       setInstallingId(null);
     }
+  };
+
+  const changeVersionPage = (page: number) => {
+    setVersionPage(page);
+    versionListRef.current?.scrollTo({ top: 0 });
   };
 
   return (
@@ -187,7 +207,27 @@ function VersionsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex max-h-[24rem] flex-col gap-2 overflow-y-auto">
+        {versions !== null && error && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        {compatibilityFallback && (
+          <Alert>
+            <AlertTriangle />
+            <AlertTitle>No compatible versions found</AlertTitle>
+            <AlertDescription>
+              No installable versions matched this tab&apos;s content type, loader
+              {gameVersion ? ` and Minecraft ${gameVersion}` : ""}.
+              {" "}Showing all versions of this project. Check the game versions
+              and loaders before choosing one; compatibility is not guaranteed.
+            </AlertDescription>
+          </Alert>
+        )}
+        <div
+          ref={versionListRef}
+          className="flex max-h-[24rem] flex-col gap-2 overflow-y-auto"
+        >
           {versions === null ? (
             <div className="flex items-center justify-center py-6 text-muted-foreground">
               {error ? (
@@ -198,13 +238,11 @@ function VersionsDialog({
             </div>
           ) : versions.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
-              No installable files match this tab&apos;s content type, loader
-              and game version.
+              This project has no available versions.
             </p>
           ) : (
-            versions.map((version) => {
-              const file =
-                version.files.find((f) => f.primary) ?? version.files[0];
+            versions.slice(versionOffset, versionOffset + VERSION_PAGE_SIZE).map((version) => {
+              const file = selectPluginVersionFile(version, projectType);
               const installed = version.versionId === installedVersionId;
               const incompatible =
                 gameVersion !== undefined &&
@@ -216,7 +254,7 @@ function VersionsDialog({
                   className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
                 >
                   <div className="flex min-w-0 flex-col gap-0.5">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate font-mono text-sm">
                         {version.versionNumber}
                       </span>
@@ -228,7 +266,10 @@ function VersionsDialog({
                         </Badge>
                       )}
                     </div>
-                    <span className="truncate text-xs text-muted-foreground">
+                    <span
+                      className="truncate text-xs text-muted-foreground"
+                      title={version.gameVersions.join(", ")}
+                    >
                       {[...version.gameVersions]
                         .sort((a, b) => compareGameVersions(b, a))
                         .slice(0, 3)
@@ -238,12 +279,16 @@ function VersionsDialog({
                         ? ` · ${formatRelative(version.datePublished)}`
                         : ""}
                     </span>
+                    <span className="break-all text-xs text-muted-foreground">
+                      {version.loaders.join(", ") || "Loader not specified"}
+                      {file ? ` · ${file.filename}` : " · No installable file for this tab"}
+                    </span>
                   </div>
                   <Button
                     type="button"
                     size="sm"
                     variant={installed ? "outline" : "default"}
-                    disabled={installingId !== null}
+                    disabled={installingId !== null || !file}
                     onClick={() => install(version)}
                   >
                     {installingId === version.versionId ? (
@@ -258,6 +303,40 @@ function VersionsDialog({
             })
           )}
         </div>
+        {versions !== null && versions.length > VERSION_PAGE_SIZE && (
+          <nav
+            data-slot="version-pagination"
+            aria-label="Version pages"
+            className="flex items-center justify-between"
+          >
+            <p aria-live="polite" className="text-xs text-muted-foreground">
+              {versionOffset + 1}–{Math.min(versionOffset + VERSION_PAGE_SIZE, versions.length)}
+              {" "}of {versions.length.toLocaleString()} versions
+            </p>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                aria-label="Previous version page"
+                disabled={versionPage === 0 || installingId !== null}
+                onClick={() => changeVersionPage(versionPage - 1)}
+              >
+                <ChevronLeft />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                aria-label="Next version page"
+                disabled={versionOffset + VERSION_PAGE_SIZE >= versions.length || installingId !== null}
+                onClick={() => changeVersionPage(versionPage + 1)}
+              >
+                <ChevronRight />
+              </Button>
+            </div>
+          </nav>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -375,8 +454,12 @@ export function PluginsTab({
   );
   const [searching, setSearching] = React.useState(false);
   const [searchError, setSearchError] = React.useState<string | null>(null);
+  const [searchPage, setSearchPage] = React.useState({ scope: "", offset: 0 });
+  const searchScope = JSON.stringify([serverId, tabId, providerId, query.trim()]);
+  const searchOffset = searchPage.scope === searchScope ? searchPage.offset : 0;
   const [completedSearch, setCompletedSearch] = React.useState("");
-  const searchKey = JSON.stringify([serverId, tabId, providerId, query.trim()]);
+  const searchKey = JSON.stringify([searchScope, searchOffset]);
+  const [searchTotal, setSearchTotal] = React.useState(0);
 
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [versionPicker, setVersionPicker] = React.useState<{
@@ -424,26 +507,28 @@ export function PluginsTab({
     };
   }, [serverId, tabId, refreshKey]);
 
-  // Ignore in-flight results when the query or provider changes.
+  // Debounce the first page; later pages fetch immediately. Ignore
+  // replies from a previous query or page after its effect has been cleaned up.
   React.useEffect(() => {
     let cancelled = false;
     const text = query.trim();
     if (text.length < 2 || !providerId) return;
     const timer = setTimeout(async () => {
+      setSearchPage({ scope: searchScope, offset: searchOffset });
       setSearching(true);
-      setSearchError(null);
       try {
-        const data = await searchServerPlugins(serverId, text, 0, {
-          tabId,
-          providerId,
-        });
-        if (!cancelled) setResults(data.results);
+        const data = await searchServerPlugins(serverId, text, searchOffset, { tabId, providerId });
+        if (!cancelled) {
+          setResults(data.results);
+          setSearchTotal(data.total);
+          setSearchError(null);
+        }
       } catch (err) {
         if (!cancelled) {
-          setResults(null);
           setSearchError(
             err instanceof ApiError ? err.message : "Search failed.",
           );
+          setResults(null);
         }
       } finally {
         if (!cancelled) {
@@ -451,12 +536,27 @@ export function PluginsTab({
           setCompletedSearch(searchKey);
         }
       }
-    }, 300);
+    }, searchOffset === 0 ? 300 : 0);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [serverId, tabId, query, providerId, searchKey]);
+  }, [serverId, tabId, providerId, query, searchScope, searchOffset, searchKey]);
+
+  const changeSearchQuery = (value: string) => {
+    setQuery(value);
+    setSearchPage({ scope: "", offset: 0 });
+    setSearchTotal(0);
+    setResults(null);
+    setSearchError(null);
+    setSearching(value.trim().length >= 2);
+  };
+
+  const changeSearchPage = (offset: number) => {
+    setSearchPage({ scope: searchScope, offset });
+    setSearchError(null);
+    setSearching(true);
+  };
 
   const reload = () => setRefreshKey((k) => k + 1);
 
@@ -578,10 +678,7 @@ export function PluginsTab({
             Search the catalog and install{" "}
             {list?.support.projectType === "datapack"
               ? "datapacks"
-              : list?.support.projectType === "mod"
-                ? "mods"
-                : "plugins"}{" "}
-            into{" "}
+              : list?.support.projectType === "mod" ? "mods" : "plugins"} into{" "}
             <span className="font-mono">{list?.support.directory ?? "…"}</span>
             {list?.support.gameVersion
               ? ` for Minecraft ${list.support.gameVersion}`
@@ -601,7 +698,13 @@ export function PluginsTab({
               <Select
                 value={providerId}
                 onValueChange={(value) => {
-                  if (value) setProviderId(value);
+                  if (value && value !== providerId) {
+                    setProviderId(value);
+                    setSearchPage({ scope: "", offset: 0 });
+                    setSearchTotal(0);
+                    setResults(null);
+                    setSearchError(null);
+                  }
                 }}
               >
                 <SelectTrigger id="content-provider" className="w-full sm:w-48">
@@ -623,7 +726,7 @@ export function PluginsTab({
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => changeSearchQuery(e.target.value)}
               placeholder="Search the catalog…"
               className="pl-8"
               aria-label="Search the catalog"
@@ -675,6 +778,46 @@ export function PluginsTab({
                 />
               ))}
             </div>
+          )}
+          {completedSearch === searchKey &&
+          (searchTotal > SEARCH_PAGE_SIZE || searchOffset > 0) && (
+            <nav
+              data-slot="search-pagination"
+              aria-label="Catalog search pages"
+              className="flex items-center justify-between"
+            >
+              <p aria-live="polite" className="text-xs text-muted-foreground">
+                {searching
+                  ? "Loading results…"
+                  : searchError
+                    ? `Page ${searchOffset / SEARCH_PAGE_SIZE + 1}`
+                    : results && results.length > 0
+                      ? `${searchOffset + 1}–${searchOffset + results.length} of ${searchTotal.toLocaleString()} results`
+                      : "0 results"}
+              </p>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Previous search page"
+                  disabled={searching || searchOffset === 0}
+                  onClick={() => changeSearchPage(Math.max(0, searchOffset - SEARCH_PAGE_SIZE))}
+                >
+                  <ChevronLeft />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Next search page"
+                  disabled={searching || searchOffset + SEARCH_PAGE_SIZE >= searchTotal}
+                  onClick={() => changeSearchPage(searchOffset + SEARCH_PAGE_SIZE)}
+                >
+                  <ChevronRight />
+                </Button>
+              </div>
+            </nav>
           )}
         </CardContent>
       </Card>
@@ -869,6 +1012,7 @@ export function PluginsTab({
           }
           gameVersion={list?.support.gameVersion}
           open={versionPicker !== null}
+          projectType={list?.support.projectType ?? "plugin"}
           onOpenChange={(open) => {
             if (!open) setVersionPicker(null);
           }}

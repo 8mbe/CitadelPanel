@@ -14,7 +14,7 @@
 
 import { requireServerPermission } from "../auth/middleware";
 import { badRequest, json, noContent, parseJsonBody, requireUuidParam } from "../lib/http";
-import { engineListVersions, engineSearch } from "../plugins/engine";
+import { engineListInstallVersions, engineSearch } from "../plugins/engine";
 import {
   installPlugin,
   listServerPlugins,
@@ -59,7 +59,10 @@ export async function handleSearchServerPlugins(
 
   const url = new URL(request.url);
   const text = (url.searchParams.get("q") ?? "").trim().slice(0, 100);
-  const offset = Math.max(0, Math.min(Number(url.searchParams.get("offset") ?? 0) || 0, 500));
+  const offset = Number(url.searchParams.get("offset") ?? 0);
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw badRequest("Offset must be a non-negative integer.");
+  }
 
   return json(
     await engineSearch(ctx.support, { text, offset, limit: 10 }),
@@ -79,9 +82,7 @@ export async function handleListPluginVersions(
   if (!PROJECT_ID.test(projectId)) {
     throw badRequest("Invalid project id.");
   }
-  return json({
-    versions: await engineListVersions(ctx.support, projectId),
-  });
+  return json(await engineListInstallVersions(ctx.support, projectId));
 }
 
 /**
@@ -108,8 +109,12 @@ export async function handleInstallPlugin(
   for (const key of ["tabId", "providerId"] as const) {
     if (body[key] !== undefined && (typeof body[key] !== "string" || !SELECTION_ID.test(body[key] as string))) throw badRequest(`Invalid ${key}.`);
   }
+  if (body.allowIncompatible !== undefined && typeof body.allowIncompatible !== "boolean") {
+    throw badRequest('"allowIncompatible" must be a boolean.');
+  }
   await installPlugin(id, user.id, body.projectId, body.versionId, {
     tabId: body.tabId as string | undefined, providerId: body.providerId as string | undefined,
+    allowIncompatible: body.allowIncompatible as boolean | undefined,
   });
   return json({ installed: true }, 201);
 }
