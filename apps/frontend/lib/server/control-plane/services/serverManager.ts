@@ -208,6 +208,7 @@ export interface ServerSummary {
     label: string;
     providerId: string;
     directory: string;
+    tabs: { id: string; label: string; directory: string; providerIds: string[] }[];
   } | null;
 }
 

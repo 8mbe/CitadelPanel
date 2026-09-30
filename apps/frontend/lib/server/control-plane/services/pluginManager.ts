@@ -19,7 +19,9 @@ import { sql } from "../db/client";
 import { badRequest, conflict, HttpError, notFound } from "../lib/http";
 import { getBlueprintById } from "../blueprints/registry";
 import {
-  resolvePluginSupport,
+  resolvePluginTabs,
+  resolvedTabSupport,
+  type ResolvedPluginTab,
   type ResolvedPluginSupport,
 } from "../blueprints/plugins";
 import {
@@ -27,8 +29,8 @@ import {
   engineGetProject,
   engineGetVersion,
   engineListVersions,
-  pickVersionFile,
   providerProjectUrl,
+  versionMatchesSupport,
   type ProviderVersion,
 } from "../plugins/engine";
 import {
@@ -38,22 +40,35 @@ import {
   renameServerFile,
 } from "../nodes/nodeServerApi";
 import { recordAudit } from "./auditLog";
+import { isContentFilename, pickContentFile } from "../plugins/files";
+import { beginPluginWrite } from "../plugins/write-lock";
 
-/**
- * Only plain `.jar` files, no path separators, no leading dot. A hostile
- * catalog response must not be able to name its way out of the install
- * directory (the agent's path containment is the backstop, this is the fence).
- */
-const JAR_FILENAME = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,120}\.jar$/;
+async function withPluginMutation<T>(
+  serverId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const release = beginPluginWrite(serverId);
+  if (!release)
+    throw conflict("Another content change is in progress. Try again shortly.");
+  try {
+    return await operation();
+  } finally {
+    release();
+  }
+}
+
 /** Disabled plugins keep the same file with this suffix, which loaders skip. */
 const DISABLED_SUFFIX = ".disabled";
-const JAR_LIKE = /\.jar(\.disabled)?$/;
+const CONTENT_LIKE = /\.(jar|zip)(\.disabled)?$/;
 
 interface PluginRow {
   id: string;
+  tab_id: string;
+  install_directory: string | null;
   provider: string;
   project_id: string;
   project_slug: string | null;
+  project_author: string | null;
   project_title: string;
   project_icon_url: string | null;
   version_id: string;
@@ -68,6 +83,9 @@ interface PluginRow {
 
 export interface InstalledPluginView {
   id: string;
+  providerId: string;
+  tabId: string;
+  directory: string;
   projectId: string;
   slug: string | null;
   title: string;
@@ -88,12 +106,14 @@ export interface InstalledPluginView {
 
 export interface ServerPluginList {
   support: {
+    id: string;
     label: string;
     directory: string;
     projectType: string;
     gameVersion?: string;
     /** Surfaced in the UI so the content source is never hidden. */
     provider: { id: string; baseUrl: string; downloadHosts: string[] };
+    providers: { id: string; baseUrl: string; downloadHosts: string[] }[];
   };
   autoUpdate: boolean;
   /** False when the directory listing failed (node down): DB state only. */
@@ -107,6 +127,8 @@ export interface PluginContext {
   nodeId: string;
   autoUpdate: boolean;
   support: ResolvedPluginSupport;
+  tabId: string;
+  tabs: ResolvedPluginTab[];
 }
 
 /**
@@ -137,6 +159,7 @@ async function loadPluginServerFields(
 async function loadPluginContext(
   serverId: string,
   preloaded?: PluginServerFields,
+  selection?: { tabId?: string; providerId?: string },
 ): Promise<PluginContext | null> {
   const server = preloaded ?? (await loadPluginServerFields(serverId));
 
@@ -150,24 +173,39 @@ async function loadPluginContext(
   `) as { key: string; value: string }[];
   const env = Object.fromEntries(envRows.map((r) => [r.key, r.value]));
 
-  const support = resolvePluginSupport(blueprint, env);
-  if (!support) return null;
+  const tabs = resolvePluginTabs(blueprint, env);
+  const tab = selection?.tabId
+    ? tabs.find((tab) => tab.id === selection.tabId)
+    : tabs[0];
+  if (!tab) return null;
+  const provider = selection?.providerId
+    ? tab.providers.find((provider) => provider.id === selection.providerId)
+    : tab.providers[0];
+  if (!provider)
+    throw badRequest("That provider is not configured for this tab.");
+  const tabId = tab.id;
+  const support = resolvedTabSupport(tab, provider);
 
   return {
     serverId,
     nodeId: server.node_id,
     autoUpdate: server.plugin_auto_update,
     support,
+    tabId,
+    tabs,
   };
 }
 
 /** Like {@link loadPluginContext} but throws for routes. */
 export async function requirePluginContext(
   serverId: string,
+  selection?: { tabId?: string; providerId?: string },
 ): Promise<PluginContext> {
-  const ctx = await loadPluginContext(serverId);
+  const ctx = await loadPluginContext(serverId, undefined, selection);
   if (!ctx) {
-    throw notFound("This server's blueprint has no plugin support for its current configuration.");
+    throw notFound(
+      "This server's blueprint has no plugin support for its current configuration.",
+    );
   }
   return ctx;
 }
@@ -186,6 +224,12 @@ export async function getServerPluginSupportSummary(
   label: string;
   providerId: string;
   directory: string;
+  tabs: {
+    id: string;
+    label: string;
+    directory: string;
+    providerIds: string[];
+  }[];
 } | null> {
   const ctx = await loadPluginContext(serverId, preloaded);
   if (!ctx) return null;
@@ -193,6 +237,12 @@ export async function getServerPluginSupportSummary(
     label: ctx.support.label,
     providerId: ctx.support.provider.id,
     directory: ctx.support.directory,
+    tabs: ctx.tabs.map((tab) => ({
+      id: tab.id,
+      label: tab.label,
+      directory: tab.directory,
+      providerIds: tab.providers.map((provider) => provider.id),
+    })),
   };
 }
 
@@ -203,6 +253,9 @@ function toView(
 ): InstalledPluginView {
   return {
     id: row.id,
+    providerId: row.provider,
+    tabId: row.tab_id,
+    directory: row.install_directory ?? support.directory,
     projectId: row.project_id,
     slug: row.project_slug,
     title: row.project_title,
@@ -211,17 +264,48 @@ function toView(
     versionNumber: row.version_number,
     channel: row.version_type,
     filename: row.filename,
-    fileSizeBytes: row.file_size_bytes === null ? null : Number(row.file_size_bytes),
+    fileSizeBytes:
+      row.file_size_bytes === null ? null : Number(row.file_size_bytes),
     enabled: row.enabled,
     installedAt: row.installed_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     status,
     projectUrl:
-      providerProjectUrl(support.provider, {
-        projectId: row.project_id,
-        slug: row.project_slug,
-        projectType: support.projectType,
-      }) ?? null,
+      row.provider === support.provider.id
+        ? (providerProjectUrl(support.provider, {
+            projectId: row.project_id,
+            slug: row.project_slug,
+            author: row.project_author,
+            projectType: support.projectType,
+          }) ?? null)
+        : null,
+  };
+}
+
+async function requireInstalledPlugin(
+  serverId: string,
+  pluginId: string,
+): Promise<{ ctx: PluginContext; row: PluginRow }> {
+  const ctx = await requirePluginContext(serverId);
+  const rows =
+    (await sql`SELECT * FROM server_plugins WHERE id = ${pluginId} AND server_id = ${serverId}`) as unknown as PluginRow[];
+  const row = rows[0];
+  if (!row) throw notFound("Plugin not found");
+  const tab = ctx.tabs.find((tab) => tab.id === row.tab_id);
+  return {
+    row,
+    ctx: {
+      ...ctx,
+      tabId: row.tab_id,
+      support: {
+        ...(tab ?? ctx.support),
+        provider:
+          tab?.providers.find((provider) => provider.id === row.provider) ??
+          ctx.support.provider,
+        directory:
+          row.install_directory ?? tab?.directory ?? ctx.support.directory,
+      },
+    },
   };
 }
 
@@ -232,7 +316,11 @@ async function deletePluginFileBestEffort(
 ): Promise<void> {
   for (const name of [filename, `${filename}${DISABLED_SUFFIX}`]) {
     try {
-      await deleteServerFile(ctx.nodeId, ctx.serverId, `/${ctx.support.directory}/${name}`);
+      await deleteServerFile(
+        ctx.nodeId,
+        ctx.serverId,
+        `/${ctx.support.directory}/${name}`,
+      );
     } catch (error) {
       if (error instanceof HttpError && error.status === 404) continue;
       throw error;
@@ -248,43 +336,137 @@ async function deletePluginFileBestEffort(
  */
 async function applyVersion(
   ctx: PluginContext,
-  meta: { projectId: string; slug?: string; title: string; iconUrl?: string },
+  meta: {
+    projectId: string;
+    slug?: string;
+    author?: string;
+    title: string;
+    iconUrl?: string;
+  },
   version: ProviderVersion,
   installedBy: string | null,
 ): Promise<void> {
-  const file = pickVersionFile(version);
-  if (!file) throw badRequest("That version has no downloadable files.");
-  assertDownloadUrl(ctx.support.provider, file.url);
-  if (!JAR_FILENAME.test(file.filename)) {
-    throw badRequest(
-      `The catalog returned an unexpected filename ("${file.filename}").`,
-    );
-  }
+  return withPluginMutation(ctx.serverId, async () => {
+    const file = pickContentFile(version.files, ctx.support.projectType);
+    if (!file)
+      throw badRequest(
+        `That version has no installable ${ctx.support.projectType === "datapack" ? "ZIP" : "JAR"} file.`,
+      );
+    assertDownloadUrl(ctx.support.provider, file.url);
 
-  const target = `${ctx.support.directory}/${file.filename}`;
-  const existing = (await sql`
-    SELECT filename FROM server_plugins
+    const target = `${ctx.support.directory}/${file.filename}`;
+    const existing = (await sql`
+    SELECT filename, enabled, install_directory FROM server_plugins
     WHERE server_id = ${ctx.serverId}
+      AND tab_id = ${ctx.tabId}
       AND provider = ${ctx.support.provider.id}
       AND project_id = ${meta.projectId}
-  `) as { filename: string }[];
+  `) as {
+      filename: string;
+      enabled: boolean;
+      install_directory: string | null;
+    }[];
 
-  const result = await pullServerFileFromUrl(ctx.nodeId, ctx.serverId, target, file.url);
+    const conflicts = await sql`
+    SELECT id FROM server_plugins
+    WHERE server_id = ${ctx.serverId}
+      AND COALESCE(install_directory, ${ctx.support.directory}) = ${ctx.support.directory}
+      AND filename = ${file.filename}
+      AND NOT (tab_id = ${ctx.tabId} AND provider = ${ctx.support.provider.id} AND project_id = ${meta.projectId})
+  `;
+    if (conflicts.length)
+      throw conflict(
+        "Another installed project already uses that filename in this directory.",
+      );
+    try {
+      const listing = await listServerFiles(
+        ctx.nodeId,
+        ctx.serverId,
+        `/${ctx.support.directory}`,
+      );
+      const ownsTarget =
+        existing[0]?.filename === file.filename &&
+        (existing[0].install_directory ?? ctx.support.directory) ===
+          ctx.support.directory;
+      if (
+        !ownsTarget &&
+        listing.entries.some(
+          (entry) =>
+            entry.name === file.filename ||
+            entry.name === `${file.filename}${DISABLED_SUFFIX}`,
+        )
+      ) {
+        throw conflict(
+          "A file with that name already exists. Remove it or choose another version.",
+        );
+      }
+    } catch (error) {
+      if (!(error instanceof HttpError && error.status === 404)) throw error;
+    }
 
-  if (existing[0] && existing[0].filename !== file.filename) {
-    await deletePluginFileBestEffort(ctx, existing[0].filename);
-  }
+    const result = await pullServerFileFromUrl(
+      ctx.nodeId,
+      ctx.serverId,
+      target,
+      file.url,
+    );
 
-  await sql`
+    if (existing[0]?.enabled === false) {
+      if (
+        existing[0].filename === file.filename &&
+        (existing[0].install_directory ?? ctx.support.directory) ===
+          ctx.support.directory
+      ) {
+        try {
+          await deleteServerFile(
+            ctx.nodeId,
+            ctx.serverId,
+            `/${target}${DISABLED_SUFFIX}`,
+          );
+        } catch (error) {
+          if (!(error instanceof HttpError && error.status === 404))
+            throw error;
+        }
+      }
+      await renameServerFile(
+        ctx.nodeId,
+        ctx.serverId,
+        `/${target}`,
+        `/${target}${DISABLED_SUFFIX}`,
+      );
+    }
+
+    if (
+      existing[0] &&
+      (existing[0].filename !== file.filename ||
+        (existing[0].install_directory ?? ctx.support.directory) !==
+          ctx.support.directory)
+    ) {
+      await deletePluginFileBestEffort(
+        {
+          ...ctx,
+          support: {
+            ...ctx.support,
+            directory: existing[0].install_directory ?? ctx.support.directory,
+          },
+        },
+        existing[0].filename,
+      );
+    }
+
+    await sql`
     INSERT INTO server_plugins (
-      server_id, provider, project_id, project_slug, project_title,
+      server_id, tab_id, install_directory, provider, project_id, project_slug, project_author, project_title,
       project_icon_url, version_id, version_number, version_type, filename,
       file_size_bytes, enabled, installed_by, installed_at, updated_at
     ) VALUES (
       ${ctx.serverId},
+      ${ctx.tabId},
+      ${ctx.support.directory},
       ${ctx.support.provider.id},
       ${meta.projectId},
       ${meta.slug ?? null},
+      ${meta.author ?? null},
       ${meta.title},
       ${meta.iconUrl ?? null},
       ${version.versionId},
@@ -297,8 +479,10 @@ async function applyVersion(
       now(),
       now()
     )
-    ON CONFLICT (server_id, provider, project_id) DO UPDATE SET
+    ON CONFLICT (server_id, tab_id, provider, project_id) DO UPDATE SET
+      install_directory = EXCLUDED.install_directory,
       project_slug      = EXCLUDED.project_slug,
+      project_author    = EXCLUDED.project_author,
       project_title     = EXCLUDED.project_title,
       project_icon_url  = EXCLUDED.project_icon_url,
       version_id        = EXCLUDED.version_id,
@@ -310,6 +494,7 @@ async function applyVersion(
       installed_at      = now(),
       updated_at        = now()
   `;
+  });
 }
 
 /**
@@ -322,14 +507,19 @@ export async function installPlugin(
   actorId: string,
   projectId: string,
   versionId: string,
+  selection?: { tabId?: string; providerId?: string },
 ): Promise<void> {
-  const ctx = await requirePluginContext(serverId);
+  const ctx = await requirePluginContext(serverId, selection);
 
   const version = await engineGetVersion(ctx.support, projectId, versionId);
   if (!version) throw badRequest("That version does not exist in the catalog.");
   if (version.projectId && version.projectId !== projectId) {
     throw badRequest("That version belongs to a different plugin.");
   }
+  if (!versionMatchesSupport(ctx.support, version))
+    throw badRequest(
+      "That version does not match this tab's loader and game version.",
+    );
 
   const project = await engineGetProject(ctx.support, projectId);
   await applyVersion(
@@ -337,6 +527,7 @@ export async function installPlugin(
     {
       projectId,
       ...(project?.slug ? { slug: project.slug } : {}),
+      ...(project?.author ? { author: project.author } : {}),
       title: project?.title || projectId,
       ...(project?.iconUrl ? { iconUrl: project.iconUrl } : {}),
     },
@@ -351,6 +542,7 @@ export async function installPlugin(
     targetId: serverId,
     metadata: {
       provider: ctx.support.provider.id,
+      tab: ctx.tabId,
       plugin: project?.title || projectId,
       version: version.versionNumber,
       path: `${ctx.support.directory}/*`,
@@ -364,48 +556,44 @@ export async function togglePlugin(
   actorId: string,
   pluginId: string,
 ): Promise<void> {
-  const ctx = await requirePluginContext(serverId);
+  return withPluginMutation(serverId, async () => {
+    const { ctx, row } = await requireInstalledPlugin(serverId, pluginId);
 
-  const rows = (await sql`
-    SELECT filename, enabled, project_title FROM server_plugins
-    WHERE id = ${pluginId} AND server_id = ${serverId}
-  `) as { filename: string; enabled: boolean; project_title: string }[];
-  const row = rows[0];
-  if (!row) throw notFound("Plugin not found");
-
-  const base = `/${ctx.support.directory}/${row.filename}`;
-  try {
-    await renameServerFile(
-      ctx.nodeId,
-      ctx.serverId,
-      row.enabled ? base : `${base}${DISABLED_SUFFIX}`,
-      row.enabled ? `${base}${DISABLED_SUFFIX}` : base,
-    );
-  } catch (error) {
-    if (error instanceof HttpError && error.status === 404) {
-      throw conflict(
-        "The plugin file is missing on disk. Reinstall or remove it instead.",
+    const base = `/${ctx.support.directory}/${row.filename}`;
+    try {
+      await renameServerFile(
+        ctx.nodeId,
+        ctx.serverId,
+        row.enabled ? base : `${base}${DISABLED_SUFFIX}`,
+        row.enabled ? `${base}${DISABLED_SUFFIX}` : base,
       );
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 404) {
+        throw conflict(
+          "The plugin file is missing on disk. Reinstall or remove it instead.",
+        );
+      }
+      throw error;
     }
-    throw error;
-  }
 
-  const enabled = !row.enabled;
-  await sql`
+    const enabled = !row.enabled;
+    await sql`
     UPDATE server_plugins SET enabled = ${enabled}, updated_at = now()
     WHERE id = ${pluginId}
   `;
 
-  await recordAudit({
-    userId: actorId,
-    action: "server.plugin.toggle",
-    targetType: "server",
-    targetId: serverId,
-    metadata: {
-      provider: ctx.support.provider.id,
-      plugin: row.project_title,
-      enabled,
-    },
+    await recordAudit({
+      userId: actorId,
+      action: "server.plugin.toggle",
+      targetType: "server",
+      targetId: serverId,
+      metadata: {
+        provider: row.provider,
+        tab: row.tab_id,
+        plugin: row.project_title,
+        enabled,
+      },
+    });
   });
 }
 
@@ -428,60 +616,57 @@ export async function removePlugin(
   pluginId: string,
   deleteData: boolean,
 ): Promise<void> {
-  const ctx = await requirePluginContext(serverId);
+  return withPluginMutation(serverId, async () => {
+    const { ctx, row } = await requireInstalledPlugin(serverId, pluginId);
 
-  const rows = (await sql`
-    SELECT filename, project_slug, project_title FROM server_plugins
-    WHERE id = ${pluginId} AND server_id = ${serverId}
-  `) as { filename: string; project_slug: string | null; project_title: string }[];
-  const row = rows[0];
-  if (!row) throw notFound("Plugin not found");
+    await deletePluginFileBestEffort(ctx, row.filename);
 
-  await deletePluginFileBestEffort(ctx, row.filename);
-
-  const deletedConfigDirs: string[] = [];
-  if (deleteData) {
-    const wanted = new Set(
-      [row.project_title, row.project_slug]
-        .filter((name): name is string => name !== null)
-        .map((name) => name.toLowerCase()),
-    );
-    try {
-      const listing = await listServerFiles(
-        ctx.nodeId,
-        serverId,
-        `/${ctx.support.directory}`,
+    const deletedConfigDirs: string[] = [];
+    if (deleteData && ctx.support.projectType === "plugin") {
+      const wanted = new Set(
+        [row.project_title, row.project_slug]
+          .filter((name): name is string => name !== null)
+          .map((name) => name.toLowerCase()),
       );
-      for (const entry of listing.entries) {
-        if (entry.type === "directory" && wanted.has(entry.name.toLowerCase())) {
-          await deleteServerFile(
-            ctx.nodeId,
-            serverId,
-            `/${ctx.support.directory}/${entry.name}`,
-          );
-          deletedConfigDirs.push(entry.name);
+      try {
+        const listing = await listServerFiles(
+          ctx.nodeId,
+          serverId,
+          `/${ctx.support.directory}`,
+        );
+        for (const entry of listing.entries) {
+          if (
+            entry.type === "directory" &&
+            wanted.has(entry.name.toLowerCase())
+          ) {
+            await deleteServerFile(
+              ctx.nodeId,
+              serverId,
+              `/${ctx.support.directory}/${entry.name}`,
+            );
+            deletedConfigDirs.push(entry.name);
+          }
         }
+      } catch {
+        // The jar is already gone; leave the configs rather than aborting.
       }
-    } catch {
-      // The jar is already gone; leave the configs rather than aborting.
     }
-  }
 
-  await sql`DELETE FROM server_plugins WHERE id = ${pluginId}`;
+    await sql`DELETE FROM server_plugins WHERE id = ${pluginId}`;
 
-  await recordAudit({
-    userId: actorId,
-    action: "server.plugin.remove",
-    targetType: "server",
-    targetId: serverId,
-    metadata: {
-      provider: ctx.support.provider.id,
-      plugin: row.project_title,
-      filename: row.filename,
-      ...(deletedConfigDirs.length > 0
-        ? { deletedConfigDirs }
-        : {}),
-    },
+    await recordAudit({
+      userId: actorId,
+      action: "server.plugin.remove",
+      targetType: "server",
+      targetId: serverId,
+      metadata: {
+        provider: row.provider,
+        tab: row.tab_id,
+        plugin: row.project_title,
+        filename: row.filename,
+        ...(deletedConfigDirs.length > 0 ? { deletedConfigDirs } : {}),
+      },
+    });
   });
 }
 
@@ -510,61 +695,91 @@ export async function setPluginAutoUpdate(
  */
 export async function listServerPlugins(
   serverId: string,
+  tabId?: string,
 ): Promise<ServerPluginList> {
-  const ctx = await requirePluginContext(serverId);
+  const ctx = await requirePluginContext(serverId, { tabId });
   const support = ctx.support;
 
   const rows = (await sql`
-    SELECT * FROM server_plugins WHERE server_id = ${serverId}
+    SELECT * FROM server_plugins WHERE server_id = ${serverId} AND tab_id = ${ctx.tabId}
     ORDER BY project_title ASC
   `) as unknown as PluginRow[];
 
-  let files: string[] | null = null;
-  try {
-    const listing = await listServerFiles(
-      ctx.nodeId,
-      serverId,
-      `/${ctx.support.directory}`,
-    );
-    files = listing.entries.filter((e) => e.type === "file").map((e) => e.name);
-  } catch {
-    files = null;
-  }
-
+  const tab = ctx.tabs.find((tab) => tab.id === ctx.tabId)!;
+  const directories = [
+    ...new Set([
+      support.directory,
+      ...rows.map((row) => row.install_directory ?? support.directory),
+    ]),
+  ];
+  const listings = new Map(
+    await Promise.all(
+      directories.map(async (directory) => {
+        try {
+          const listing = await listServerFiles(
+            ctx.nodeId,
+            serverId,
+            `/${directory}`,
+          );
+          return [
+            directory,
+            listing.entries
+              .filter((entry) => entry.type === "file")
+              .map((entry) => entry.name),
+          ] as const;
+        } catch {
+          return [directory, null] as const;
+        }
+      }),
+    ),
+  );
   const claimed = new Set<string>();
   const plugins = rows.map((row) => {
-    claimed.add(row.filename);
-    claimed.add(`${row.filename}${DISABLED_SUFFIX}`);
+    const directory = row.install_directory ?? support.directory;
+    if (directory === support.directory) {
+      claimed.add(row.filename);
+      claimed.add(`${row.filename}${DISABLED_SUFFIX}`);
+    }
+    const files = listings.get(directory);
     const present =
-      files === null
-        ? true
-        : files.includes(row.filename) ||
-          files.includes(`${row.filename}${DISABLED_SUFFIX}`);
+      files == null ||
+      files.includes(row.filename) ||
+      files.includes(`${row.filename}${DISABLED_SUFFIX}`);
     const status: InstalledPluginView["status"] = !present
       ? "missing"
       : row.enabled
         ? "enabled"
         : "disabled";
-    return toView(row, status, support);
+    return toView(row, status, {
+      ...support,
+      provider:
+        tab.providers.find((provider) => provider.id === row.provider) ??
+        support.provider,
+    });
   });
-
+  const providerView = (provider: ResolvedPluginSupport["provider"]) => ({
+    id: provider.id,
+    baseUrl: provider.baseUrl,
+    downloadHosts: provider.downloadHosts,
+  });
+  const files = listings.get(support.directory);
   return {
     support: {
+      id: ctx.tabId,
       label: support.label,
       directory: support.directory,
       projectType: support.projectType,
       ...(support.gameVersion ? { gameVersion: support.gameVersion } : {}),
-      provider: {
-        id: ctx.support.provider.id,
-        baseUrl: ctx.support.provider.baseUrl,
-        downloadHosts: ctx.support.provider.downloadHosts,
-      },
+      provider: providerView(support.provider),
+      providers: tab.providers.map(providerView),
     },
     autoUpdate: ctx.autoUpdate,
-    reconciled: files !== null,
+    reconciled: [...listings.values()].every((listing) => listing !== null),
     plugins,
     untracked:
-      files === null ? [] : files.filter((n) => JAR_LIKE.test(n) && !claimed.has(n)),
+      files == null
+        ? []
+        : files.filter((name) => CONTENT_LIKE.test(name) && !claimed.has(name)),
   };
 }
 
@@ -585,39 +800,65 @@ export async function autoUpdateServerPlugins(serverId: string): Promise<void> {
     // Version filtering uses the user-set version env: a concrete value
     // filters update candidates by compatibility, a sentinel like LATEST
     // filters by loaders only.
-    const support = ctx.support;
-
     const rows = (await sql`
       SELECT * FROM server_plugins
       WHERE server_id = ${serverId}
-        AND provider = ${ctx.support.provider.id}
         AND enabled = TRUE
     `) as unknown as PluginRow[];
     if (rows.length === 0) return;
 
     const checks = await Promise.all(
       rows.map(async (row) => {
+        const tab = ctx.tabs.find((tab) => tab.id === row.tab_id);
+        const provider = tab?.providers.find(
+          (provider) => provider.id === row.provider,
+        );
+        if (!tab || !provider) return { row, latest: null, context: ctx };
+        const context: PluginContext = {
+          ...ctx,
+          tabId: tab.id,
+          support: {
+            ...tab,
+            provider,
+            directory: row.install_directory ?? tab.directory,
+          },
+        };
         try {
-          const versions = await engineListVersions(support, row.project_id);
+          const versions = await engineListVersions(
+            context.support,
+            row.project_id,
+          );
           const latest =
-            versions.find((v) => v.channel === "release" && v.files.length > 0) ??
-            null;
-          return { row, latest };
+            versions.find(
+              (v) =>
+                v.channel === "release" &&
+                v.files.some((file) =>
+                  isContentFilename(file.filename, tab.projectType),
+                ),
+            ) ?? null;
+          return { row, latest, context };
         } catch {
-          return { row, latest: null };
+          return { row, latest: null, context };
         }
       }),
     );
 
-    const updated: { plugin: string; from: string; to: string }[] = [];
-    for (const { row, latest } of checks) {
+    const updated: {
+      tab: string;
+      provider: string;
+      plugin: string;
+      from: string;
+      to: string;
+    }[] = [];
+    for (const { row, latest, context } of checks) {
       if (!latest || latest.versionId === row.version_id) continue;
       try {
         await applyVersion(
-          ctx,
+          context,
           {
             projectId: row.project_id,
             ...(row.project_slug ? { slug: row.project_slug } : {}),
+            ...(row.project_author ? { author: row.project_author } : {}),
             title: row.project_title,
             ...(row.project_icon_url ? { iconUrl: row.project_icon_url } : {}),
           },
@@ -625,6 +866,8 @@ export async function autoUpdateServerPlugins(serverId: string): Promise<void> {
           null,
         );
         updated.push({
+          tab: row.tab_id,
+          provider: row.provider,
           plugin: row.project_title,
           from: row.version_number,
           to: latest.versionNumber,
@@ -642,10 +885,7 @@ export async function autoUpdateServerPlugins(serverId: string): Promise<void> {
         action: "server.plugin.auto-update",
         targetType: "server",
         targetId: serverId,
-        metadata: {
-          provider: ctx.support.provider.id,
-          updated,
-        },
+        metadata: { updated },
       });
     }
   } catch (error) {

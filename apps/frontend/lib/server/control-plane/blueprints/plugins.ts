@@ -19,7 +19,7 @@
  * cannot aim the panel or its auto-updater at internal infrastructure), exact
  * hostname pins for downloads (`downloadHosts`, re-checked against every file
  * URL at install time), a fixed set of endpoints (search/project/versions/
- * version, GET only), and size caps. Files themselves land as inert `.jar`
+ * version, GET only), and size caps. Files themselves land as inert `.jar`/`.zip`
  * writes through the node agent's contained, size-capped `files/pull`.
  *
  * The one URL the browser ever sees is the optional project-page link
@@ -39,6 +39,7 @@ const TEMPLATE_VARIABLES = [
   "versionId",
   "loaders",
   "gameVersions",
+  "gameVersion",
   "facets",
 ] as const;
 
@@ -48,7 +49,7 @@ const TEMPLATE_VARIABLES = [
  * click on the catalog's *site*, not a request the panel makes to its API, so
  * it has its own (smaller) vocabulary.
  */
-const PROJECT_PAGE_VARIABLES = ["projectId", "slug", "projectType"] as const;
+const PROJECT_PAGE_VARIABLES = ["projectId", "slug", "projectType", "author"] as const;
 
 /** Where a search facet group draws its values from. */
 export type FacetSource = "projectType" | "loaders" | "gameVersion";
@@ -87,6 +88,7 @@ export interface ProjectEndpointSpec {
   fields: {
     projectId: FieldPath;
     slug?: FieldPath;
+    author?: FieldPath;
     title: FieldPath;
     iconUrl?: FieldPath;
     description?: FieldPath;
@@ -96,6 +98,8 @@ export interface ProjectEndpointSpec {
 export interface VersionFileMapping {
   /** Where the file array lives within a version object (usually "files"). */
   path: FieldPath;
+  /** A single file object instead of an array, e.g. Hangar downloads.PAPER. */
+  single?: boolean;
   fields: {
     url: FieldPath;
     filename: FieldPath;
@@ -134,6 +138,8 @@ export interface PluginFetchSpec {
   baseUrl: string;
   /** The only hosts version files may download from. */
   downloadHosts: string[];
+  /** Catalogs with custom channels must explicitly name stable releases. */
+  releaseChannels?: string[];
   /**
    * The catalog's human-facing site origin (e.g. "https://modrinth.com"),
    * https only, distinct from `baseUrl`, which is its API. Set together with
@@ -158,6 +164,8 @@ export interface PluginFetchSpec {
 export type PluginProjectType = "mod" | "plugin" | "datapack";
 
 export interface BlueprintPluginProfile {
+  /** Optional subset of this tab's providers, for env-driven loader profiles. */
+  providerIds?: string[];
   /** Tab label for this profile (e.g. "Plugins", "Mods"). */
   label?: string;
   /**
@@ -184,7 +192,7 @@ export interface BlueprintPluginProfile {
   gameVersionEnv?: string;
 }
 
-export interface BlueprintPluginSupport {
+export interface BlueprintPluginLegacySupport {
   /** Fallback tab label for profiles that don't set one. */
   label?: string;
   /**
@@ -200,6 +208,21 @@ export interface BlueprintPluginSupport {
   default?: BlueprintPluginProfile;
   /** The provider definition (fetch spec). */
   provider: PluginFetchSpec;
+}
+
+export interface BlueprintPluginTab extends Omit<BlueprintPluginLegacySupport, "provider"> {
+  /** Stable identity in URLs and installed rows; labels may change freely. */
+  id: string;
+  providers: PluginFetchSpec[];
+}
+
+export type BlueprintPluginSupport = BlueprintPluginLegacySupport | {
+  tabs: BlueprintPluginTab[];
+};
+
+export interface ResolvedPluginTab extends Omit<ResolvedPluginSupport, "provider"> {
+  id: string;
+  providers: PluginFetchSpec[];
 }
 
 /**
@@ -229,7 +252,7 @@ const FIELD_PATH = /^[A-Za-z0-9_.]{1,64}$/;
 const FACET_PREFIX = /^[a-z_]{1,16}:$/;
 /** Concrete "1.20.4"-style versions; sentinels like LATEST don't filter. */
 const CONCRETE_GAME_VERSION = /^\d+\.\d+(\.\d+)?$/;
-const MAX_SECTION_BYTES = 16_384;
+const MAX_SECTION_BYTES = 65_536;
 
 const DEFAULT_LABELS: Record<PluginProjectType, string> = {
   plugin: "Plugins",
@@ -376,6 +399,9 @@ function parseFetchSpec(
     errors.push('plugins.provider: "id" must be [a-z0-9-]{1,32}, e.g. "modrinth"');
   }
   parseHttpsOrigin(value.baseUrl, "plugins.provider.baseUrl", isBlockedHost, errors);
+  if (value.releaseChannels !== undefined && (!Array.isArray(value.releaseChannels) || value.releaseChannels.length < 1 || value.releaseChannels.length > 8 || value.releaseChannels.some((channel) => typeof channel !== "string" || channel.length < 1 || channel.length > 32))) {
+    errors.push("plugins.provider.releaseChannels: must contain 1-8 channel names of 1-32 characters");
+  }
 
   if (
     !Array.isArray(value.downloadHosts) ||
@@ -468,6 +494,7 @@ function parseFetchSpec(
         projectId: parseFieldPath(pFields.projectId, "plugins.provider.project.fields.projectId", errors) ?? "",
         title: parseFieldPath(pFields.title, "plugins.provider.project.fields.title", errors) ?? "",
         slug: parseOptionalFieldPath(pFields.slug, "plugins.provider.project.fields.slug", errors),
+        author: parseOptionalFieldPath(pFields.author, "plugins.provider.project.fields.author", errors),
         iconUrl: parseOptionalFieldPath(pFields.iconUrl, "plugins.provider.project.fields.iconUrl", errors),
         description: parseOptionalFieldPath(pFields.description, "plugins.provider.project.fields.description", errors),
       },
@@ -486,6 +513,9 @@ function parseFetchSpec(
     const f = isRecord(v.fields) ? v.fields : {};
     const files = isRecord(f.files) ? f.files : {};
     const fileFields = isRecord(files.fields) ? files.fields : {};
+    if (files.single !== undefined && typeof files.single !== "boolean") {
+      errors.push(`${where}.fields.files.single: must be a boolean`);
+    }
     return {
       path: path ?? "",
       ...(query ? { query } : {}),
@@ -502,6 +532,7 @@ function parseFetchSpec(
         datePublished: parseOptionalFieldPath(f.datePublished, `${where}.fields.datePublished`, errors),
         files: {
           path: parseFieldPath(files.path, `${where}.fields.files.path`, errors) ?? "",
+          ...(files.single === true ? { single: true } : {}),
           fields: {
             url: parseFieldPath(fileFields.url, `${where}.fields.files.fields.url`, errors) ?? "",
             filename: parseFieldPath(fileFields.filename, `${where}.fields.files.fields.filename`, errors) ?? "",
@@ -554,6 +585,7 @@ function parseFetchSpec(
   return {
     id: PROVIDER_ID.test(id) ? id : "",
     baseUrl: typeof value.baseUrl === "string" ? value.baseUrl : "",
+    ...(Array.isArray(value.releaseChannels) ? { releaseChannels: value.releaseChannels as string[] } : {}),
     downloadHosts: (Array.isArray(value.downloadHosts)
       ? (value.downloadHosts as unknown[])
       : []
@@ -598,6 +630,11 @@ function parseProfile(
     directory: "",
     projectType: "mod",
   };
+  if (value.providerIds !== undefined) {
+    if (!Array.isArray(value.providerIds) || value.providerIds.length < 1 || value.providerIds.length > 4 || value.providerIds.some((id) => typeof id !== "string" || !PROVIDER_ID.test(id))) {
+      errors.push(`${where}: providerIds must contain 1-4 provider ids`);
+    } else profile.providerIds = value.providerIds as string[];
+  }
 
   if (typeof value.label === "string") {
     const label = value.label.trim();
@@ -674,8 +711,50 @@ export function parsePluginSupport(
     throw new Error("plugins: expected an object");
   }
 
+  if (JSON.stringify(value).length > MAX_SECTION_BYTES) {
+    throw new Error("plugins: section too large (max 64 KB)");
+  }
+  if ("tabs" in value) {
+    if (value.provider !== undefined || value.default !== undefined || value.variants !== undefined || value.envField !== undefined) {
+      throw new Error("plugins: tabs cannot be combined with a legacy profile");
+    }
+    if (!Array.isArray(value.tabs) || value.tabs.length < 1 || value.tabs.length > 8) {
+      throw new Error("plugins.tabs: must contain 1-8 tabs");
+    }
+    const ids = new Set<string>();
+    const tabs = value.tabs.map((raw): BlueprintPluginTab => {
+      if (!isRecord(raw) || typeof raw.id !== "string" || !PROVIDER_ID.test(raw.id)) {
+        throw new Error("plugins.tabs: every tab needs an id of [a-z0-9-]{1,32}");
+      }
+      if (ids.has(raw.id)) throw new Error(`plugins.tabs: duplicate id "${raw.id}"`);
+      ids.add(raw.id);
+      if (!Array.isArray(raw.providers) || raw.providers.length < 1 || raw.providers.length > 4 || raw.provider !== undefined || raw.tabs !== undefined) {
+        throw new Error(`plugins.tabs.${raw.id}: must contain 1-4 providers`);
+      }
+      const providerIds = new Set<string>();
+      const providers = raw.providers.map((provider) => {
+        const errors: string[] = [];
+        const parsed = parseFetchSpec(provider, isBlockedHost, errors);
+        if (errors.length) throw new Error(`plugins.tabs.${raw.id}: ${errors.join("; ")}`);
+        if (providerIds.has(parsed.id)) throw new Error(`plugins.tabs.${raw.id}: duplicate provider "${parsed.id}"`);
+        providerIds.add(parsed.id);
+        return parsed;
+      });
+      const profiles = parsePluginSupport({
+        label: raw.label, envField: raw.envField, variants: raw.variants,
+        default: raw.default, provider: providers[0],
+      }, envSchema, isBlockedHost) as BlueprintPluginLegacySupport;
+      const selection = { label: profiles.label, envField: profiles.envField, variants: profiles.variants, default: profiles.default };
+      for (const profile of [selection.default, ...Object.values(selection.variants ?? {})]) {
+        if (profile?.providerIds?.some((id) => !providerIds.has(id))) throw new Error(`plugins.tabs.${raw.id}: profile references an unknown provider`);
+      }
+      return { id: raw.id, ...selection, providers };
+    });
+    return { tabs };
+  }
+
   const errors: string[] = [];
-  const support: BlueprintPluginSupport = {
+  const support: BlueprintPluginLegacySupport = {
     provider: parseFetchSpec(value.provider, isBlockedHost, errors),
   };
 
@@ -745,7 +824,7 @@ export function parsePluginSupport(
   }
 
   if (JSON.stringify(value).length > MAX_SECTION_BYTES) {
-    errors.push("plugins: section too large (max 16 KB)");
+    errors.push("plugins: section too large (max 64 KB)");
   }
 
   if (errors.length > 0) {
@@ -767,6 +846,11 @@ export function resolvePluginSupport(
 ): ResolvedPluginSupport | null {
   const support = blueprint.plugins;
   if (!support) return null;
+  if ("tabs" in support) {
+    const tab = resolvePluginTabs(blueprint, envValues)[0];
+    if (!tab) return null;
+    return resolvedTabSupport(tab, tab.providers[0]);
+  }
 
   let profile: BlueprintPluginProfile | undefined;
   if (support.envField) {
@@ -795,4 +879,32 @@ export function resolvePluginSupport(
       : {}),
     provider: support.provider,
   };
+}
+
+/** Resolve every applicable tab; legacy declarations keep the /plugins identity. */
+export function resolvePluginTabs(
+  blueprint: Blueprint,
+  envValues: Record<string, string>,
+): ResolvedPluginTab[] {
+  const support = blueprint.plugins;
+  if (!support) return [];
+  const tabs: BlueprintPluginTab[] = "tabs" in support
+    ? support.tabs
+    : [{ ...support, id: "plugins", providers: [support.provider] }];
+  return tabs.flatMap((tab) => {
+    const { id, providers, ...selection } = tab;
+    const resolved = resolvePluginSupport({
+      ...blueprint, plugins: { ...selection, provider: providers[0] },
+    }, envValues);
+    if (!resolved) return [];
+    const profile = { label: resolved.label, directory: resolved.directory, projectType: resolved.projectType, loaders: resolved.loaders, ...(resolved.gameVersion ? { gameVersion: resolved.gameVersion } : {}) };
+    const selectedProfile = (tab.envField ? tab.variants?.[envValues[tab.envField]] : undefined) ?? tab.default;
+    const available = selectedProfile?.providerIds ? providers.filter((provider) => selectedProfile.providerIds!.includes(provider.id)) : providers;
+    return [{ ...profile, id, providers: available }];
+  });
+}
+
+/** Keep catalog requests scoped to one selected provider without passing UI lists. */
+export function resolvedTabSupport(tab: ResolvedPluginTab, provider: PluginFetchSpec): ResolvedPluginSupport {
+  return { label: tab.label, directory: tab.directory, projectType: tab.projectType, loaders: tab.loaders, ...(tab.gameVersion ? { gameVersion: tab.gameVersion } : {}), provider };
 }

@@ -22,6 +22,7 @@
  *    letting Velocity generate them on first boot with the wrong port.
  */
 
+import { hangarProviderSpec } from "@/lib/hangar-preset";
 import { MODRINTH_PROVIDER_SPEC } from "@/lib/modrinth-preset";
 import type { Blueprint } from "../types";
 
@@ -229,14 +230,19 @@ export const velocity: Blueprint = {
   // minecraft-java's TYPE there is nothing to switch on, since a Velocity proxy
   // only ever loads Velocity plugins from `plugins/`.
   plugins: {
-    default: {
-      label: "Plugins",
-      directory: "plugins",
-      projectType: "plugin",
-      loaders: ["velocity"],
-      gameVersionEnv: "MINECRAFT_VERSION",
-    },
-    provider: MODRINTH_PROVIDER_SPEC,
+    tabs: [
+      {
+        id: "plugins",
+        default: {
+          label: "Plugins",
+          directory: "plugins",
+          projectType: "plugin",
+          loaders: ["velocity"],
+          gameVersionEnv: "MINECRAFT_VERSION",
+        },
+        providers: [MODRINTH_PROVIDER_SPEC, hangarProviderSpec("VELOCITY")],
+      },
+    ],
   },
 
   // Console-only in Velocity, and it disconnects players with a reason and

@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -43,13 +44,18 @@ import {
 import {
   detailToForm,
   emptyForm,
+  emptyPluginTab,
   formToPayload,
   MODRINTH_PROVIDER_SPEC,
   type EnvRow,
   type FormValues,
   type PluginProfileRow,
+  type PluginTabFormRow,
   type PortRow,
 } from "@/lib/blueprint-io";
+
+import { hangarProviderSpec } from "@/lib/hangar-preset";
+import type { BlueprintPluginProviderSpec } from "@/lib/types";
 
 type Mode = "create" | "edit" | "duplicate";
 
@@ -81,15 +87,17 @@ export function BlueprintFormDialog({
   const keyEditable = mode !== "edit";
 
   React.useEffect(() => {
-    if (mode === "create" || !blueprintId) {
-      setValues(initialValues ?? emptyForm());
-      setLoading(false);
-      return;
-    }
-
     let cancelled = false;
-    setLoading(true);
     (async () => {
+      // The dialog reinitializes when opened with a different blueprint/import.
+      await Promise.resolve();
+      if (cancelled) return;
+      if (mode === "create" || !blueprintId) {
+        setValues(initialValues ?? emptyForm());
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
       try {
         const detail = await adminGetBlueprint(blueprintId);
         if (cancelled) return;
@@ -104,7 +112,9 @@ export function BlueprintFormDialog({
         setError(null);
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof ApiError ? err.message : "Failed to load blueprint.");
+          setError(
+            err instanceof ApiError ? err.message : "Failed to load blueprint.",
+          );
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -129,14 +139,17 @@ export function BlueprintFormDialog({
     setValues((prev) => {
       const ports = prev.ports.filter((_, i) => i !== index);
       // Never leave zero ports or an orphaned primary flag.
-      if (ports.length > 0 && !ports.some((p) => p.primary)) ports[0]!.primary = true;
+      if (ports.length > 0 && !ports.some((p) => p.primary))
+        ports[0]!.primary = true;
       return { ...prev, ports };
     });
 
   const updatePort = (index: number, patch: Partial<PortRow>) =>
     setValues((prev) => ({
       ...prev,
-      ports: prev.ports.map((port, i) => (i === index ? { ...port, ...patch } : port)),
+      ports: prev.ports.map((port, i) =>
+        i === index ? { ...port, ...patch } : port,
+      ),
     }));
 
   const setPrimaryPort = (index: number) =>
@@ -151,12 +164,23 @@ export function BlueprintFormDialog({
       ...prev,
       env: [
         ...prev.env,
-        { key: "", required: false, secret: false, editable: false, default: "", description: "", options: "" },
+        {
+          key: "",
+          required: false,
+          secret: false,
+          editable: false,
+          default: "",
+          description: "",
+          options: "",
+        },
       ],
     }));
 
   const removeEnv = (index: number) =>
-    setValues((prev) => ({ ...prev, env: prev.env.filter((_, i) => i !== index) }));
+    setValues((prev) => ({
+      ...prev,
+      env: prev.env.filter((_, i) => i !== index),
+    }));
 
   const updateEnv = (index: number, patch: Partial<EnvRow>) =>
     setValues((prev) => ({
@@ -169,59 +193,11 @@ export function BlueprintFormDialog({
   // game-version pointer; secret values must never steer plugin resolution.
   const envKeys = values.env
     .map((row) => row.key.trim())
-    .filter((key) => key.length > 0);
-
-  const setPluginProfile = (index: number, patch: Partial<PluginProfileRow>) =>
-    setValues((prev) => ({
-      ...prev,
-      pluginProfiles: prev.pluginProfiles.map((row, i) =>
-        i === index ? { ...row, ...patch } : row,
-      ),
-    }));
-
-  // When the profile-selecting env field changes (or its options do), rebuild
-  // the profile rows from that field's allowed values. Edits to a row whose
-  // value still exists are kept, vanished values are dropped. Values that
-  // can't load plugins (e.g. VANILLA) simply stay disabled.
-  React.useEffect(() => {
-    const field = values.pluginEnvField;
-    if (!field) return;
-    setValues((prev) => {
-      const envRow = prev.env.find(
-        (r) => r.key.trim() === field && !r.secret,
-      );
-      const options = envRow
-        ? envRow.options
-            .split(",")
-            .map((o) => o.trim())
-            .filter((o) => o.length > 0)
-        : [];
-      if (options.length === 0) return prev;
-      const byValue = new Map(
-        prev.pluginProfiles
-          .filter((r) => r.envValue)
-          .map((r) => [r.envValue, r] as const),
-      );
-      return {
-        ...prev,
-        pluginProfiles: options.map(
-          (envValue) =>
-            byValue.get(envValue) ?? {
-              enabled: false,
-              envValue,
-              label: "",
-              directory: "",
-              projectType: "plugin" as const,
-              loaders: "",
-              gameVersionEnv: "",
-            },
-        ),
-      };
-    });
-    // Deliberately not watching values.env: option edits shouldn't clobber
-    // profile rows on every keystroke.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [values.pluginEnvField]);
+    .filter(
+      (key) =>
+        key.length > 0 &&
+        !values.env.find((row) => row.key.trim() === key)?.secret,
+    );
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -332,7 +308,9 @@ export function BlueprintFormDialog({
                     value={values.dataPath}
                     onChange={(e) => set("dataPath", e.target.value)}
                   />
-                  <FieldDescription>Where the server keeps its files.</FieldDescription>
+                  <FieldDescription>
+                    Where the server keeps its files.
+                  </FieldDescription>
                 </Field>
               </div>
             </FieldGroup>
@@ -342,9 +320,9 @@ export function BlueprintFormDialog({
               <FieldLegend>Ports</FieldLegend>
               <FieldDescription>
                 The game&apos;s preferred ports. They come from the node&apos;s
-                port pool when free, otherwise a random free pool port is
-                drawn. Each is published as the same number inside and outside
-                the container, on TCP and UDP both. Exactly one is the primary
+                port pool when free, otherwise a random free pool port is drawn.
+                Each is published as the same number inside and outside the
+                container, on TCP and UDP both. Exactly one is the primary
                 (player-facing) port.
               </FieldDescription>
               <div className="flex flex-col gap-2">
@@ -358,10 +336,14 @@ export function BlueprintFormDialog({
                       placeholder="25565"
                       className="w-28"
                       value={port.container}
-                      onChange={(e) => updatePort(i, { container: e.target.value })}
+                      onChange={(e) =>
+                        updatePort(i, { container: e.target.value })
+                      }
                       aria-label={`Port ${i + 1}`}
                     />
-                    <span className="text-xs text-muted-foreground">TCP + UDP</span>
+                    <span className="text-xs text-muted-foreground">
+                      TCP + UDP
+                    </span>
                     <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
                       <input
                         type="radio"
@@ -385,7 +367,12 @@ export function BlueprintFormDialog({
                   </div>
                 ))}
               </div>
-              <Button type="button" variant="outline" size="sm" onClick={addPort}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addPort}
+              >
                 <Plus />
                 Add port
               </Button>
@@ -414,21 +401,27 @@ export function BlueprintFormDialog({
                       <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
                         <Switch
                           checked={row.required}
-                          onCheckedChange={(checked) => updateEnv(i, { required: checked })}
+                          onCheckedChange={(checked) =>
+                            updateEnv(i, { required: checked })
+                          }
                         />
                         Required
                       </label>
                       <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
                         <Switch
                           checked={row.secret}
-                          onCheckedChange={(checked) => updateEnv(i, { secret: checked })}
+                          onCheckedChange={(checked) =>
+                            updateEnv(i, { secret: checked })
+                          }
                         />
                         Secret
                       </label>
                       <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
                         <Switch
                           checked={row.editable}
-                          onCheckedChange={(checked) => updateEnv(i, { editable: checked })}
+                          onCheckedChange={(checked) =>
+                            updateEnv(i, { editable: checked })
+                          }
                         />
                         Editable
                       </label>
@@ -447,13 +440,17 @@ export function BlueprintFormDialog({
                       <Input
                         placeholder="Default value"
                         value={row.default}
-                        onChange={(e) => updateEnv(i, { default: e.target.value })}
+                        onChange={(e) =>
+                          updateEnv(i, { default: e.target.value })
+                        }
                         aria-label={`Variable ${i + 1} default`}
                       />
                       <Input
                         placeholder="Allowed values (comma-separated)"
                         value={row.options}
-                        onChange={(e) => updateEnv(i, { options: e.target.value })}
+                        onChange={(e) =>
+                          updateEnv(i, { options: e.target.value })
+                        }
                         aria-label={`Variable ${i + 1} options`}
                       />
                     </div>
@@ -461,13 +458,20 @@ export function BlueprintFormDialog({
                       className="mt-2"
                       placeholder="Description"
                       value={row.description}
-                      onChange={(e) => updateEnv(i, { description: e.target.value })}
+                      onChange={(e) =>
+                        updateEnv(i, { description: e.target.value })
+                      }
                       aria-label={`Variable ${i + 1} description`}
                     />
                   </div>
                 ))}
               </div>
-              <Button type="button" variant="outline" size="sm" onClick={addEnv}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addEnv}
+              >
                 <Plus />
                 Add variable
               </Button>
@@ -484,7 +488,8 @@ export function BlueprintFormDialog({
                   onChange={(e) => set("startupCommand", e.target.value)}
                 />
                 <FieldDescription>
-                  {"{{VAR}}"} placeholders are filled from the resolved environment.
+                  {"{{VAR}}"} placeholders are filled from the resolved
+                  environment.
                 </FieldDescription>
               </Field>
               <Field>
@@ -520,7 +525,9 @@ export function BlueprintFormDialog({
               {values.installEnabled && (
                 <FieldGroup>
                   <Field>
-                    <FieldLabel htmlFor="bp-install-image">Installer image</FieldLabel>
+                    <FieldLabel htmlFor="bp-install-image">
+                      Installer image
+                    </FieldLabel>
                     <Input
                       id="bp-install-image"
                       placeholder="alpine:latest"
@@ -529,7 +536,9 @@ export function BlueprintFormDialog({
                     />
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="bp-install-entrypoint">Entrypoint</FieldLabel>
+                    <FieldLabel htmlFor="bp-install-entrypoint">
+                      Entrypoint
+                    </FieldLabel>
                     <Input
                       id="bp-install-entrypoint"
                       placeholder="/bin/sh -c  (leave blank for default)"
@@ -538,12 +547,16 @@ export function BlueprintFormDialog({
                     />
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="bp-install-script">Install script</FieldLabel>
+                    <FieldLabel htmlFor="bp-install-script">
+                      Install script
+                    </FieldLabel>
                     <Textarea
                       id="bp-install-script"
                       rows={6}
                       className="font-mono text-xs"
-                      placeholder={"set -e\ncurl -fsSL https://… -o server.tar\ntar xf server.tar"}
+                      placeholder={
+                        "set -e\ncurl -fsSL https://… -o server.tar\ntar xf server.tar"
+                      }
                       value={values.installScript}
                       onChange={(e) => set("installScript", e.target.value)}
                     />
@@ -556,139 +569,73 @@ export function BlueprintFormDialog({
             <FieldSet>
               <div className="flex items-center justify-between">
                 <div>
-                  <FieldLegend>Plugins / mods</FieldLegend>
+                  <FieldLegend>Content tabs</FieldLegend>
                   <FieldDescription>
-                    Declares how the panel searches a catalog and installs
-                    plugins into this blueprint&apos;s servers. Pure data. The
-                    panel&apos;s fetch engine interprets it; hosts must be public
-                    https and downloads are pinned to the declared hosts.
+                    Name each server tab, choose its install profiles and add
+                    catalog sources. Plugins, mods and datapacks can have
+                    separate directories and filters.
                   </FieldDescription>
                 </div>
                 <Switch
                   checked={values.pluginsEnabled}
                   onCheckedChange={(checked) => set("pluginsEnabled", checked)}
-                  aria-label="Enable plugin support"
+                  aria-label="Enable content tabs"
                 />
               </div>
               {values.pluginsEnabled && (
                 <FieldGroup>
-                  <ProviderHostsNote specJson={values.pluginProviderSpec} />
-                  <Field>
-                    <FieldLabel htmlFor="bp-plugin-env">
-                      Active profile follows env value
-                    </FieldLabel>
-                    <Select
-                      value={values.pluginEnvField}
-                      onValueChange={(v) => set("pluginEnvField", v ?? "")}
-                    >
-                      <SelectTrigger id="bp-plugin-env" className="w-full">
-                        <SelectValue placeholder="One profile for all servers" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="">One profile for all servers</SelectItem>
-                        {envKeys.map((key) => (
-                          <SelectItem key={key} value={key}>
-                            {key}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FieldDescription>
-                      e.g. <span className="font-mono">TYPE</span>: one profile
-                      per server software. Values without an enabled profile
-                      (e.g. VANILLA) get no plugins tab.
-                    </FieldDescription>
-                  </Field>
-
-                  <div className="flex flex-col gap-3">
-                    {values.pluginEnvField === "" ? (
-                      <PluginProfileCard
-                        row={values.pluginProfiles.find((r) => r.envValue === "") ?? {
-                          enabled: true,
-                          envValue: "",
-                          label: "",
-                          directory: "",
-                          projectType: "plugin",
-                          loaders: "",
-                          gameVersionEnv: "",
-                        }}
-                        envKeys={envKeys}
-                        title="Profile"
-                        onChange={(patch) => {
-                          const index = values.pluginProfiles.findIndex(
-                            (r) => r.envValue === "",
-                          );
-                          if (index === -1) {
-                            setValues((prev) => ({
-                              ...prev,
-                              pluginProfiles: [
-                                ...prev.pluginProfiles,
-                                {
-                                  enabled: true,
-                                  envValue: "",
-                                  label: "",
-                                  directory: "",
-                                  projectType: "plugin" as const,
-                                  loaders: "",
-                                  gameVersionEnv: "",
-                                  ...patch,
-                                },
-                              ],
-                            }));
-                          } else {
-                            setPluginProfile(index, patch);
-                          }
-                        }}
-                      />
-                    ) : (
-                      values.pluginProfiles.map((row, index) => (
-                        <PluginProfileCard
-                          key={row.envValue}
-                          row={row}
-                          envKeys={envKeys}
-                          title={row.envValue}
-                          canDisable
-                          onChange={(patch) => setPluginProfile(index, patch)}
-                        />
-                      ))
-                    )}
-                  </div>
-
-                  <Field>
-                    <div className="flex items-center justify-between">
-                      <FieldLabel htmlFor="bp-plugin-provider">
-                        Provider fetch spec (JSON)
-                      </FieldLabel>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          set(
-                            "pluginProviderSpec",
-                            JSON.stringify(MODRINTH_PROVIDER_SPEC, null, 2),
-                          )
-                        }
-                      >
-                        Modrinth preset
-                      </Button>
-                    </div>
-                    <Textarea
-                      id="bp-plugin-provider"
-                      rows={10}
-                      className="font-mono text-xs"
-                      placeholder='{"id": "modrinth", "baseUrl": "https://…", …}'
-                      value={values.pluginProviderSpec}
-                      onChange={(e) => set("pluginProviderSpec", e.target.value)}
+                  {values.pluginTabs.map((tab, index) => (
+                    <PluginTabEditor
+                      key={index}
+                      tab={tab}
+                      env={values.env}
+                      envKeys={envKeys}
+                      onChange={(patch) =>
+                        setValues((prev) => ({
+                          ...prev,
+                          pluginTabs: prev.pluginTabs.map((row, i) =>
+                            i === index ? { ...row, ...patch } : row,
+                          ),
+                        }))
+                      }
+                      onRemove={
+                        values.pluginTabs.length > 1
+                          ? () =>
+                              setValues((prev) => ({
+                                ...prev,
+                                pluginTabs: prev.pluginTabs.filter(
+                                  (_, i) => i !== index,
+                                ),
+                              }))
+                          : undefined
+                      }
                     />
-                    <FieldDescription>
-                      How to search the catalog, read its responses and where
-                      files download from. Validated on save: https public
-                      hosts, pinned download hosts, fixed{" "}
-                      <span className="font-mono">{"{placeholders}"}</span>{" "}
-                      only.
-                    </FieldDescription>
-                  </Field>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={values.pluginTabs.length >= 8}
+                    onClick={() =>
+                      setValues((prev) => {
+                        let number = prev.pluginTabs.length + 1;
+                        while (
+                          prev.pluginTabs.some(
+                            (tab) => tab.id === `tab-${number}`,
+                          )
+                        )
+                          number++;
+                        return {
+                          ...prev,
+                          pluginTabs: [
+                            ...prev.pluginTabs,
+                            emptyPluginTab(`tab-${number}`),
+                          ],
+                        };
+                      })
+                    }
+                  >
+                    <Plus /> Add content tab
+                  </Button>
                 </FieldGroup>
               )}
             </FieldSet>
@@ -748,7 +695,8 @@ export function BlueprintFormDialog({
                 <Select
                   value={values.resourceProfile}
                   onValueChange={(v) => {
-                    if (v) set("resourceProfile", v as BlueprintResourceProfile);
+                    if (v)
+                      set("resourceProfile", v as BlueprintResourceProfile);
                   }}
                 >
                   <SelectTrigger id="bp-profile" className="w-full">
@@ -760,15 +708,21 @@ export function BlueprintFormDialog({
                     <SelectItem value="steady-high">Steady (high)</SelectItem>
                   </SelectContent>
                 </Select>
-                <FieldDescription>Baseline for abuse heuristics.</FieldDescription>
+                <FieldDescription>
+                  Baseline for abuse heuristics.
+                </FieldDescription>
               </Field>
               <Field orientation="horizontal">
                 <Switch
                   id="bp-root"
                   checked={values.supportsReadonlyRoot}
-                  onCheckedChange={(checked) => set("supportsReadonlyRoot", checked)}
+                  onCheckedChange={(checked) =>
+                    set("supportsReadonlyRoot", checked)
+                  }
                 />
-                <FieldLabel htmlFor="bp-root">Read-only root filesystem</FieldLabel>
+                <FieldLabel htmlFor="bp-root">
+                  Read-only root filesystem
+                </FieldLabel>
               </Field>
             </div>
 
@@ -794,6 +748,245 @@ export function BlueprintFormDialog({
   );
 }
 
+function PluginTabEditor({
+  tab,
+  env,
+  envKeys,
+  onChange,
+  onRemove,
+}: {
+  tab: PluginTabFormRow;
+  env: EnvRow[];
+  envKeys: string[];
+  onChange: (patch: Partial<PluginTabFormRow>) => void;
+  onRemove?: () => void;
+}) {
+  const fieldId = React.useId();
+  const [providerError, setProviderError] = React.useState<string | null>(null);
+  const updateProfile = (index: number, patch: Partial<PluginProfileRow>) =>
+    onChange({
+      profiles: tab.profiles.map((row, i) =>
+        i === index ? { ...row, ...patch } : row,
+      ),
+    });
+  const changeEnv = (envField: string) => {
+    if (!envField) {
+      onChange({
+        envField,
+        profiles: tab.profiles.some((row) => !row.envValue)
+          ? tab.profiles
+          : [
+              {
+                ...emptyPluginTab().profiles[0]!,
+                ...tab.profiles.find((row) => row.enabled),
+                envValue: "",
+              },
+              ...tab.profiles,
+            ],
+      });
+      return;
+    }
+    const options =
+      env
+        .find((row) => row.key.trim() === envField && !row.secret)
+        ?.options.split(",")
+        .map((value) => value.trim())
+        .filter(Boolean) ?? [];
+    const byValue = new Map(tab.profiles.map((row) => [row.envValue, row]));
+    onChange({
+      envField,
+      profiles: [
+        ...tab.profiles.filter((row) => !row.envValue),
+        ...options.map(
+          (envValue) =>
+            byValue.get(envValue) ?? {
+              ...emptyPluginTab().profiles[0]!,
+              enabled: false,
+              envValue,
+            },
+        ),
+      ],
+    });
+  };
+  const addProvider = (provider: BlueprintPluginProviderSpec) => {
+    try {
+      const parsed = JSON.parse(tab.providerSpec);
+      const providers: BlueprintPluginProviderSpec[] = Array.isArray(parsed)
+        ? parsed
+        : [parsed];
+      onChange({
+        providerSpec: JSON.stringify(
+          [
+            ...providers.filter((existing) => existing.id !== provider.id),
+            provider,
+          ],
+          null,
+          2,
+        ),
+      });
+      setProviderError(null);
+    } catch {
+      setProviderError("Fix the provider JSON before adding a source.");
+    }
+  };
+  const visibleProfiles = tab.envField
+    ? tab.profiles
+    : tab.profiles.filter((row) => !row.envValue);
+  return (
+    <div
+      data-slot="blueprint-content-tab"
+      className="flex flex-col gap-4 rounded-lg border p-3"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium">
+          {tab.label || tab.id || "Content tab"}
+        </span>
+        {onRemove && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Remove ${tab.label || tab.id} tab`}
+            onClick={onRemove}
+          >
+            <Trash2 />
+          </Button>
+        )}
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field>
+          <FieldLabel htmlFor={`${fieldId}-id`}>Tab ID</FieldLabel>
+          <Input
+            id={`${fieldId}-id`}
+            maxLength={32}
+            value={tab.id}
+            onChange={(event) => onChange({ id: event.target.value })}
+          />
+          <FieldDescription>
+            Stable URL and install identity. Keep it unchanged after use.
+          </FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor={`${fieldId}-label`}>Tab name</FieldLabel>
+          <Input
+            id={`${fieldId}-label`}
+            maxLength={32}
+            value={tab.label}
+            placeholder="Plugins, Mods, Datapacks…"
+            onChange={(event) => onChange({ label: event.target.value })}
+          />
+        </Field>
+      </div>
+      <Field>
+        <FieldLabel htmlFor={`${fieldId}-env`}>
+          Active profile follows env value
+        </FieldLabel>
+        <Select
+          value={tab.envField || "none"}
+          onValueChange={(value) =>
+            changeEnv(value === "none" ? "" : (value ?? ""))
+          }
+        >
+          <SelectTrigger id={`${fieldId}-env`} className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="none">One profile for all servers</SelectItem>
+              {envKeys.map((key) => (
+                <SelectItem key={key} value={key}>
+                  {key}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <FieldDescription>
+          Values without an enabled profile get no tab. A default profile
+          applies to unmatched values.
+        </FieldDescription>
+      </Field>
+      {visibleProfiles.map((row) => (
+        <PluginProfileCard
+          key={row.envValue}
+          row={row}
+          envKeys={envKeys}
+          title={row.envValue || "Default profile"}
+          canDisable={Boolean(tab.envField)}
+          onChange={(patch) => updateProfile(tab.profiles.indexOf(row), patch)}
+        />
+      ))}
+      {tab.envField && !tab.profiles.some((row) => !row.envValue) && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            onChange({
+              profiles: [emptyPluginTab().profiles[0]!, ...tab.profiles],
+            })
+          }
+        >
+          Add default profile
+        </Button>
+      )}
+      <ProviderHostsNote specJson={tab.providerSpec} />
+      <Field>
+        <FieldLabel htmlFor={`${fieldId}-providers`}>
+          Providers (JSON array)
+        </FieldLabel>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => addProvider(MODRINTH_PROVIDER_SPEC)}
+          >
+            Add Modrinth
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              addProvider(
+                hangarProviderSpec(
+                  tab.profiles.some((row) =>
+                    row.loaders
+                      .split(",")
+                      .some((loader) => loader.trim() === "velocity"),
+                  )
+                    ? "VELOCITY"
+                    : "PAPER",
+                ),
+              )
+            }
+          >
+            Add Hangar
+          </Button>
+        </div>
+        <Textarea
+          id={`${fieldId}-providers`}
+          rows={10}
+          className="font-mono text-xs"
+          value={tab.providerSpec}
+          onChange={(event) => {
+            setProviderError(null);
+            onChange({ providerSpec: event.target.value });
+          }}
+        />
+        {providerError && (
+          <p className="text-sm text-destructive">{providerError}</p>
+        )}
+        <FieldDescription>
+          Each source declares public HTTPS endpoints, response mappings and
+          pinned download hosts. The panel validates every source on save.
+        </FieldDescription>
+      </Field>
+    </div>
+  );
+}
+
 /**
  * One install profile: where plugin files land and how the catalog is
  * filtered for it. With an env-driven setup each card is one allowed value of
@@ -813,6 +1006,7 @@ function PluginProfileCard({
   canDisable?: boolean;
   onChange: (patch: Partial<PluginProfileRow>) => void;
 }) {
+  const fieldId = React.useId();
   const enabled = row.enabled || !canDisable;
   return (
     <div className="flex flex-col gap-3 rounded-lg border p-3">
@@ -824,7 +1018,7 @@ function PluginProfileCard({
             <Switch
               checked={row.enabled}
               onCheckedChange={(checked) => onChange({ enabled: checked })}
-              aria-label={`${title} supports plugins`}
+              aria-label={`${title} supports content`}
             />
           </label>
         )}
@@ -832,9 +1026,11 @@ function PluginProfileCard({
       {enabled && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field>
-            <FieldLabel htmlFor={`bp-plugin-label-${title}`}>Tab label</FieldLabel>
+            <FieldLabel htmlFor={`bp-plugin-label-${fieldId}`}>
+              Tab label
+            </FieldLabel>
             <Input
-              id={`bp-plugin-label-${title}`}
+              id={`bp-plugin-label-${fieldId}`}
               maxLength={32}
               placeholder="Plugins"
               value={row.label}
@@ -842,9 +1038,11 @@ function PluginProfileCard({
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor={`bp-plugin-dir-${title}`}>Directory</FieldLabel>
+            <FieldLabel htmlFor={`bp-plugin-dir-${fieldId}`}>
+              Directory
+            </FieldLabel>
             <Input
-              id={`bp-plugin-dir-${title}`}
+              id={`bp-plugin-dir-${fieldId}`}
               maxLength={64}
               placeholder="plugins"
               value={row.directory}
@@ -852,14 +1050,22 @@ function PluginProfileCard({
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor={`bp-plugin-type-${title}`}>Content type</FieldLabel>
+            <FieldLabel htmlFor={`bp-plugin-type-${fieldId}`}>
+              Content type
+            </FieldLabel>
             <Select
               value={row.projectType}
               onValueChange={(v) => {
-                if (v) onChange({ projectType: v as PluginProfileRow["projectType"] });
+                if (v)
+                  onChange({
+                    projectType: v as PluginProfileRow["projectType"],
+                  });
               }}
             >
-              <SelectTrigger id={`bp-plugin-type-${title}`} className="w-full">
+              <SelectTrigger
+                id={`bp-plugin-type-${fieldId}`}
+                className="w-full"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -870,16 +1076,35 @@ function PluginProfileCard({
             </Select>
           </Field>
           <Field>
-            <FieldLabel htmlFor={`bp-plugin-loaders-${title}`}>Loaders</FieldLabel>
+            <FieldLabel htmlFor={`bp-plugin-loaders-${fieldId}`}>
+              Loaders
+            </FieldLabel>
             <Input
-              id={`bp-plugin-loaders-${title}`}
+              id={`bp-plugin-loaders-${fieldId}`}
               placeholder="paper, spigot"
               value={row.loaders}
               onChange={(e) => onChange({ loaders: e.target.value })}
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor={`bp-plugin-version-${title}`}>
+            <FieldLabel htmlFor={`${fieldId}-providers`}>
+              Provider IDs
+            </FieldLabel>
+            <Input
+              id={`${fieldId}-providers`}
+              value={row.providerIds}
+              placeholder="All sources, or e.g. modrinth"
+              onChange={(event) =>
+                onChange({ providerIds: event.target.value })
+              }
+            />
+            <FieldDescription>
+              Comma-separated subset of this tab&apos;s sources. Leave empty to
+              use all.
+            </FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`bp-plugin-version-${fieldId}`}>
               Game version env
             </FieldLabel>
             <Select
@@ -888,7 +1113,10 @@ function PluginProfileCard({
                 onChange({ gameVersionEnv: v === "none" ? "" : (v ?? "") })
               }
             >
-              <SelectTrigger id={`bp-plugin-version-${title}`} className="w-full">
+              <SelectTrigger
+                id={`bp-plugin-version-${fieldId}`}
+                className="w-full"
+              >
                 <SelectValue placeholder="None" />
               </SelectTrigger>
               <SelectContent>
@@ -903,8 +1131,8 @@ function PluginProfileCard({
             <FieldDescription>
               Env key holding the game version the user sets. A concrete value
               filters search and updates by compatibility; a sentinel like
-              LATEST leaves them unfiltered and the plugins tab asks the user
-              to set a version.
+              LATEST leaves them unfiltered and the plugins tab asks the user to
+              set a version.
             </FieldDescription>
           </Field>
         </div>
@@ -920,39 +1148,42 @@ function PluginProfileCard({
  * Invalid JSON is simply not summarized (save validates fully).
  */
 function ProviderHostsNote({ specJson }: { specJson: string }) {
-  let baseUrl: unknown;
-  let downloadHosts: unknown;
-  let id: unknown;
+  let providers: BlueprintPluginProviderSpec[];
   try {
-    const parsed = JSON.parse(specJson) as Record<string, unknown>;
-    id = parsed.id;
-    baseUrl = parsed.baseUrl;
-    downloadHosts = parsed.downloadHosts;
+    const parsed = JSON.parse(specJson);
+    providers = Array.isArray(parsed) ? parsed : [parsed];
   } catch {
     return null;
   }
-  if (typeof baseUrl !== "string" || !Array.isArray(downloadHosts)) return null;
-
+  const valid = providers.filter(
+    (provider) =>
+      provider &&
+      typeof provider.baseUrl === "string" &&
+      Array.isArray(provider.downloadHosts),
+  );
+  if (!valid.length) return null;
   return (
     <Alert>
       <ShieldAlert />
       <AlertTitle>Network access</AlertTitle>
       <AlertDescription>
-        Servers on this blueprint will search and download plugins via{" "}
-        <span className="font-mono">{String(baseUrl)}</span>
-        {downloadHosts.length > 0 && (
-          <>
-            {" "}
-            (files from{" "}
+        {valid.map((provider) => (
+          <p key={provider.id}>
+            Catalog {provider.id}:{" "}
+            <span className="font-mono">{provider.baseUrl}</span>. Downloads
+            from{" "}
             <span className="font-mono">
-              {downloadHosts.filter((h) => typeof h === "string").join(", ")}
+              {provider.downloadHosts
+                .filter((host) => typeof host === "string")
+                .join(", ")}
             </span>
-            )
-          </>
-        )}
-        . When auto-update is on, new release versions are fetched from these
-        hosts before every start, so make sure you trust{" "}
-        {typeof id === "string" ? `"${id}"` : "this catalog"} before saving.
+            .
+          </p>
+        ))}
+        <p>
+          Auto-update contacts these hosts before each start. Review each source
+          before saving.
+        </p>
       </AlertDescription>
     </Alert>
   );
