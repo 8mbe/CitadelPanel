@@ -15,6 +15,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 
+import { CopyText } from "@/components/copy-button";
 import { useSession } from "@/components/session-provider";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -116,7 +117,15 @@ function ServerTile({ server }: { server: ServerView }) {
         </CardTitle>
         <CardDescription className="flex flex-col gap-0.5">
           <span className="truncate">{server.blueprintKey}</span>
-          <span className="truncate font-mono text-xs">{address}</span>
+          {server.nodeHostname && server.primaryPort > 0 ? (
+            <CopyText
+              value={address}
+              label="server address"
+              className="relative z-10 self-start font-mono text-xs"
+            />
+          ) : (
+            <span className="truncate font-mono text-xs">{address}</span>
+          )}
         </CardDescription>
         <CardAction>
           <StatusBadge status={server.status} />

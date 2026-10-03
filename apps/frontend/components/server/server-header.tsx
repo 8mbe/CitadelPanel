@@ -2,6 +2,7 @@
 
 import { Globe } from "lucide-react";
 
+import { CopyText } from "@/components/copy-button";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/status-badge";
 import { PowerControls } from "@/components/server/power-controls";
@@ -20,12 +21,10 @@ export function ServerHeader({ server: initial }: { server: ServerView }) {
   const primaryPort = server.primaryPort || initial.primaryPort;
   // The connect address is the node's hostname (player-facing, not the agent
   // URL) plus the primary host port. Hide it until both are known.
-  const address =
+  const connectAddress =
     server.nodeHostname && primaryPort > 0
       ? `${server.nodeHostname}:${primaryPort}`
-      : primaryPort > 0
-        ? `port ${primaryPort}`
-        : null;
+      : null;
 
   return (
     <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -40,11 +39,20 @@ export function ServerHeader({ server: initial }: { server: ServerView }) {
           <Badge variant="outline" className="font-mono text-[10px]">
             {server.blueprintKey}
           </Badge>
-          {address && (
-            <span className="inline-flex items-center gap-1.5 font-mono text-xs">
-              <Globe className="size-3.5" />
-              {address}
-            </span>
+          {connectAddress ? (
+            <CopyText
+              value={connectAddress}
+              label="server address"
+              icon={<Globe className="size-3.5 shrink-0" />}
+              className="font-mono text-xs"
+            />
+          ) : (
+            primaryPort > 0 && (
+              <span className="inline-flex items-center gap-1.5 font-mono text-xs">
+                <Globe className="size-3.5" />
+                port {primaryPort}
+              </span>
+            )
           )}
         </div>
       </div>
