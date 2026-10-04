@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Clipboard, Copy } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -48,8 +48,8 @@ export function CopyButton({
 
 /**
  * Inline text that copies itself when clicked, for values a user pastes
- * elsewhere (a server's connect address). `icon` is shown before the text and
- * swaps to a check after copying.
+ * elsewhere (a server's connect address). `icon` is shown before the text;
+ * a clipboard after the text swaps to a check after copying.
  */
 export function CopyText({
   value,
@@ -75,8 +75,13 @@ export function CopyText({
         className,
       )}
     >
-      {copied ? <Check className="size-3.5 shrink-0" /> : icon}
+      {icon}
       <span className="truncate">{value}</span>
+      {copied ? (
+        <Check aria-hidden="true" className="size-3.5 shrink-0" />
+      ) : (
+        <Clipboard aria-hidden="true" className="size-3.5 shrink-0" />
+      )}
     </button>
   );
 }
