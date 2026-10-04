@@ -48,6 +48,7 @@ import {
   getNodeWithSecrets,
 } from "@/lib/server/control-plane/nodes/nodeRegistry";
 import { recordAudit } from "@/lib/server/control-plane/services/auditLog";
+import { prependConsoleReady } from "./consoleStream";
 
 /** How long a minted token may sit unused before its WS open is rejected. */
 const SESSION_TTL_SECONDS = 60;
@@ -383,41 +384,10 @@ export async function handleConsoleStream(
   // A *named* event, like the agent's own error frames. An unnamed `data:`
   // event is how the agent sends a plain log line, so a nameless ready frame
   // would be appended to the console as literal JSON text.
-  const ready = new TextEncoder().encode(
-    `event: ready\ndata: ${JSON.stringify({ type: "ready", tty: server.tty })}\n\n`,
-  );
-
-  const stream = upstream.body;
-  if (!stream) return new Response(ready, { headers: SSE_HEADERS });
-
   // Prepend the ready frame, then forward the agent's bytes as they arrive.
   // Chunks are passed straight through, never accumulated: a log line must
   // reach the browser as the container writes it, not when some buffer fills.
-  const merged = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      controller.enqueue(ready);
-      const reader = stream.getReader();
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          controller.enqueue(value);
-        }
-      } catch {
-        // Upstream dropped (agent restart, container gone, client abort). The
-        // browser's EventSource reconnects on its own, so end the stream
-        // quietly rather than surfacing a transport error as console text.
-      } finally {
-        reader.releaseLock();
-        controller.close();
-      }
-    },
-    cancel() {
-      // The browser went away. Drop the upstream so the agent's dockerode
-      // attach is released instead of lingering until its own timeout.
-      void stream.cancel().catch(() => undefined);
-    },
-  });
+  const merged = prependConsoleReady(upstream.body, server.tty);
 
   return new Response(merged, { headers: SSE_HEADERS });
 }

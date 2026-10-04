@@ -352,16 +352,19 @@ export async function getContainerLogs(
  * stream is forwarded verbatim instead of demuxed.
  */
 export function demuxDockerLogStream(
-  input: NodeJS.ReadableStream,
+  input: NodeJS.ReadableStream & { destroy?: () => void },
   tty = false,
 ): ReadableStream<Uint8Array> {
   // A partial frame waiting for more bytes: either the 8-byte header is
   // incomplete, or the header is read and `remaining` payload bytes are owed.
   let buffer = Buffer.alloc(0);
+  let stopped = false;
+  let stop = () => {};
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
       const onData = (chunk: Buffer | string) => {
+        if (stopped) return;
         buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
 
         // TTY mode: raw byte stream, no 8-byte multiplexing headers. Forward
@@ -385,27 +388,43 @@ export function demuxDockerLogStream(
         }
       };
 
-      const cleanup = () => {
+      stop = () => {
+        stopped = true;
+        buffer = Buffer.alloc(0);
         input.off("data", onData);
         input.off("end", onEnd);
-        input.off("error", onError);
       };
 
       const onEnd = () => {
-        cleanup();
+        if (stopped) return;
+        stop();
         controller.close();
       };
 
       const onError = (error: unknown) => {
-        cleanup();
+        if (stopped) return;
+        stop();
         controller.error(
           error instanceof Error ? error : new Error(String(error)),
         );
       };
 
+      const onClose = () => {
+        onEnd();
+        // Keep the error handler until the socket closes: an abort error may
+        // already be queued when downstream cancellation destroys the stream.
+        input.off("error", onError);
+        input.off("close", onClose);
+      };
+
       input.on("data", onData);
       input.on("end", onEnd);
       input.on("error", onError);
+      input.on("close", onClose);
+    },
+    cancel() {
+      stop();
+      input.destroy?.();
     },
   });
 }

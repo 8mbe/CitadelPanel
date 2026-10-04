@@ -103,54 +103,52 @@ export function sseWrap(
   const ping = new TextEncoder().encode(": ping\n\n");
   const keepaliveMs = options.keepaliveMs ?? 5_000;
   let pingTimer: ReturnType<typeof setInterval> | undefined;
+  let stopped = false;
+  const stop = () => {
+    stopped = true;
+    clearInterval(pingTimer);
+  };
 
   return new ReadableStream<Uint8Array>({
-    start(controller) {
-      let stopped = false;
-      const stop = () => {
-        if (stopped) return;
-        stopped = true;
-        if (pingTimer) clearInterval(pingTimer);
-      };
-
+    async start(controller) {
       // Re-armed each time data flows, so pings only appear during genuine
       // silence, never interleaved with a burst of log lines.
       pingTimer = setInterval(() => {
         if (!stopped) controller.enqueue(ping);
       }, keepaliveMs);
 
-      (async () => {
-        try {
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) {
-              if (pending.length > 0) controller.enqueue(sseData(pending));
-              break;
-            }
-
-            pending += decoder.decode(value, { stream: true });
-            const lastNewline = pending.lastIndexOf("\n");
-            if (lastNewline !== -1) {
-              const complete = pending.slice(0, lastNewline + 1);
-              pending = pending.slice(lastNewline + 1);
-              controller.enqueue(sseData(complete));
-            }
+      try {
+        while (!stopped) {
+          const { done, value } = await reader.read();
+          // Cancellation closes the downstream controller before this read
+          // settles. It must not enqueue or close that controller again.
+          if (stopped) return;
+          if (done) {
+            if (pending.length > 0) controller.enqueue(sseData(pending));
+            break;
           }
-        } catch (error) {
-          stop();
-          controller.error(error);
-          return;
+
+          pending += decoder.decode(value, { stream: true });
+          const lastNewline = pending.lastIndexOf("\n");
+          if (lastNewline !== -1) {
+            const complete = pending.slice(0, lastNewline + 1);
+            pending = pending.slice(lastNewline + 1);
+            controller.enqueue(sseData(complete));
+          }
         }
-        stop();
         controller.close();
-      })();
+      } catch (error) {
+        if (!stopped) controller.error(error);
+      } finally {
+        stop();
+        reader.releaseLock();
+      }
     },
-    cancel() {
+    cancel(reason) {
       // The downstream client disconnected: release the upstream reader so the
       // agent's log stream (and its dockerode handle) is torn down.
-      clearInterval(pingTimer);
-      reader.cancel().catch(() => undefined);
-      reader.releaseLock();
+      stop();
+      return reader.cancel(reason).catch(() => undefined);
     },
   });
 }

@@ -162,6 +162,19 @@ EventSource, which aborts the panel's route handler, whose `request.signal` is
 forwarded to the agent, which forwards it to dockerode. No leaked attach at any
 hop.
 
+Each streaming wrapper also handles cancellation itself. Its reader owns the
+upstream body lock, so teardown cancels that reader, then releases the lock once
+the pending read settles. Cancelling the body directly while locked rejects
+and leaves the upstream running. The agent's Docker log adapter destroys its
+socket on cancellation and accepts a socket close without an `end` event.
+
+Cancellation has already closed the downstream controller when those pending
+reads resume. The forwarding loop and keepalive timer must stop before teardown,
+and must not enqueue or close the controller again. Otherwise leaving Console
+for Files can produce an unhandled stream error while the new file request is
+starting. Docker abort errors remain handled until the socket's `close` event,
+including an error already queued when cancellation wins.
+
 ## Security notes
 
 - The long-lived `AGENT_TOKEN` still guards **every** agent lifecycle route. The

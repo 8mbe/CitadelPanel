@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { PassThrough } from "node:stream";
 
 import { demuxDockerLogStream } from "./docker/container";
 import { sseFromEvents, sseWrap } from "./http";
@@ -70,6 +71,28 @@ const asDockerStream = (src: FakeDockerStream): NodeJS.ReadableStream =>
   src as unknown as NodeJS.ReadableStream;
 
 describe("demuxDockerLogStream", () => {
+  test("cancelling releases Docker's stream without late output or errors", async () => {
+    const input = new PassThrough();
+    const output = demuxDockerLogStream(input);
+    const cancelling = output.cancel();
+    expect(input.destroyed).toBe(true);
+    // Abort and socket callbacks can already be queued when cancellation wins.
+    expect(() => input.emit("data", frame(1, "late\n"))).not.toThrow();
+    expect(() => input.emit("error", new Error("socket aborted"))).not.toThrow();
+    await cancelling;
+    await Bun.sleep(0);
+    expect(input.listenerCount("data")).toBe(0);
+    expect(input.listenerCount("error")).toBe(0);
+  });
+
+  test("a Docker socket closing without end finishes the reader", async () => {
+    const input = new PassThrough();
+    const output = demuxDockerLogStream(input).getReader();
+    const pending = output.read();
+    input.destroy();
+    expect(await pending).toEqual({ done: true, value: undefined });
+  });
+
   test("demuxes a single complete frame", async () => {
     const src = new FakeDockerStream();
     const out = drain(demuxDockerLogStream(asDockerStream(src)));
@@ -134,6 +157,29 @@ describe("demuxDockerLogStream", () => {
 });
 
 describe("sseWrap", () => {
+  test("cancelling a pending read releases the upstream reader", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() { cancelled = true; },
+    });
+    const output = sseWrap(body, { keepaliveMs: 1 });
+    await output.cancel();
+    await Bun.sleep(5);
+    expect(cancelled).toBe(true);
+    expect(body.locked).toBe(false);
+  });
+
+  test("cancelling after a partial log line does not flush into a closed stream", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode("partial")); },
+    });
+    const output = sseWrap(body);
+    await Bun.sleep(0);
+    await output.cancel();
+    await Bun.sleep(0);
+    expect(body.locked).toBe(false);
+  });
+
   test("wraps a complete line as one data event", async () => {
     const body = new ReadableStream<Uint8Array>({
       start(c) {
