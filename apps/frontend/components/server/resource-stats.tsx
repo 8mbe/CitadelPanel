@@ -31,9 +31,9 @@ export function ResourceStats({ server }: { server: ServerView }) {
   const diskPct = server.diskLimitMb
     ? Math.round((server.diskUsedMb / server.diskLimitMb) * 100)
     : 0;
-  // `cpuPercent` is already a share of the allocated vCPUs (100 = one core
-  // saturated), so it maps directly onto the bar without a used/limit divide.
-  const cpuPct = active ? Math.min(100, Math.max(0, server.cpuPercent)) : 0;
+  // CPU usage is 100% per saturated core; the bar shows the allocated share.
+  const cpuPct =
+    active && server.cpuLimit > 0 ? server.cpuPercent / server.cpuLimit : 0;
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

@@ -46,6 +46,17 @@ of small files, and it changes far more slowly than a usage meter is polled.
 **If you add a stats-shaped endpoint, do not call `stats({ stream: false })`.**
 Go through `sampleContainerStats`.
 
+### CPU readings and allocated capacity use different scales
+
+The agent reports CPU usage as 100% per saturated core, so a server using three
+cores reads 300%. The server page and dashboard keep that value in their numeric
+labels, but scale the usage bars against the allocated vCPUs. With three vCPUs,
+100% usage fills one third of the bar and 300% fills it. Fractional allocations
+use the same scale: 50% usage fills a 0.5-vCPU server's bar. This also makes the
+meter's warning colours track how close the server is to its CPU quota, rather
+than how many cores it happens to use. The quota itself is described in
+[`node-hardening.md`](node-hardening.md).
+
 ### Poll for what is on screen, not for what is mounted
 
 The stats sample is cheap now, but it is still a request per poll per viewer,

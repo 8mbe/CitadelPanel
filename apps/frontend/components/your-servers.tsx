@@ -148,7 +148,7 @@ function ServerTile({ server }: { server: ServerView }) {
             icon={Cpu}
             label="CPU"
             value={running ? `${server.cpuPercent}%` : "n/a"}
-            percent={running ? server.cpuPercent : 0}
+            percent={running ? pct(server.cpuPercent, server.cpuLimit * 100) : 0}
             muted={!running}
           />
           <Meter
