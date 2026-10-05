@@ -13,6 +13,11 @@ import {
 import { ConsoleHelperDialog } from "@/components/server/console-helper-dialog";
 import { ConsoleCommandInput } from "@/components/server/console-command-input";
 import { parseAnsi, type AnsiRun } from "@/lib/ansi";
+import {
+  consumeEcho,
+  expectEcho,
+  type PendingEcho,
+} from "@/lib/console-echo";
 import type { ServerStatus } from "@/lib/types";
 
 
@@ -96,12 +101,13 @@ export function ConsolePanel({
   }, []);
 
   const nextId = React.useRef(1);
-  // Whether the server's container has a pseudo-TTY. A TTY container's server
-  // (e.g. Minecraft via JLine3) echoes typed commands back itself and prints an
-  // interactive prompt, so the panel must NOT locally echo commands (that would
-  // double them) and must NOT render the trailing partial line (it is JLine's
-  // prompt, not log content).
+  // Whether the server's container has a pseudo-TTY. A TTY echoes typed
+  // commands back (the PTY's cooked-mode echo), which `echoesRef` drops so the
+  // local `> command` line is the only copy. The server may also print an
+  // interactive prompt, so the trailing partial line is not rendered either.
   const ttyRef = React.useRef(false);
+  // Commands submitted to a TTY container whose echo has not arrived yet.
+  const echoesRef = React.useRef<PendingEcho[]>([]);
 
   // Raw-text accumulator for the current incomplete line. Live output frames
   // arrive on arbitrary byte boundaries (not newline-aligned), and ANSI escape
@@ -169,13 +175,20 @@ export function ConsolePanel({
     bufferRef.current = parts.pop() ?? "";
 
     if (parts.length > 0) {
+      const now = Date.now();
       const newLines = parts
-        .map((p) => p.slice(Math.max(0, p.lastIndexOf("\r") + 1)))
-        .map((p) => ({
-          id: nextId.current++,
-          runs: parseAnsi(p),
-        }));
-      setLines((prev) => [...prev, ...newLines]);
+        .map((p) => parseAnsi(p.slice(Math.max(0, p.lastIndexOf("\r") + 1))))
+        .filter(
+          (runs) =>
+            !ttyRef.current ||
+            !consumeEcho(
+              echoesRef.current,
+              runs.map((r) => r.text).join(""),
+              now,
+            ),
+        )
+        .map((runs) => ({ id: nextId.current++, runs }));
+      if (newLines.length > 0) setLines((prev) => [...prev, ...newLines]);
     }
     // The pending (partial) line: apply the same last-\r overwrite so a prompt
     // fragment followed by \r doesn't linger in the live view. For a TTY
@@ -231,6 +244,7 @@ export function ConsolePanel({
       stickToBottom.current = true;
       setLines([]);
       bufferRef.current = "";
+      echoesRef.current = [];
       setPendingRuns([]);
     };
 
@@ -506,20 +520,20 @@ export function ConsolePanel({
     // so only the connection state gates it.
     if (!viaProxy && (!ws || ws.readyState !== WebSocket.OPEN)) return false;
 
-    // Echo the command locally so input appears above its own output. Even for
-    // a TTY container this is needed: JLine3 sets the terminal to raw mode,
-    // which disables the PTY's line-discipline echo, so without local echo the
-    // user would never see what they typed. The trailing \n finalizes the echo
-    // as its own line.
-    append(`> ${trimmed}\n`);
-
-    // For a TTY container, JLine3's prompt (">....") is sitting in the pending
-    // buffer. Clear it so it doesn't merge with the next chunk of output
+    // For a TTY container, the server's prompt (">....") may be sitting in the
+    // pending buffer. Clear it so it doesn't merge with the local echo
     // (otherwise the buffer would read ">....> ban..." before the newline
     // splits them).
     if (ttyRef.current) {
       bufferRef.current = "";
     }
+
+    // Echo the command locally so input appears above its own output, whether
+    // or not the container echoes it. A TTY in cooked mode does echo, and that
+    // copy is dropped when it arrives. The trailing \n finalizes the echo as
+    // its own line.
+    append(`> ${trimmed}\n`);
+    if (ttyRef.current) expectEcho(echoesRef.current, trimmed, Date.now());
 
     if (viaProxy) {
       // Fire-and-forget like the socket write it replaces: the result of the

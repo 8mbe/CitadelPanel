@@ -183,6 +183,23 @@ History lasts for the current server console view, including reconnects. See
 [command-history.md](command-history.md) for draft restoration, scope, and phone
 controls.
 
+## Command echo
+
+The console prints every submitted command as `> command` before sending it,
+so input sits above its own output on both transports. A TTY container echoes
+the same line back: its pseudo-terminal runs in cooked mode, and cooked mode
+echoes whatever arrives on stdin. The itzg Minecraft and Velocity images leave
+it that way, so without a filter every command shows up twice.
+
+For a TTY container the client queues each submitted command
+(`lib/console-echo.ts`) and drops the first output line that matches the
+oldest entry. The panel keeps its own echo rather than relying on the
+container's, because a program that switches the terminal to raw mode and
+draws its own input line echoes nothing usable. An entry expires after three
+seconds for the same reason: an echo that never came must not later swallow a
+real log line that reads the same as an old command. Non-TTY containers read
+stdin from a pipe, which never echoes, so they skip the queue.
+
 ## Security notes
 
 - The long-lived `AGENT_TOKEN` still guards **every** agent lifecycle route. The
