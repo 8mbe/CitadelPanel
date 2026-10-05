@@ -30,6 +30,7 @@ import {
 } from "../blueprints/types";
 import {
   allocateHostPort,
+  assertPortPoolCapacity,
   scheduleServer,
   scheduleServerOnNode,
   type ResourceRequest,
@@ -1137,6 +1138,10 @@ export async function createServer(
   // provision at `mkdir`. Checking here means the admin gets one actionable
   // error instead of a half-created server left in `error`.
   await assertNodeReadyToProvision(node.nodeId);
+  // Port allocation happens in the detached provision task, but a known
+  // exhausted pool is a create-time validation failure. Keep the row out of
+  // the database when the node cannot provide the blueprint's ports at all.
+  await assertPortPoolCapacity(node.nodeId, blueprint.defaultPorts.length);
 
   const inserted = (await sql`
     INSERT INTO servers (
@@ -2746,4 +2751,3 @@ export async function resetServerDatabasePassword(
 
   return { password: newPassword };
 }
-

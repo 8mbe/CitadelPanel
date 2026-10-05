@@ -14,6 +14,7 @@ import { conflict } from "../lib/http";
 import { listActiveNodesWithSecrets, type NodeWithSecrets } from "./nodeRegistry";
 import { checkPortNumbersFree } from "./nodePortsApi";
 import { expandNodePortPool } from "./portPool";
+import { countFreePorts } from "./schedulerMath";
 
 /** Resources a prospective server is asking for. */
 export interface ResourceRequest {
@@ -308,6 +309,53 @@ export async function scheduleServerOnNode(
   }
 
   return target;
+}
+
+/**
+ * Reject a create before its server row is reserved when the node cannot
+ * provide all of the blueprint's default ports.
+ *
+ * The detached provision still allocates and claims the individual ports. This
+ * check is the synchronous guard that keeps a known-exhausted pool from
+ * becoming a real server row in `error`; the later allocation remains the
+ * concurrency and host-TOCTOU safety net.
+ */
+export async function assertPortPoolCapacity(
+  nodeId: string,
+  requiredPorts: number,
+): Promise<void> {
+  if (requiredPorts <= 0) return;
+
+  const candidates = await expandNodePortPool(nodeId);
+  if (candidates.length === 0) {
+    throw conflict(
+      "No port pool is configured on this node. " +
+        "An admin must reserve ports before servers can be created.",
+    );
+  }
+
+  const rows = (await sql`
+    SELECT host_port
+    FROM server_ports
+    WHERE node_id = ${nodeId}
+  `) as { host_port: number }[];
+
+  const free = countFreePorts(
+    candidates,
+    new Set(rows.map((row) => row.host_port)),
+  );
+  if (free >= requiredPorts) return;
+
+  if (free === 0) {
+    throw conflict(
+      "No free ports remain in this node's port pool (all are allocated).",
+    );
+  }
+
+  throw conflict(
+    `This node has only ${free} free port${free === 1 ? "" : "s"}, ` +
+      `but the server requires ${requiredPorts}.`,
+  );
 }
 
 /**

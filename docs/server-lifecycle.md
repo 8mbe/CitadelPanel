@@ -80,14 +80,15 @@ they used to share one HTTP request.
 
 The first is deciding whether the server may exist: the blueprint is known, the
 resources clear its minimums, the env validates, some node has the capacity and
-can write its data root. All of that is fast, all of it is the caller's fault
-when it fails, and all of it still happens inside `POST /api/admin/servers`.
+can write its data root, and its port pool has enough unclaimed numbers for the
+blueprint. All of that is fast, all of it is the caller's fault when it fails,
+and all of it still happens inside `POST /api/admin/servers`.
 A bad create is still a 400 or a 409 with nothing left behind.
 
-The second is building it on the node: allocate ports, run the blueprint's
-install script, create the container. Every step is a call to an agent whose
-answers are slow for reasons that have nothing to do with whether the create was
-valid. A node that has never run `itzg/mc-proxy` pulls a few hundred megabytes
+The second is building it on the node: allocate and claim the ports, run the
+blueprint's install script, create the container. Every step calls an agent,
+whose answers can be slow for reasons unrelated to whether the create is valid.
+A node that has never run `itzg/mc-proxy` pulls a few hundred megabytes
 before the install container can start; the install script then downloads a
 server jar. Held inside the request, any timeout in the chain turned a working
 provision into a 502 and a row parked in `error`. The chain includes the panel's
