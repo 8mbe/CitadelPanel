@@ -652,7 +652,7 @@ export function BlueprintFormDialog({
                   <Input
                     id="bp-min-cpu"
                     type="number"
-                    step="0.01"
+                    step="any"
                     min={0.1}
                     max={64}
                     required

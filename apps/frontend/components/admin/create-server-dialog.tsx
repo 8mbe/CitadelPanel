@@ -247,7 +247,7 @@ export function CreateServerDialog({
                   required
                   min={blueprint?.minimums.cpuLimit ?? 0.1}
                   max={64}
-                  step={0.01}
+                  step="any"
                   value={cpu}
                   onChange={(e) => setCpu(e.target.value)}
                 />
