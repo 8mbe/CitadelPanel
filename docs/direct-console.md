@@ -175,6 +175,14 @@ for Files can produce an unhandled stream error while the new file request is
 starting. Docker abort errors remain handled until the socket's `close` event,
 including an error already queued when cancellation wins.
 
+## Command recall
+
+The console input keeps local command history for both transports. Arrow keys
+and the touch buttons recall submissions into the input without sending them.
+History lasts for the current server console view, including reconnects. See
+[command-history.md](command-history.md) for draft restoration, scope, and phone
+controls.
+
 ## Security notes
 
 - The long-lived `AGENT_TOKEN` still guards **every** agent lifecycle route. The

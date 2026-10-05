@@ -1,10 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { Send } from "lucide-react";
-
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   ApiError,
   consoleStreamUrl,
@@ -15,8 +11,8 @@ import {
   sendConsoleCommand,
 } from "@/lib/api";
 import { ConsoleHelperDialog } from "@/components/server/console-helper-dialog";
+import { ConsoleCommandInput } from "@/components/server/console-command-input";
 import { parseAnsi, type AnsiRun } from "@/lib/ansi";
-import { cn } from "@/lib/utils";
 import type { ServerStatus } from "@/lib/types";
 
 
@@ -77,7 +73,6 @@ export function ConsolePanel({
   status: ServerStatus;
 }) {
   const [lines, setLines] = React.useState<Line[]>([]);
-  const [command, setCommand] = React.useState("");
   const [connected, setConnected] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement>(null);
 
@@ -501,18 +496,15 @@ export function ConsolePanel({
     };
   }, [serverId, append]);
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = (command: string): boolean => {
     const trimmed = command.trim();
-    if (!trimmed) return;
+    if (!trimmed || !running || !connected) return false;
     const ws = wsRef.current;
     const viaProxy = proxyRef.current;
     // On the direct socket the command needs a live socket to ride. On the
     // proxied path there is no socket at all — input is its own HTTP request —
     // so only the connection state gates it.
-    if (!viaProxy && (!ws || ws.readyState !== WebSocket.OPEN)) return;
-    if (viaProxy && !connected) return;
-    setCommand("");
+    if (!viaProxy && (!ws || ws.readyState !== WebSocket.OPEN)) return false;
 
     // Echo the command locally so input appears above its own output. Even for
     // a TTY container this is needed: JLine3 sets the terminal to raw mode,
@@ -539,10 +531,11 @@ export function ConsolePanel({
           error instanceof ApiError ? error.message : "Failed to send command.";
         append(`[console] ${message}\n`);
       });
-      return;
+      return true;
     }
 
     ws!.send(JSON.stringify({ type: "input", data: trimmed }));
+    return true;
   };
 
   return (
@@ -603,32 +596,12 @@ export function ConsolePanel({
           </>
         )}
       </div>
-      <form
-        onSubmit={submit}
-        className="flex items-center gap-2 border-t border-zinc-800 p-2"
-      >
-        <span className="pl-2 font-mono text-xs text-zinc-500 select-none">
-          &gt;
-        </span>
-        <Input
-          value={command}
-          onChange={(e) => setCommand(e.target.value)}
-          placeholder={running ? "Type a console command…" : "Server is offline"}
-          disabled={!running || !connected}
-          className={cn(
-            "border-transparent bg-zinc-900 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 focus-visible:border-zinc-700",
-          )}
-          aria-label="Console command"
-        />
-        <Button
-          type="submit"
-          size="icon"
-          disabled={!running || !connected || !command.trim()}
-        >
-          <Send />
-          <span className="sr-only">Send command</span>
-        </Button>
-      </form>
+      <ConsoleCommandInput
+        key={serverId}
+        running={running}
+        connected={connected}
+        onSend={submit}
+      />
     </div>
   );
 }
