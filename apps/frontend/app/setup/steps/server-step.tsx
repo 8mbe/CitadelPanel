@@ -303,8 +303,8 @@ export function ServerStep({
                 <Input
                   id="setup-server-cpu"
                   type="number"
-                  min={0.5}
-                  step={0.5}
+                  min={blueprint?.minimums.cpuLimit ?? 0.1}
+                  step={0.01}
                   value={cpu}
                   onChange={(e) => setCpu(e.target.value)}
                 />

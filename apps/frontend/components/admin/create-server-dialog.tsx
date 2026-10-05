@@ -245,9 +245,9 @@ export function CreateServerDialog({
                   id="cs-cpu"
                   type="number"
                   required
-                  min={blueprint?.minimums.cpuLimit ?? 0.5}
+                  min={blueprint?.minimums.cpuLimit ?? 0.1}
                   max={64}
-                  step={0.5}
+                  step={0.01}
                   value={cpu}
                   onChange={(e) => setCpu(e.target.value)}
                 />
