@@ -37,7 +37,7 @@ public final class Main {
   }
 }
 JAVA
-  javac Main.java
+  javac --add-modules jdk.httpserver Main.java
   printf 'Main-Class: Main\\n' > MANIFEST.MF
   jar cfm server.jar MANIFEST.MF Main.class
   rm -f Main.java Main.class MANIFEST.MF
@@ -62,7 +62,7 @@ export const java: Blueprint = {
     },
   },
 
-  startupCommand: "exec java -jar server.jar",
+  startupCommand: "exec java --add-modules jdk.httpserver -jar server.jar",
 
   install: {
     image: "eclipse-temurin:21-jdk",

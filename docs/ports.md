@@ -46,11 +46,9 @@ which env var carries the primary port to the game process
   `config.yml` before BungeeCord starts)
 - `python`, `nodejs`, `bunjs`, `java` and `golang` → `PORT` (the starter apps
   read it directly)
-- `counter-strike-2` → `CS2_PORT`, and `rust` → `RUST_SERVER_PORT`
-
-NanoLimbo is the one built-in exception: its release defaults to listening on
-fixed port `65535`, so its blueprint has no primary port env and nodes must
-reserve that number in the pool.
+- `counter-strike-2` → `CS2_PORT`, `rust` → `RUST_SERVER_PORT`, and
+  `nanolimbo` → `PORT` (the installer and startup command patch
+  `settings.yml`'s `bind.port`)
 
 When a blueprint declares a primary port env, the panel sets it to the
 allocated primary port at create time and

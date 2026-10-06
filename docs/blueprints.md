@@ -17,9 +17,9 @@ installation.
   Modrinth/Hangar content tabs while presenting one server flavor in the create
   form.
 - **NanoLimbo** uses an Eclipse Temurin 21 runtime. Its installer downloads the
-  latest NanoLimbo release into the panel data mount. The software listens on
-  its built-in port `65535`, so a node hosting it must reserve that number in
-  its port pool; no panel-owned port env is available for this image.
+  latest NanoLimbo release into the panel data mount and seeds its upstream
+  `settings.yml`. The installer and startup command patch `bind.port` from the
+  panel-allocated `PORT`, preserving identity mapping after reallocations.
 - **Velocity** and **BungeeCord** use `itzg/mc-proxy`. Their install steps seed
   the proxy configuration, and the allocated identity port is applied to the
   config before each start. Use server links to connect a proxy to its backend
@@ -50,7 +50,7 @@ HTTP starter when the expected entry file is missing:
 | Python | `python:3.12-slim` | `main.py` | `python3 main.py` |
 | Node.js | `node:22-bookworm-slim` | `server.js` | `node server.js` |
 | Bun.js | `oven/bun:1` | `server.ts` | `bun run server.ts` |
-| Java | `eclipse-temurin:21-jre` | `server.jar` | `java -jar server.jar` |
+| Java | `eclipse-temurin:21-jre` | `server.jar` | `java --add-modules jdk.httpserver -jar server.jar` |
 | Go | `golang:1.23-alpine` | `main.go` | `go run main.go` |
 
 Replace the starter through Files or SFTP. Reinstalling a server reruns its
