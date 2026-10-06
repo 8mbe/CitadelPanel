@@ -7,8 +7,20 @@ import postgres from "postgres";
 import { loadRepositoryEnv } from "../lib/server/control-plane/config/load-repository-env";
 // Import the definition objects directly, NOT the registry: the registry pulls
 // in the db client (a connect-on-import side effect) before env is loaded here.
+import { bunjs } from "../lib/server/control-plane/blueprints/definitions/bun";
+import { bungeecord } from "../lib/server/control-plane/blueprints/definitions/bungeecord";
+import { counterStrike2 } from "../lib/server/control-plane/blueprints/definitions/counter-strike-2";
+import { fabric } from "../lib/server/control-plane/blueprints/definitions/fabric";
+import { forge } from "../lib/server/control-plane/blueprints/definitions/forge";
+import { golang } from "../lib/server/control-plane/blueprints/definitions/golang";
+import { java } from "../lib/server/control-plane/blueprints/definitions/java";
 import { minecraftBedrock } from "../lib/server/control-plane/blueprints/definitions/minecraft-bedrock";
 import { minecraftJava } from "../lib/server/control-plane/blueprints/definitions/minecraft-java";
+import { nanolimbo } from "../lib/server/control-plane/blueprints/definitions/nanolimbo";
+import { nodejs } from "../lib/server/control-plane/blueprints/definitions/node";
+import { python } from "../lib/server/control-plane/blueprints/definitions/python";
+import { purpur } from "../lib/server/control-plane/blueprints/definitions/purpur";
+import { rust } from "../lib/server/control-plane/blueprints/definitions/rust";
 import { velocity } from "../lib/server/control-plane/blueprints/definitions/velocity";
 
 loadRepositoryEnv();
@@ -55,7 +67,23 @@ for (const file of files) {
   });
 }
 
-for (const bp of [minecraftJava, minecraftBedrock, velocity]) {
+for (const bp of [
+  minecraftJava,
+  minecraftBedrock,
+  velocity,
+  purpur,
+  forge,
+  fabric,
+  nanolimbo,
+  bungeecord,
+  python,
+  nodejs,
+  bunjs,
+  java,
+  golang,
+  counterStrike2,
+  rust,
+]) {
   await sql`
     INSERT INTO blueprints (
       key, name, description, docker_image, default_ports, env_schema,

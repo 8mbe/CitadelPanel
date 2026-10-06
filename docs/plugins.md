@@ -70,8 +70,10 @@ install directories from their previous blueprint profiles.
 
 The Java blueprint retains the `plugins` identity for its TYPE-driven
 Plugins/Mods tab. Paper and Purpur use Modrinth and Hangar; Spigot, Fabric and
-Forge use Modrinth. Every Java server, including vanilla, also gets Datapacks
-from Modrinth, filtered with the `datapack` loader. The default directory is
+Forge use Modrinth. The fixed `purpur`, `fabric` and `forge` blueprints reuse
+the corresponding profile and provider rules while locking `TYPE` to that
+software. Every Java server, including vanilla, also gets Datapacks from
+Modrinth, filtered with the `datapack` loader. The default directory is
 `world/datapacks`; a blueprint for another world name must set that directory
 explicitly. The panel does not inspect world names or expand env values in paths.
 

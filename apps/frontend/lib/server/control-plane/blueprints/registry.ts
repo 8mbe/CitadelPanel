@@ -13,8 +13,20 @@
  */
 
 import { sql } from "../db/client";
+import { bunjs } from "./definitions/bun";
+import { bungeecord } from "./definitions/bungeecord";
+import { counterStrike2 } from "./definitions/counter-strike-2";
+import { fabric } from "./definitions/fabric";
+import { forge } from "./definitions/forge";
+import { golang } from "./definitions/golang";
+import { java } from "./definitions/java";
 import { minecraftBedrock } from "./definitions/minecraft-bedrock";
 import { minecraftJava } from "./definitions/minecraft-java";
+import { nanolimbo } from "./definitions/nanolimbo";
+import { nodejs } from "./definitions/node";
+import { python } from "./definitions/python";
+import { purpur } from "./definitions/purpur";
+import { rust } from "./definitions/rust";
 import { velocity } from "./definitions/velocity";
 import type {
   Blueprint,
@@ -30,6 +42,18 @@ export const BUILT_IN_BLUEPRINTS: readonly Blueprint[] = [
   minecraftJava,
   minecraftBedrock,
   velocity,
+  purpur,
+  forge,
+  fabric,
+  nanolimbo,
+  bungeecord,
+  python,
+  nodejs,
+  bunjs,
+  java,
+  golang,
+  counterStrike2,
+  rust,
 ];
 
 /** The row shape of the `blueprints` table. */

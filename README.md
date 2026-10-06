@@ -52,7 +52,7 @@ without changing anything about the panel.
 **Every game server is a container, and the container is described by a file you
 can edit.** A "blueprint" is one JSON document: the image, the ports, the
 environment fields the user gets to fill in, the install step, the resource
-floor. Three blueprints ship with the panel. You can write a fourth in the admin
+floor. Fifteen blueprints ship with the panel. You can write another in the admin
 UI, or paste a JSON file, without touching the code or rebuilding anything.
 
 **Nobody picks a port number.** Each machine gets a pool of ports. When a server
@@ -93,6 +93,10 @@ audit log.
 | Minecraft: Java Edition | Vanilla, Paper, Fabric and friends, with plugin or mod support where the flavour has it |
 | Minecraft: Bedrock Edition | The console and mobile edition |
 | Velocity | The Minecraft proxy, wired to your other servers |
+| Purpur, Forge and Fabric | Dedicated Minecraft server variants |
+| NanoLimbo and BungeeCord | Minecraft limbo and proxy servers |
+| Python, Node.js, Bun.js, Java and Go | Generic application runtimes with starter HTTP apps |
+| Counter-Strike 2 and Rust | Dedicated Steam game servers |
 
 Anything else is a blueprint away. If the game runs in a Docker image and talks
 on a port, the panel can run it. See [docs/plugins.md](docs/plugins.md) for how
@@ -392,6 +396,7 @@ decisions that would otherwise look strange.
 | [ports.md](docs/ports.md) | Port pools, identity mapping, TCP and UDP |
 | [server-links.md](docs/server-links.md) | Connecting one server to another |
 | [velocity-proxy.md](docs/velocity-proxy.md) | The proxy blueprint |
+| [blueprints.md](docs/blueprints.md) | Built-in game and runtime blueprints |
 | [plugins.md](docs/plugins.md) | Plugin and mod support, the fetch engine |
 | [database-explorer.md](docs/database-explorer.md) | Provisioned databases and the browser |
 | [backups.md](docs/backups.md) | restic to S3, the two scopes, the quota |
@@ -415,9 +420,10 @@ machines and site settings. What none of that gives you is a year of somebody
 else's traffic. Expect rough edges in the places tests do not reach: odd
 browsers, slow networks, a machine that dies halfway through a build.
 
-**Three blueprints ship.** Minecraft Java, Minecraft Bedrock, and Velocity. The
-blueprint format is the extension point and it is documented, but you are early,
-so you will be writing your own for anything else.
+**Fifteen blueprints ship.** Minecraft Java and Bedrock, Purpur, Forge, Fabric,
+NanoLimbo, Velocity, BungeeCord, five generic language runtimes, Counter-Strike
+2, and Rust. The blueprint format remains the extension point for anything
+else.
 
 **Things it does not do yet.** Moving a server between machines. A general task
 scheduler, beyond backup schedules. Billing, and there are no plans for it. A

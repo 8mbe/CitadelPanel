@@ -40,8 +40,20 @@ which env var carries the primary port to the game process
 - `velocity` → `CFG_PROXY_PORT` (Velocity's listen address lives in
   `velocity.toml`, not in any env var, so the proxy blueprint routes the number
   through the image's start-time config patcher, see `velocity-proxy.md`)
+- `purpur`, `forge` and `fabric` → `SERVER_PORT` (they use the same itzg image
+  wiring as `minecraft-java`)
+- `bungeecord` → `CFG_PROXY_PORT` (the proxy image expands the placeholder in
+  `config.yml` before BungeeCord starts)
+- `python`, `nodejs`, `bunjs`, `java` and `golang` → `PORT` (the starter apps
+  read it directly)
+- `counter-strike-2` → `CS2_PORT`, and `rust` → `RUST_SERVER_PORT`
 
-The panel sets that env var to the allocated primary port at create time and
+NanoLimbo is the one built-in exception: its release defaults to listening on
+fixed port `65535`, so its blueprint has no primary port env and nodes must
+reserve that number in the pool.
+
+When a blueprint declares a primary port env, the panel sets it to the
+allocated primary port at create time and
 **re-syncs it on every container recreate** (`recreateServerContainer` in
 `services/serverManager.ts`), so a changed allocation can never leave the game
 listening where nothing is forwarded. The key is deliberately absent from the
