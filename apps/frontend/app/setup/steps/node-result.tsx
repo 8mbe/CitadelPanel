@@ -4,6 +4,7 @@ import * as React from "react";
 import { Check, ServerCog } from "lucide-react";
 
 import type { NodeHealthResult } from "@/lib/api";
+import { NodeRecoverySummary } from "@/components/admin/node-recovery-card";
 import { agentProblem } from "@/lib/node-health";
 import type { NodePortPoolEntry } from "@/lib/types";
 import {
@@ -129,6 +130,8 @@ export function RegisteredView({
           </WarningNote>
         )}
         {problem && <WarningNote>{problem}</WarningNote>}
+
+        {node.recovery && <NodeRecoverySummary recovery={node.recovery} />}
 
         <div className="flex flex-col gap-3">
           <span className="flex items-center gap-1.5 text-sm font-medium">

@@ -15,6 +15,7 @@
 
 import { randomBytes } from "node:crypto";
 import { sql } from "../db/client";
+import { loadServerRecoveryMetadata, syncServerRecoveryMetadata } from "./nodeRecoveryMetadata";
 import { badRequest, conflict, notFound, HttpError } from "../lib/http";
 import { decryptSecret, encryptSecret, generateStrongPassword } from "../lib/crypto";
 import {
@@ -1551,6 +1552,7 @@ export async function suspendServer(
     targetId: serverId,
     metadata: { reason },
   });
+  await syncServerRecoveryMetadata(serverId);
 }
 
 export async function unsuspendServer(
@@ -1576,6 +1578,7 @@ export async function unsuspendServer(
     targetType: "server",
     targetId: serverId,
   });
+  await syncServerRecoveryMetadata(serverId);
 }
 
 /**
@@ -2084,7 +2087,16 @@ export async function buildServerContainerOn(
     ? ["/bin/sh", "-c", interpolateCommand(blueprint.startupCommand, env)]
     : undefined;
 
+  const recovery = await loadServerRecoveryMetadata(serverId);
   return createServerContainer(nodeId, serverId, {
+    recovery: {
+      ...recovery,
+      ports: hostPorts.map((port, index) => ({
+        hostPort: port.port, isPrimary: port.isPrimary,
+        isAdditional: recovery.ports[index]?.isAdditional ?? false,
+        label: recovery.ports[index]?.label ?? null,
+      })),
+    },
     image: blueprint.dockerImage,
     containerDataPath: blueprint.dataPath,
     env,

@@ -13,6 +13,8 @@ import {
   nodeRequestRaw,
   unregisteredNode,
 } from "./nodeApi";
+import type { ServerRecoveryMetadata } from "./nodeRecoveryApi";
+import { loadServerRecoveryMetadata } from "../services/nodeRecoveryMetadata";
 
 /** A port the game needs published on the host. */
 export interface PortBinding {
@@ -45,6 +47,7 @@ export function portBindingsFor(port: number): PortBinding[] {
  * arbitrary host path into a container.
  */
 export interface CreateContainerRequest {
+  recovery?: ServerRecoveryMetadata;
   image: string;
   containerDataPath: string;
   env: Record<string, string>;
@@ -120,9 +123,22 @@ export async function createServerContainer(
   serverId: string,
   request: CreateContainerRequest,
 ): Promise<{ containerId: string; hostDataPath: string }> {
+  const recovery = request.recovery ?? await loadServerRecoveryMetadata(serverId);
+  const published = [...new Set(request.ports.map((port) => port.hostPort))];
+  // Migration builds before port cutover. Save the destination's real ports.
+  if (published.length !== recovery.ports.length || published.some((port) => !recovery.ports.some((saved) => saved.hostPort === port))) {
+    const savedPorts = recovery.ports;
+    const primary = savedPorts.find((saved) => saved.isPrimary)?.hostPort;
+    recovery.ports = published.map((port, index) => ({
+      hostPort: port,
+      isPrimary: published.includes(primary ?? -1) ? port === primary : index === 0,
+      isAdditional: savedPorts.find((saved) => saved.hostPort === port)?.isAdditional ?? false,
+      label: savedPorts.find((saved) => saved.hostPort === port)?.label ?? null,
+    }));
+  }
   return nodeRequest(nodeId, `/v1/servers/${serverId}/container`, {
     method: "POST",
-    body: request,
+    body: { ...request, recovery },
     timeoutMs: 10 * 60_000,
   });
 }

@@ -10,6 +10,7 @@ import {
   adminProbeNodeConnection,
   adminProvisionNodeDatabase,
   type NodeHealthResult,
+  type NodeRecoveryResult,
   type UnregisteredNodeDatabaseView,
 } from "@/lib/api";
 import { NodeDatabaseResetDialog } from "@/components/admin/node-database-reset-dialog";
@@ -60,6 +61,7 @@ export interface RegisteredNode {
   name: string;
   health: NodeHealthResult;
   hasPortPool: boolean;
+  recovery?: NodeRecoveryResult;
 }
 
 export function NodeStep({
@@ -252,6 +254,7 @@ export function NodeStep({
         name: response.node.name,
         health: response.health,
         hasPortPool: false,
+        recovery: response.recovery,
       });
     } catch (err) {
       setError(
@@ -284,7 +287,8 @@ export function NodeStep({
         <CardDescription>
           A node is a machine running the CitadelPanel agent next to Docker. It
           is where game servers actually run. You need one before you can
-          provision anything, but you can add it later.
+          provision anything, but you can add it later. Registration also scans
+          for servers the agent remembers and restores any whose owners exist.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">

@@ -429,12 +429,19 @@ Routes the wizard borrows from the admin surface:
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | POST | `/api/admin/nodes/probe` | Test an agent without persisting anything |
-| POST | `/api/admin/nodes` | Register the node |
+| POST | `/api/admin/nodes` | Register the node and scan for recoverable servers |
 | POST | `/api/admin/nodes/:id/ports` | Reserve the first port range |
 | POST | `/api/admin/servers` | Provision the first server (with `startWhenBuilt`) |
 | GET | `/api/servers/:id/install-log` | Poll the build and the first start |
 | GET | `/api/servers/:id` | Read the allocated port for the connect address |
 | POST | `/api/servers/:id/start` | Retry the start by hand when it failed |
+
+The node result also reports discovery counts and skipped servers. Registration
+adopts recoverable panel records without starting or rebuilding containers; the
+wizard's new-server step remains a separate action. See
+[node-recovery.md](node-recovery.md) for ownership matching and the node's private
+records. To restore a whole existing panel, import its
+[panel export](panel-export.md) before registering nodes instead.
 
 `/api/setup/admin` is the one unauthenticated mutating endpoint. It is gated on
 the admin count, not the `completedAt` latch alone, because the latch is

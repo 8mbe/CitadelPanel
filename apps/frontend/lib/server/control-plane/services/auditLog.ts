@@ -11,6 +11,10 @@ import { clientIp } from "../lib/http";
 
 /** Canonical action names. Kept as a union so typos fail at compile time. */
 export type AuditAction =
+  | "panel.export"
+  | "panel.import"
+  | "server.recover"
+  | "node.recover"
   | "server.create"
   | "server.start"
   | "server.stop"

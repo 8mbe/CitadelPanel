@@ -148,7 +148,12 @@ screen](docs/first-time-setup.md) for import and export.
   ([docs](docs/first-time-setup.md))
 - **Machines.** Register a machine with its address and token, test the
   connection before you save, see CPU and memory in use, hand it a port range,
-  and hold back a slice of the hardware for the operating system.
+  and hold back a slice of the hardware for the operating system. Registration
+  scans for existing servers; nodes retain private recovery records.
+  ([docs](docs/node-recovery.md))
+- **Panel export/import.** Export encrypted users, settings, node credentials
+  and server metadata, then restore into a fresh panel. Server files stay on
+  their nodes. ([docs](docs/panel-export.md))
 - **Servers.** Create a server for any user, change its resource limits,
   suspend it, delete it.
 - **Users.** Change a role, ban an account, look at what someone owns.
@@ -390,6 +395,8 @@ decisions that would otherwise look strange.
 | [first-time-setup.md](docs/first-time-setup.md) | The wizard and the latch that closes it |
 | [docker.md](docs/docker.md) | Two images, two compose files, where setup happens |
 | [server-lifecycle.md](docs/server-lifecycle.md) | Building, power actions, status, recovery |
+| [node-recovery.md](docs/node-recovery.md) | Durable node inventories and safe server adoption |
+| [panel-export.md](docs/panel-export.md) | Encrypted panel metadata export and restore |
 | [direct-console.md](docs/direct-console.md) | Browser to agent WebSocket, capability tokens |
 | [sftp.md](docs/sftp.md) | Per-person, per-server SFTP logins |
 | [file-editor.md](docs/file-editor.md) | Monaco in the panel |

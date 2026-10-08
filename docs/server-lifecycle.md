@@ -14,7 +14,11 @@ the whole thing away and starts again.
 `restoring`). It is written before the node is
 asked to do anything and corrected after. That is the ordering principle in
 `services/serverManager.ts`: a DB row with no container is recoverable, a
-container with no DB row is an orphan nobody can see.
+container with no DB row is absent from ordinary panel views. Node registration
+and the admin's server scan can now adopt those orphans from the agent's private
+recovery record or a safely identified legacy container. See
+[node-recovery.md](node-recovery.md). Normal provisioning still writes the panel
+row first so recovery remains the exception rather than the create path.
 
 Because the status is a record rather than an observation, it can be wrong: a
 game that crashes on its own leaves `running` behind. `reconcileServerStatus`

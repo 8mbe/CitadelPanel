@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { NodeRecoverySummary } from "@/components/admin/node-recovery-card";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -55,7 +56,7 @@ import {
   adminProbeNodeConnection,
   adminTestNodeConnection,
   ApiError,
-  type NodeHealthResult,
+  type NodeRecoveryResult,
 } from "@/lib/api";
 import { formatMb, formatRelative, nodeReachability } from "@/lib/format";
 import { agentProblem } from "@/lib/node-health";
@@ -92,6 +93,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
     token?: string;
     warning?: string;
     reachable: boolean;
+    recovery?: NodeRecoveryResult;
   } | null>(null);
   // Pre-registration probe. Distinct from `result`, which holds the *register*
   // outcome. Kept as a 3-state union so a wrong token reads differently from a
@@ -197,6 +199,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
         token: response.token,
         warning: response.warning,
         reachable: response.health.reachable,
+        recovery: response.recovery,
       });
       await onAdded?.();
     } catch (err) {
@@ -233,6 +236,7 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
               </DialogDescription>
             </DialogHeader>
             {result.token && <GeneratedToken token={result.token} />}
+            {result.recovery && <NodeRecoverySummary recovery={result.recovery} />}
             {result.warning && !result.token && (
               <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
                 <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
@@ -249,7 +253,8 @@ export function AddNodeDialog({ onAdded }: { onAdded?: () => void | Promise<void
               <DialogTitle>Register a node</DialogTitle>
               <DialogDescription>
                 Point CitadelPanel at a machine running the node agent. The panel
-                probes it and records its capacity.
+                records its capacity and scans for servers the agent remembers.
+                It restores missing server records when their owners still exist.
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={submit} className="flex flex-col gap-4">

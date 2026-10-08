@@ -81,6 +81,7 @@ async function resolveSessionIdentity(
   }
 
   const identity: SessionIdentity = {
+    sessionId: typeof session.session.id === "string" ? session.session.id : undefined,
     id: session.user.id,
     email: session.user.email,
     sessionRole: (session.user as { role?: unknown }).role,
@@ -139,8 +140,19 @@ async function authorizeSession(
 ): Promise<AuthenticatedUser> {
   const banRows = (await sql`
     SELECT banned, "banExpires", role FROM "user" WHERE id = ${identity.id}
+    AND (
+      (${identity.apiKey !== null} AND EXISTS (
+        SELECT 1 FROM apikey WHERE id = ${identity.apiKey?.id ?? ""} AND enabled = TRUE
+          AND "referenceId" = ${identity.id} AND ("expiresAt" IS NULL OR "expiresAt" > now())
+      )) OR
+      (${identity.apiKey === null} AND EXISTS (
+        SELECT 1 FROM "session" WHERE id = ${identity.sessionId ?? ""}
+          AND "userId" = ${identity.id} AND "expiresAt" > now()
+      ))
+    )
   `) as { banned: boolean | null; banExpires: Date | null; role: unknown }[];
   const banRow = banRows[0];
+  if (!banRow) throw unauthorized();
   if (banRow?.banned) {
     if (banRow.banExpires && banRow.banExpires.getTime() < Date.now()) {
       // Expired ban: clear it so future requests skip this path, and allow.
@@ -155,10 +167,8 @@ async function authorizeSession(
     }
   }
 
-  // Prefer the row's role; fall back to the session's copy if the row is
-  // somehow absent. `role` is read defensively: an unexpected value degrades to
-  // the least-privileged role rather than granting admin.
-  const rawRole = banRow?.role ?? identity.sessionRole;
+  // The live row owns the role; unexpected values degrade to the least privilege.
+  const rawRole = banRow.role;
   const role: Role = isRole(rawRole) ? rawRole : "user";
 
   return { id: identity.id, email: identity.email, role };

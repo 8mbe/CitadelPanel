@@ -143,9 +143,10 @@ stating plainly, both surfaced in the admin UI:
 - **Rotating `PANEL_ENCRYPTION_KEY` makes every existing snapshot permanently
   unreadable.** The stored repository passwords become undecryptable, and they are
   the only thing that opens the repositories.
-- The panel is a single point of failure for *reading* backups. If it is rebuilt from
-  a Postgres backup, the repository passwords come back with it, which is why the
-  panel's own database must be backed up by other means (see the end of this doc).
+- The panel is a single point of failure for *reading* backups. A PostgreSQL
+  backup plus the original encryption key, or a passphrase-encrypted
+  [panel export](panel-export.md), preserves the repository passwords that make
+  the snapshots readable after rebuilding the control plane.
 
 Minting is race-safe (`INSERT … ON CONFLICT DO NOTHING` followed by a re-read): two
 concurrent first backups must agree on the password, or the loser writes snapshots
@@ -580,10 +581,12 @@ an empty history. The snapshots themselves are left in the bucket under the old
 
 ## What is not backed up
 
-The panel's own PostgreSQL database. Backups cover *game servers*: their files, and the
-databases they use. The control plane's metadata (accounts, nodes, audit logs, **and the
-repository passwords that open every snapshot**) is the operator's responsibility to back
-up by ordinary means, and it must be: without it, the snapshots in S3 cannot be decrypted.
+The panel's own PostgreSQL database. These backups cover game servers' files
+and the databases they use. Preserve control-plane metadata separately using a
+PostgreSQL backup with the original encryption keys or the encrypted export
+under **Admin → Settings**, described in [panel-export.md](panel-export.md).
+Both preserve accounts, nodes, audit logs and the repository passwords that open
+every snapshot. An S3 bucket alone cannot recover those passwords.
 
 ## Files
 

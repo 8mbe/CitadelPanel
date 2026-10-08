@@ -24,6 +24,7 @@ import {
   type AnalyticsProvider,
 } from "@/lib/api";
 import { ThemeCard } from "@/components/admin/theme-card";
+import { PanelTransferCard } from "@/components/admin/panel-transfer-card";
 import {
   CaptchaSettingsForm,
   toCaptchaPayload,
@@ -119,6 +120,7 @@ export function AdminGeneralSettings() {
         </p>
       </div>
 
+      <PanelTransferCard />
       <BrandingCard settings={settings} patch={patch} />
       <ThemeCard settings={settings} patch={patch} />
       <GeneralCard settings={settings} patch={patch} />

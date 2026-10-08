@@ -104,6 +104,8 @@ import {
   attachToServer,
   createServerContainer,
   deleteServerContainer,
+  discoverNodeServers,
+  updateServerRecovery,
   getServerInstallLogs,
   getServerLogs,
   getServerState,
@@ -119,11 +121,10 @@ import {
   stopServerContainer,
   streamServerLogs,
   unlinkServerContainers,
-  type CreateContainerRequest,
   type InstallRequest,
 } from "./servers";
 import type { Attachment } from "./docker/attach";
-import type { PortBinding } from "./docker/hardening";
+import { parseRecoveryMetadata, parseServerContainerRequest } from "./serverRecovery";
 
 /** Wrap a handler so thrown `HttpError`s become responses. */
 function route<Args extends unknown[]>(
@@ -230,95 +231,7 @@ const MAX_INPUT_CHARS = 4_096;
  * `hostDataPath` and `name` are deliberately absent from the accepted shape.
  * The agent derives both, so a caller cannot influence what gets mounted.
  */
-function parseCreateRequest(body: Record<string, unknown>): CreateContainerRequest {
-  const image = body.image;
-  if (typeof image !== "string" || image.length === 0) {
-    throw badRequest('"image" is required.');
-  }
-
-  const containerDataPath = body.containerDataPath;
-  if (typeof containerDataPath !== "string" || !containerDataPath.startsWith("/")) {
-    throw badRequest('"containerDataPath" must be an absolute path.');
-  }
-
-  const cpuLimit = Number(body.cpuLimit);
-  const memoryLimitMb = Number(body.memoryLimitMb);
-  if (!Number.isFinite(cpuLimit) || cpuLimit <= 0) {
-    throw badRequest('"cpuLimit" must be a positive number.');
-  }
-  if (!Number.isFinite(memoryLimitMb) || memoryLimitMb <= 0) {
-    throw badRequest('"memoryLimitMb" must be a positive number.');
-  }
-
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(body.env ?? {})) {
-    if (typeof value !== "string") {
-      throw badRequest(`env value for "${key}" must be a string.`);
-    }
-    env[key] = value;
-  }
-
-  if (!Array.isArray(body.ports)) {
-    throw badRequest('"ports" must be an array.');
-  }
-  const ports: PortBinding[] = body.ports.map((entry) => {
-    const port = entry as Record<string, unknown>;
-    const hostPort = Number(port.hostPort);
-    const containerPort = Number(port.containerPort);
-    const protocol = port.protocol;
-
-    if (!Number.isInteger(hostPort) || !Number.isInteger(containerPort)) {
-      throw badRequest("Each port needs integer hostPort and containerPort.");
-    }
-    if (protocol !== "tcp" && protocol !== "udp") {
-      throw badRequest('Port protocol must be "tcp" or "udp".');
-    }
-    return { hostPort, containerPort, protocol };
-  });
-
-  const command = Array.isArray(body.command)
-    ? body.command.map((part) => {
-        if (typeof part !== "string") {
-          throw badRequest('"command" must be an array of strings.');
-        }
-        return part;
-      })
-    : undefined;
-
-  // A uid or uid:gid only, never a username. The panel is trusted, but this is
-  // a privilege pin, so a name like "root" here would defeat the purpose of
-  // running the container non-root.
-  const user =
-    typeof body.user === "string" && body.user.length > 0 ? body.user : undefined;
-  if (user !== undefined && !/^\d+(:\d+)?$/.test(user)) {
-    throw badRequest('"user" must be a "uid" or "uid:gid" of digits only.');
-  }
-
-  // Extra networks (e.g. node_db_net) are optional. Only strings survive, and
-  // the agent validates each is a plausible Docker network name.
-  const extraNetworks = Array.isArray(body.extraNetworks)
-    ? body.extraNetworks.map((entry) => {
-        if (typeof entry !== "string" || entry.length === 0) {
-          throw badRequest('"extraNetworks" must be an array of non-empty strings.');
-        }
-        return entry;
-      })
-    : undefined;
-
-  return {
-    image,
-    containerDataPath,
-    env,
-    ports,
-    cpuLimit,
-    memoryLimitMb,
-    readOnlyRootFilesystem: body.readOnlyRootFilesystem === true,
-    command,
-    user,
-    extraNetworks,
-    tty: body.tty === true,
-  };
-}
+const parseCreateRequest = parseServerContainerRequest;
 
 /**
  * Validate a one-time install body.
@@ -809,6 +722,29 @@ const server = Bun.serve<ConsoleSocket, never>({
     },
 
     // --- Container lifecycle --------------------------------------------------
+    "/v1/servers/discovery": {
+      GET: route(async () => json(await discoverNodeServers())),
+    },
+
+    "/v1/servers/:id/recovery": {
+      PUT: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+        const recovery = parseRecoveryMetadata(body.recovery);
+        if (
+          body.spec !== undefined &&
+          (typeof body.spec !== "object" || body.spec === null || Array.isArray(body.spec))
+        ) {
+          throw badRequest('"spec" must be an object.');
+        }
+        const spec = body.spec === undefined
+          ? undefined
+          : parseCreateRequest(body.spec as Record<string, unknown>);
+        await updateServerRecovery(serverId, recovery, spec);
+        return noContent();
+      }),
+    },
+
     "/v1/servers/:id/container": {
       POST: route(async (request) => {
         const serverId = serverIdOf(request);

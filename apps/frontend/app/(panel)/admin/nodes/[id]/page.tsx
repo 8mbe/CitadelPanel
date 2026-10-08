@@ -37,6 +37,7 @@ import {
   type NodeHealthResult,
 } from "@/lib/api";
 import { NodeDatabaseCard } from "@/components/admin/node-database-card";
+import { NodeRecoveryCard } from "@/components/admin/node-recovery-card";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -392,6 +393,8 @@ function NodeDetailBody({
       />
 
       <AbuseCard abuse={abuse} />
+
+      <NodeRecoveryCard nodeId={detail.node.id} onChanged={onChanged} />
 
       <ServersCard servers={servers} />
 

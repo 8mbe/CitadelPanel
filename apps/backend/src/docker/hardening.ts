@@ -28,6 +28,8 @@ export interface PortBinding {
 }
 
 export interface HardenedContainerSpec {
+  /** Full identity is recorded only on runtime server containers. */
+  serverId?: string;
   /** Container name; also used to derive the per-server network name. */
   name: string;
   image: string;
@@ -204,6 +206,9 @@ export function buildHardenedContainerConfig(
     Labels: {
       "citadel.managed": "true",
       "citadel.container-name": spec.name,
+      ...(spec.serverId
+        ? { "citadel.server-id": spec.serverId, "citadel.kind": "server" }
+        : {}),
     },
 
     // dockerode's HostConfig type lacks CgroupnsMode, so the literal is checked

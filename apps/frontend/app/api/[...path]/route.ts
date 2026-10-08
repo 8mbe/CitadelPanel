@@ -113,8 +113,10 @@ import {
   handleListNodes,
   handleNodeHealth,
   handleProbeNode,
+  handleRecoverNode,
   handleUpdateNode,
 } from "@/lib/server/control-plane/routes/nodes";
+import { handlePanelExport, handlePanelImport, handlePanelImportPreview } from "@/lib/server/control-plane/routes/panelSnapshot";
 import {
   handleCancelServerMigration,
   handleGetServerMigration,
@@ -230,6 +232,9 @@ const exact = new Map<string, Partial<Record<string, Handler>>>([
   ["setup/complete", { POST: handleSetupComplete }],
   ["settings/public", { GET: handlePublicSettings }],
   ["admin/settings", { GET: handleGetSettings, PATCH: handleUpdateSettings }],
+  ["admin/settings/export", { POST: handlePanelExport }],
+  ["admin/settings/import/preview", { POST: handlePanelImportPreview }],
+  ["admin/settings/import", { POST: handlePanelImport }],
   ["admin/settings/test-email", { POST: handleTestEmail }],
   ["admin/settings/ai/models", { POST: handleFetchAiModels }],
   ["admin/settings/ai/test", { POST: handleTestAi }],
@@ -280,6 +285,7 @@ const patterns: Array<{
   pattern: RegExp;
   methods: Partial<Record<string, Handler>>;
 }> = [
+  { pattern: /^admin\/nodes\/([^/]+)\/recover$/, methods: { POST: handleRecoverNode } },
   { pattern: /^servers\/([^/]+)$/, methods: { GET: handleGetServer, DELETE: handleDeleteServer } },
   { pattern: /^servers\/([^/]+)\/start$/, methods: { POST: handleStartServer } },
   { pattern: /^servers\/([^/]+)\/stop$/, methods: { POST: handleStopServer } },

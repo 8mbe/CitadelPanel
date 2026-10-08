@@ -301,11 +301,14 @@ git pull
 docker compose up -d --build
 ```
 
-The new control-plane container migrates on boot. Node agents are independent:
-they hold no state of their own, so an agent can be rebuilt at any time. The
-containers it manages keep running, and the panel re-reads their status from
-the node. See [server-lifecycle.md](server-lifecycle.md) for why the node, not
-the panel, is the truth about a container.
+The new control-plane container migrates on boot. Node agents are independent
+and can be rebuilt while their managed containers keep running. Their private
+server recovery records now live beside the server directories, inside the same
+persistent `SERVER_DATA_ROOT` mount. Retain that whole mount during upgrades;
+the agent image itself still holds no durable data. See
+[node-recovery.md](node-recovery.md) for those records and
+[server-lifecycle.md](server-lifecycle.md) for why the node is the truth about a
+container.
 
 ## Secrets checklist
 

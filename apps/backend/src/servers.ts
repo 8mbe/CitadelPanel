@@ -10,7 +10,7 @@
  * the bind mount handed to Docker is always one the agent chose.
  */
 
-import { readdir, stat, rm } from "node:fs/promises";
+import { readdir, realpath, stat, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { config } from "./config";
 import { daemonRead, docker } from "./docker/client";
@@ -51,6 +51,17 @@ import { sampleContainerStats, type ContainerStats } from "./docker/stats";
 import { directoryOwner, ensureServerDataDir } from "./dataRoot";
 import { conflict, notFound } from "./http";
 import { serverDataPath } from "./paths";
+import {
+  discoverContainerSpec,
+  listServerManifests,
+  readServerManifest,
+  rememberedContainerIdentities,
+  recoverySpecMatchesContainer,
+  removeServerManifest,
+  serverDataPresent,
+  writeServerManifest,
+  type ServerRecoveryMetadata,
+} from "./serverRecovery";
 
 /**
  * What the panel may specify about a container.
@@ -73,6 +84,8 @@ export interface CreateContainerRequest {
   extraNetworks?: string[];
   /** Allocate a pseudo-TTY; see HardenedContainerSpec.tty. */
   tty?: boolean;
+  /** Private recovery metadata, stored outside the tenant's data directory. */
+  recovery?: ServerRecoveryMetadata;
 }
 
 /**
@@ -150,6 +163,11 @@ export async function createServerContainer(
 
   const hostDataPath = await ensureServerDataDir(serverId);
 
+  // Persist intent before Docker creates the container. A panel/node crash in
+  // the next call still leaves an identifiable server, rather than an orphan.
+  const previous = request.recovery ? null : await readServerManifest(serverId);
+  await writeServerManifest(serverId, request, request.recovery ?? previous?.recovery);
+
   const containerId = await createContainer(docker, {
     name: serverContainerName(serverId),
     image: request.image,
@@ -172,6 +190,7 @@ export async function createServerContainer(
     runtime: config.containerRuntime || undefined,
     extraNetworks: request.extraNetworks,
     tty: request.tty === true,
+    serverId,
   });
 
   return { containerId, hostDataPath };
@@ -349,7 +368,111 @@ export async function deleteServerContainer(
   if (deleteData) {
     await rm(serverDataPath(serverId), { recursive: true, force: true });
     invalidateDiskUsage(serverId);
+    await removeServerManifest(serverId);
   }
+}
+
+export interface DiscoveredServer {
+  serverId: string;
+  containerId: string | null;
+  state: ContainerState;
+  spec: CreateContainerRequest;
+  recovery?: ServerRecoveryMetadata;
+  dataPresent: boolean;
+  source: "manifest" | "container";
+}
+
+/** The fleet is inventoried without stopping, rebuilding or starting anything. */
+export async function discoverNodeServers(): Promise<{ servers: DiscoveredServer[]; warnings: string[] }> {
+  const { manifests, warnings } = await listServerManifests();
+  const inventory = new Map<string, DiscoveredServer>();
+  for (const manifest of manifests) {
+    inventory.set(manifest.serverId, {
+      serverId: manifest.serverId,
+      containerId: null,
+      state: "missing",
+      spec: manifest.spec,
+      recovery: manifest.recovery,
+      dataPresent: await serverDataPresent(manifest.serverId),
+      source: "manifest",
+    });
+  }
+  const containers = await daemonRead("the managed server inventory", (abortSignal) =>
+    docker.listContainers({ all: true, abortSignal }),
+  );
+  // Docker may canonicalize a configured data root that itself is a symlink.
+  // The root is operator-owned; individual server directory links stay refused.
+  const physicalRoot = await realpath(config.serverDataRoot).catch(() => config.serverDataRoot);
+  const blocked = new Set<string>();
+  const rememberedIds = manifests.map((entry) => entry.serverId);
+  const candidates = containers.flatMap((container) => {
+    const remembered = rememberedContainerIdentities(container, rememberedIds, [config.serverDataRoot, physicalRoot]);
+    const runtimeName = (container.Names ?? []).find((name) => /^\/citadel-[0-9a-f]{8}-[0-9a-f]{3}$/i.test(name));
+    if (!runtimeName || container.Labels?.["citadel.managed"] !== "true") {
+      for (const serverId of remembered) blocked.add(serverId);
+      if (remembered.length) warnings.push(`A container has an unsupported name or label for remembered server ${remembered.join(", ")}.`);
+      return [];
+    }
+    return [{ container, remembered }];
+  });
+  // Bound daemon reads on a large node; one broken container never hides others.
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(candidates.length, 4) }, async () => {
+    for (;;) {
+      const candidate = candidates[next++];
+      if (!candidate) return;
+      const { container, remembered } = candidate;
+      try {
+        const info = await daemonRead("a managed server's configuration", (abortSignal) => docker.getContainer(container.Id).inspect({ abortSignal }));
+        const recovered = discoverContainerSpec(info) ?? discoverContainerSpec(info, physicalRoot);
+        if (!recovered) {
+          for (const serverId of remembered) blocked.add(serverId);
+          warnings.push(`Managed container ${container.Id.slice(0, 12)} has an unsupported server configuration.`);
+          continue;
+        }
+        const previous = inventory.get(recovered.serverId);
+        if (previous && !recoverySpecMatchesContainer(previous.spec, recovered.spec)) {
+          blocked.add(recovered.serverId);
+          warnings.push(`Server ${recovered.serverId}'s container differs from its recovery record. Its panel records must be repaired before adoption.`);
+          continue;
+        }
+        inventory.set(recovered.serverId, {
+          serverId: recovered.serverId,
+          containerId: info.Id,
+          state: (info.State.Status as ContainerState) ?? "dead",
+          spec: previous
+            ? { ...previous.spec, extraNetworks: recovered.spec.extraNetworks }
+            : recovered.spec,
+          recovery: previous?.recovery,
+          dataPresent: await serverDataPresent(recovered.serverId),
+          source: previous ? "manifest" : "container",
+        });
+      } catch {
+        for (const serverId of remembered) blocked.add(serverId);
+        warnings.push(`Managed container ${container.Id.slice(0, 12)} could not be inspected.`);
+      }
+    }
+  }));
+  for (const serverId of blocked) inventory.delete(serverId);
+  return { servers: [...inventory.values()].sort((a, b) => a.serverId.localeCompare(b.serverId)), warnings };
+}
+
+/** Seed legacy containers, and keep ownership/status current without a rebuild. */
+export async function updateServerRecovery(serverId: string, recovery: ServerRecoveryMetadata, spec?: CreateContainerRequest): Promise<void> {
+  // The authenticated panel can repair a corrupt record using its own spec or
+  // the safely inspected container. Private-directory checks still apply when
+  // the complete replacement is written.
+  const previous = spec ? null : await readServerManifest(serverId).catch(() => null);
+  let runtimeSpec = spec ?? previous?.spec;
+  if (!runtimeSpec) {
+    const containerId = await requireContainerId(serverId);
+    const info = await daemonRead("a managed server's recovery configuration", (abortSignal) => docker.getContainer(containerId).inspect({ abortSignal }));
+    const physicalRoot = await realpath(config.serverDataRoot).catch(() => config.serverDataRoot);
+    const discovered = discoverContainerSpec(info) ?? discoverContainerSpec(info, physicalRoot);
+    if (!discovered || discovered.serverId !== serverId) throw conflict("This container cannot be safely remembered as a Citadel server.");
+    runtimeSpec = discovered.spec;
+  }
+  await writeServerManifest(serverId, runtimeSpec, recovery);
 }
 
 /** A server's container state, or "missing" when it has no container here. */

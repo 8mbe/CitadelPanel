@@ -50,6 +50,7 @@ import { loadNodeCapacity, loadNodeCapacities } from "../nodes/scheduler";
 import { getNodeAbuseSummary } from "../security/suspiciousList";
 import { recordAuditFromRequest } from "../services/auditLog";
 import { countServersOnNode, listServersForNode } from "../services/serverManager";
+import { recoverNodeServers } from "../services/nodeRecovery";
 
 /**
  * Validate an agent base URL.
@@ -440,10 +441,15 @@ export async function handleCreateNode(request: Request): Promise<Response> {
     },
   });
 
+  const recovery = health.reachable
+    ? await recoverNodeServers(node.id, admin.id)
+    : { discovered: 0, restored: 0, existing: 0, skipped: [], warning: "Connect the agent, then use Scan for servers on the node page." };
+
   return json(
     {
       node,
       health,
+      recovery,
       // Shown once, then unrecoverable. The operator must copy it now.
       ...(generatedToken
         ? {
@@ -462,6 +468,14 @@ export async function handleCreateNode(request: Request): Promise<Response> {
     },
     201,
   );
+}
+
+/** POST /api/admin/nodes/:id/recover. Re-scan without touching running containers. */
+export async function handleRecoverNode(request: Request, nodeId: string): Promise<Response> {
+  const admin = await requireAdmin(request);
+  const id = requireUuidParam(nodeId, "nodeId");
+  if (!await getNode(id)) throw notFound("Node not found");
+  return json({ recovery: await recoverNodeServers(id, admin.id) });
 }
 
 /** GET /api/admin/nodes/:id/health. A live reachability check. */

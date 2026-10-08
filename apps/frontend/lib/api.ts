@@ -273,11 +273,28 @@ export function adminCreateNode(payload: {
   /** Present only when the backend generated the token. Shown once. */
   token?: string;
   warning?: string;
+  recovery?: NodeRecoveryResult;
 }> {
   return request("/api/admin/nodes", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export interface NodeRecoveryResult {
+  discovered: number;
+  restored: number;
+  existing: number;
+  skipped: { serverId: string; reason: string }[];
+  warning?: string;
+}
+
+export async function adminRecoverNode(nodeId: string): Promise<NodeRecoveryResult> {
+  const data = await request<{ recovery: NodeRecoveryResult }>(
+    `/api/admin/nodes/${nodeId}/recover`,
+    { method: "POST" },
+  );
+  return data.recovery;
 }
 
 // --- Servers ------------------------------------------------------------------
@@ -3420,6 +3437,70 @@ export interface AdminAiSettings {
 /** GET /api/admin/settings. Current general settings (admin only). */
 export async function getAdminSettings(): Promise<AdminSettings> {
   return request<AdminSettings>("/api/admin/settings");
+}
+
+export interface PanelExportCounts {
+  users: number;
+  nodes: number;
+  servers: number;
+  blueprints: number;
+  settings: number;
+  databases: number;
+  schedules: number;
+  apiKeys: number;
+}
+
+export interface PanelImportPreview {
+  createdAt: string;
+  counts: PanelExportCounts;
+  administratorEmails: string[];
+  requiresSignIn: true;
+}
+
+export async function adminExportPanel(passphrase: string): Promise<{
+  blob: Blob;
+  filename: string;
+}> {
+  let response: Response;
+  try {
+    response = await fetch("/api/admin/settings/export", {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ passphrase }),
+    });
+  } catch {
+    throw new ApiError(0, "The panel service is unavailable. Please try again shortly.");
+  }
+  if (!response.ok) {
+    const data = await response.json().catch(() => null) as { error?: string } | null;
+    throw new ApiError(response.status, data?.error ?? "Could not export the panel.");
+  }
+  const filename = /filename="([^"]+)"/.exec(
+    response.headers.get("content-disposition") ?? "",
+  )?.[1] ?? `citadel-panel-${new Date().toISOString().slice(0, 10)}.json`;
+  return { blob: await response.blob(), filename };
+}
+
+export function adminPreviewPanelImport(
+  archive: Record<string, unknown>,
+  passphrase: string,
+): Promise<PanelImportPreview> {
+  return request("/api/admin/settings/import/preview", {
+    method: "POST",
+    body: JSON.stringify({ archive, passphrase }),
+  });
+}
+
+export function adminImportPanel(
+  archive: Record<string, unknown>,
+  passphrase: string,
+  confirmation: string,
+): Promise<{ success: true; requiresSignIn: true; counts: PanelExportCounts }> {
+  return request("/api/admin/settings/import", {
+    method: "POST",
+    body: JSON.stringify({ archive, passphrase, confirmation }),
+  });
 }
 
 /** Shape of a partial settings update; every field is optional. */
