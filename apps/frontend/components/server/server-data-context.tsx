@@ -48,9 +48,9 @@ export function ServerDataProvider({
     }
   }, [initial.id]);
 
-  // While the server is mid-transition, re-read the record itself rather than a
-  // resource sample: what matters is when the transition ends, not what the CPU
-  // is doing.
+  // Resource samples do not contain status. Keep reading the record on every
+  // tab, even when no stats consumer is mounted, so a crash updates the header
+  // and power controls without a reload.
   //
   // Provisioning (`creating`/`installing`) is the long case: there is no
   // container to sample, and this poll is what lets the shell's installing gate
@@ -74,25 +74,48 @@ export function ServerDataProvider({
   // itself is *not* polled -- it is a settled state that only changes when
   // somebody presses Restore, and that path flips the status itself.
   const recordPollMs =
+    status === "running" ||
     isProvisioning(status) || status === "migrating" || isArchiveTransfer(status)
       ? 5000
       : status === "starting" || status === "stopping"
         ? 2000
-        : null;
+        : status === "stopped" || status === "error" || status === "suspended"
+          ? 30000
+          : null;
 
   React.useEffect(() => {
     if (recordPollMs === null) return;
 
     let cancelled = false;
-    const interval = setInterval(() => {
-      if (!cancelled) void refresh().catch(() => undefined);
-    }, recordPollMs);
+    let inFlight = false;
+    const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const fresh = await getServer(initial.id);
+        if (cancelled || !fresh) return;
+        // The detail record seeds resource usage with zeros. Keep the live
+        // sample until the separate stats poll replaces it.
+        setServer((prev) => ({
+          ...fresh,
+          cpuPercent: fresh.status === "running" ? prev.cpuPercent : 0,
+          memoryUsedMb: fresh.status === "running" ? prev.memoryUsedMb : 0,
+          diskUsedMb: prev.diskUsedMb,
+        }));
+        setStatus(fresh.status);
+      } catch {
+        // A failed lookup is not evidence that the server stopped.
+      } finally {
+        inFlight = false;
+      }
+    };
+    const interval = setInterval(tick, recordPollMs);
 
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [recordPollMs, refresh]);
+  }, [initial.id, recordPollMs, status]);
 
   // How many mounted components are actually showing the resource sample.
   //
@@ -113,8 +136,7 @@ export function ServerDataProvider({
   // must not tear down and restart the running interval.
   const statsWanted = statsWatchers > 0;
 
-  // Poll a live resource sample so the stats cards and status stay current
-  // without a manual refresh.
+  // Poll a live resource sample while the stats cards are visible.
   //
   // Cadence depends on status: while running, sample every 5s for CPU/mem/disk.
   // While stopped or errored, keep sampling every 30s. Disk usage is a

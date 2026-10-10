@@ -77,6 +77,29 @@ request. It talks to every node, and a node that is down would hold startup open
 for its whole timeout; correcting the record a moment after boot is the point,
 delaying boot to do it is not.
 
+### An open page has to read the correction
+
+Correcting the database does not update a browser that already loaded the
+server. Resource samples contain CPU, memory and disk usage, but no status, so
+polling only `/stats` left both the console and dashboard saying `running`
+after the sweeper had recorded a crash as `stopped`.
+
+The server page reads the reconciled detail record every five seconds while
+running, on every tab, independently of whether resource cards are visible.
+Stopped, errored and suspended pages check every 30 seconds so an external
+start or an admin lifting suspension reaches the open page too. Transitions
+keep their existing faster checks. An exited container becomes `stopped`;
+missing or dead containers become `error`.
+
+The dashboard re-reads its list every five seconds to pick up the fleet
+sweeper's corrections and power actions from other pages. It keeps batching
+resource samples separately. Both record polls preserve the latest resource
+sample instead of replacing it with the list/detail endpoints' seed zeros,
+skip overlapping requests, and discard replies after unmount. A status change
+also discards the server page's previous poll so an old running observation
+cannot undo the local Stop transition. Failed polls retain the last observation;
+an unreachable node is still not evidence of a crash.
+
 ## Provisioning happens after the response, not during it
 
 Creating a server is two different jobs with two different failure modes, and

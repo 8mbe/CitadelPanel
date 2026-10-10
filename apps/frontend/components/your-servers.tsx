@@ -278,6 +278,44 @@ export function YourServers() {
     })();
   }, [load]);
 
+  // The fleet sweeper corrects stored status, but the list must read it again
+  // for an open dashboard to notice crashes or power actions on another page.
+  React.useEffect(() => {
+    let cancelled = false;
+    let inFlight = false;
+    const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const fresh = await listServers();
+        if (cancelled) return;
+        setServers((prev) => {
+          const previous = new Map(prev.map((server) => [server.id, server]));
+          return fresh.map((server) => {
+            const sample = previous.get(server.id);
+            if (!sample || server.status !== "running") return server;
+            return {
+              ...server,
+              cpuPercent: sample.cpuPercent,
+              memoryUsedMb: sample.memoryUsedMb,
+              diskUsedMb: sample.diskUsedMb,
+            };
+          });
+        });
+        setError(null);
+      } catch {
+        // Keep the last list during a transient failure.
+      } finally {
+        inFlight = false;
+      }
+    };
+    const interval = setInterval(tick, 5_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
   // Poll live resource samples for running servers so the tiles' CPU, memory,
   // and disk meters reflect current usage rather than the zeros the list
   // endpoint seeds. One batched request per tick regardless of how many servers

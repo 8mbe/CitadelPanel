@@ -70,6 +70,14 @@ the provider counts subscribers, and the interval runs only while at least one i
 mounted. The declaration lives in the component that renders the numbers, so
 moving the cards to another section moves the poll with them.
 
+Status polling is independent of resource subscriptions. Every server tab
+reads the reconciled record every five seconds while running and every 30
+seconds while stopped, errored or suspended. A resource sample has no status,
+so it cannot tell the header or power controls that the game crashed. The
+dashboard also re-reads its list every five seconds to show the fleet sweeper's
+corrections. These record reads retain the most recent resource sample so the
+seed zeros do not flicker through the meters. See `server-lifecycle.md`.
+
 The layout's seed fetch used to serve the same idea, until the layout stopped
 fetching at all. See Rule 3 for what replaced it.
 
