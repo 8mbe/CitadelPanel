@@ -1069,7 +1069,7 @@ async function runMigration(
     // --- Build --------------------------------------------------------------
     phase = "building";
     await setPhase(migrationId, phase, 80);
-    const { containerId, portEnv } = await buildDestinationContainer(
+    const { containerId, portEnv, envFingerprint } = await buildDestinationContainer(
       migrationId,
       serverId,
       state,
@@ -1088,7 +1088,7 @@ async function runMigration(
     // --- Cut over -----------------------------------------------------------
     phase = "cutover";
     await setPhase(migrationId, phase, 92);
-    await cutOver(migrationId, serverId, state, destinationPorts, containerId, portEnv);
+    await cutOver(migrationId, serverId, state, destinationPorts, containerId, portEnv, envFingerprint);
     state.cutoverDone = true;
 
     // --- Clean up the source ------------------------------------------------
@@ -1427,7 +1427,7 @@ async function buildDestinationContainer(
   serverId: string,
   state: RunState,
   ports: MigratedPort[],
-): Promise<{ containerId: string; portEnv: Record<string, string> }> {
+): Promise<{ containerId: string; portEnv: Record<string, string>; envFingerprint: string }> {
   const blueprintKeyRows = (await sql`
     SELECT blueprint_id FROM servers WHERE id = ${serverId}
   `) as { blueprint_id: string }[];
@@ -1447,7 +1447,7 @@ async function buildDestinationContainer(
       `${ports.map((entry) => entry.port).join(", ")}…`,
   );
 
-  const { containerId } = await buildServerContainerOn(
+  const { containerId, envFingerprint } = await buildServerContainerOn(
     serverId,
     state.destinationNodeId,
     ports.map((entry) => ({ port: entry.port, isPrimary: entry.isPrimary })),
@@ -1455,7 +1455,7 @@ async function buildDestinationContainer(
   );
 
   await log(migrationId, "info", "Container created on the destination node.");
-  return { containerId, portEnv };
+  return { containerId, portEnv, envFingerprint };
 }
 
 /**
@@ -1513,6 +1513,7 @@ async function cutOver(
   ports: MigratedPort[],
   containerId: string,
   portEnv: Record<string, string>,
+  envFingerprint: string,
 ): Promise<void> {
   await log(migrationId, "info", "Switching the server over to the destination node…");
 
@@ -1535,6 +1536,7 @@ async function cutOver(
       UPDATE servers
       SET node_id = ${state.destinationNodeId},
           container_id = ${containerId},
+          container_env_fingerprint = ${envFingerprint},
           status = 'stopped',
           updated_at = now()
       WHERE id = ${serverId}
@@ -1740,6 +1742,7 @@ async function rollbackMigration(
           UPDATE servers
           SET node_id = ${state.sourceNodeId},
               container_id = ${state.sourceContainerId},
+              container_env_fingerprint = NULL,
               updated_at = now()
           WHERE id = ${serverId}
         `;

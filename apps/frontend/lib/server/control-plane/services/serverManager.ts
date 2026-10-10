@@ -14,6 +14,8 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { env as panelEnv } from "../config/env";
+import { containerEnvFingerprint } from "./containerEnv";
 import { sql } from "../db/client";
 import { loadServerRecoveryMetadata, syncServerRecoveryMetadata } from "./nodeRecoveryMetadata";
 import { badRequest, conflict, notFound, HttpError } from "../lib/http";
@@ -110,6 +112,7 @@ interface ServerRow {
   node_id: string;
   blueprint_id: string;
   container_id: string | null;
+  container_env_fingerprint: string | null;
   status: ServerStatus;
   cpu_limit: string | number;
   memory_limit_mb: number;
@@ -1028,7 +1031,9 @@ async function provisionServer(
 
     await sql`
       UPDATE servers
-      SET container_id = ${containerId}, status = 'stopped', updated_at = now()
+      SET container_id = ${containerId},
+          container_env_fingerprint = ${containerEnvFingerprint(plan.env, panelEnv.encryptionKey)},
+          status = 'stopped', updated_at = now()
       WHERE id = ${serverId}
     `;
 
@@ -1350,6 +1355,17 @@ async function withMissingContainerRecovery<T>(
   }
 }
 
+/** Recreate only when Docker's creation-time env differs from the saved settings. */
+async function refreshContainerEnv(server: ServerRow): Promise<boolean> {
+  const values = await loadEnvForContainer(server.id);
+  if (server.container_env_fingerprint === containerEnvFingerprint(values, panelEnv.encryptionKey)) {
+    return false;
+  }
+  cancelStartWatch(server.id);
+  await recreateServerContainer(server.id);
+  return true;
+}
+
 export async function startServer(
   serverId: string,
   actorId: string | null,
@@ -1362,6 +1378,7 @@ export async function startServer(
 
   await setStatus(serverId, "starting");
   try {
+    if (await refreshContainerEnv(server)) await setStatus(serverId, "starting");
     // Plugins must be on disk before the game process boots, so the
     // auto-updater runs inside the "starting" phase. Best-effort by contract,
     // so a catalog outage never blocks a start.
@@ -1487,9 +1504,13 @@ export async function restartServer(
   try {
     // A restart re-reads the plugins directory at boot, so the auto-updater
     // runs before the agent restarts the container.
+    const recreated = await refreshContainerEnv(server);
+    if (recreated) await setStatus(serverId, "stopping");
     await autoUpdateServerPlugins(serverId);
     await withMissingContainerRecovery(server, () =>
-      restartServerContainer(server.node_id, serverId),
+      recreated
+        ? startServerContainer(server.node_id, serverId)
+        : restartServerContainer(server.node_id, serverId),
     );
     await setStatus(serverId, "running");
   } catch (error) {
@@ -2064,7 +2085,7 @@ export async function buildServerContainerOn(
   nodeId: string,
   hostPorts: { port: number; isPrimary: boolean }[],
   envOverrides: Record<string, string> = {},
-): Promise<{ containerId: string }> {
+): Promise<{ containerId: string; envFingerprint: string }> {
   if (hostPorts.length === 0) {
     throw badRequest("Server has no ports to publish");
   }
@@ -2088,7 +2109,7 @@ export async function buildServerContainerOn(
     : undefined;
 
   const recovery = await loadServerRecoveryMetadata(serverId);
-  return createServerContainer(nodeId, serverId, {
+  const created = await createServerContainer(nodeId, serverId, {
     recovery: {
       ...recovery,
       ports: hostPorts.map((port, index) => ({
@@ -2109,6 +2130,7 @@ export async function buildServerContainerOn(
     tty: blueprint.tty === true,
     extraNetworks: await extraNetworksForServer(serverId),
   });
+  return { ...created, envFingerprint: containerEnvFingerprint(env, panelEnv.encryptionKey) };
 }
 
 /**
@@ -2225,7 +2247,9 @@ export async function recreateServerContainer(serverId: string): Promise<void> {
 
     await sql`
       UPDATE servers
-      SET container_id = ${containerId}, status = 'stopped', updated_at = now()
+      SET container_id = ${containerId},
+          container_env_fingerprint = ${containerEnvFingerprint(env, panelEnv.encryptionKey)},
+          status = 'stopped', updated_at = now()
       WHERE id = ${serverId}
     `;
 

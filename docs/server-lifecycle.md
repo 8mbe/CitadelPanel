@@ -262,14 +262,27 @@ leaves a property alone when its variable is unset, so `server.properties` is
 now the only place these three live, edited through the Files tab and the editor
 ([file-editor.md](file-editor.md)).
 
-One caveat, because env is a *creation-time* fact for Docker: dropping the rows
-does not touch containers that already exist. A container keeps the environment
-it was created with until something recreates it: a port change, a link change,
-a reinstall, or the heal above. `server_env` is the spec a recreate reads
-(`loadEnvForContainer`), not something a restart re-applies, so an env edit on an
-existing server lands whenever that server is next recreated. The PATCH
-response's "takes effect the next time the server is restarted" is optimistic
-about that.
+Environment is a creation-time fact for Docker. Saving `server_env` changes the
+desired settings without interrupting the running game. Start and Restart
+compare those settings with `servers.container_env_fingerprint`, which records
+the environment sent when the container was built. A difference triggers a
+graceful stop and recreation through `recreateServerContainer` before the game
+starts. The data directory, ports and extra networks survive through the existing
+recreate path. Unchanged settings reuse the container.
+
+The fingerprint covers the sorted, decrypted key/value pairs. It is an HMAC
+keyed with `PANEL_ENCRYPTION_KEY`, so it does not leave a guessable hash of secret
+values in the database. Provisioning, recreation and migration record the exact
+environment they sent, only after creation succeeds. An edit saved during a slow
+rebuild therefore still differs on the next start; a failed rebuild cannot mark
+an unapplied edit as applied. Deleting an environment row also causes a rebuild,
+which removes old image overrides such as the three properties above.
+
+Migration 029 leaves existing fingerprints null because the panel cannot know
+what those containers were created with. Their next Start or Restart refreshes
+them once. Recovered containers also begin with an unknown fingerprint. None of
+this reruns an installer or deletes server files. Imported fingerprints from a
+panel with another encryption key also refresh on the next start.
 
 ## The power actions
 

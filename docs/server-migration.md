@@ -109,6 +109,13 @@ owners cannot. The panel passes the new value as an env override at build time
 and persists it at cutover, never before: a migration that fails after the build
 must not leave `server_env` naming a port on a node the server is not on.
 
+The build also returns the fingerprint of the environment sent to the
+destination. Cutover stores it alongside the new container id. Writing it during
+the build would describe the destination while the row still names the source;
+deriving it later from `server_env` could describe an edit that never reached
+the container. Start and Restart use this fingerprint to decide whether the
+container needs refreshing. See [server-lifecycle.md](server-lifecycle.md).
+
 ### Why the port rows move only at cutover
 
 `server_ports`' primary key is `(server_id, container_port)` and mappings are
