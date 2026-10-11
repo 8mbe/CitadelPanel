@@ -17,8 +17,8 @@ stored, new placement and ordinary agent calls are refused, and a failed
 request never silently puts the node back into service. The `node.drain` audit
 entry records the administrator's action even if shutdown cannot finish.
 
-The status sweeper includes drained nodes, even ones with no game servers. It
-enforces maintenance at panel boot and every 30 seconds, using the existing
+The status sweeper includes every registered node, even ones with no game servers. It
+reconciles maintenance at panel boot and every 30 seconds, using the existing
 reachability backoff after failures. This also covers nodes drained before this
 behavior was introduced. An offline node cannot be stopped remotely; the sweep
 finishes its shutdown when the agent becomes reachable. A failed stop is
@@ -94,6 +94,19 @@ enforcement therefore re-reads the database intent inside the same panel queue
 and skips nodes that have since been activated. Failed operations release the
 queue so activation can recover them; different nodes proceed independently.
 This queue lives in the panel process, alongside the status sweeper.
+
+Preventing the activation race does not repair a latch already left closed by
+an earlier run. Active nodes therefore also have their agent's health checked:
+when `maintenance` is explicitly `true`, the sweep clears the persistent latch
+without stopping or starting workloads or changing the panel's active flag.
+This recovery is recorded as `node.update` with the
+`maintenance-reconciliation` trigger. A healthy active node receives no
+activation call. An unreachable health probe is retried through the usual
+backoff, and an older agent that omits the field is not assumed to be drained.
+The fresh intent read, health probe, and recovery share the same per-node queue
+as explicit activation and draining, so a queued administrator drain still wins.
+This also repairs empty nodes; filtering by game-server count would leave their
+persistent latch closed until their first provision failed.
 
 Activation uses the same ten-minute agent request budget as draining. The agent
 may still be finishing an earlier graceful stop when activation arrives; the

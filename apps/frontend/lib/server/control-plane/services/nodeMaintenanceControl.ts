@@ -7,6 +7,7 @@ interface MaintenanceOperations<Node extends MaintenanceNode> {
   setActive: (nodeId: string, active: boolean) => Promise<Node | null>;
   enter: (nodeId: string) => Promise<void>;
   leave: (nodeId: string) => Promise<void>;
+  isMaintained: (nodeId: string) => Promise<boolean>;
 }
 
 /** Serialize panel intent and agent calls together, including background drains. */
@@ -32,12 +33,21 @@ export class NodeMaintenanceControl<Node extends MaintenanceNode> {
     });
   }
 
-  enforce(nodeId: string): Promise<void> {
+  reconcile(nodeId: string): Promise<boolean> {
     return this.run(nodeId, async () => {
       // A sweep may have queued this while activation was still awaiting the
       // agent. Re-read inside the queue, after the whole activation completes.
       const node = await this.operations.getNode(nodeId);
-      if (node && !node.isActive) await this.operations.enter(nodeId);
+      if (!node) return false;
+      if (!node.isActive) {
+        await this.operations.enter(nodeId);
+      } else if (await this.operations.isMaintained(nodeId)) {
+        // A persistent agent latch may predate the activation race fix, or
+        // survive a restart. Panel intent owns availability in both directions.
+        await this.operations.leave(nodeId);
+        return true;
+      }
+      return false;
     });
   }
 

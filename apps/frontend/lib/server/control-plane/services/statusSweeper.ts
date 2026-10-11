@@ -20,8 +20,8 @@
  *   - then on a timer, because a node can reboot (or a game can crash) while
  *     the panel is up, and that is the same staleness with a different cause.
  *
- * Cost is one request per node per pass, and one UPDATE per server that
- * actually drifted, which on a healthy panel is none. A node that fails is put
+ * Active nodes get a health probe and, when they have servers, one batch state
+ * request per pass. Only rows that actually drifted are updated. A failed node is put
  * in backoff (`nodes/nodeReachability.ts`) so an outage costs one request every
  * few minutes instead of one every 30 seconds, forever. The decision itself is
  * `statusReconcile.ts`, shared with the detail endpoint so the two can never
@@ -34,8 +34,8 @@ import {
   noteNodeReachable,
   noteNodeUnreachable,
 } from "../nodes/nodeReachability";
-import { getNode, listNodes } from "../nodes/nodeRegistry";
-import { enforceNodeMaintenance } from "./nodeMaintenance";
+import { listNodes } from "../nodes/nodeRegistry";
+import { reconcileNodeMaintenance } from "./nodeMaintenance";
 import { getNodeServerStates } from "../nodes/nodeServerApi";
 import {
   statusCorrections,
@@ -188,7 +188,7 @@ async function sweepNode(
 }
 
 /**
- * Reconcile active nodes and enforce shutdown on drained nodes.
+ * Reconcile maintenance intent on every node, then its server statuses.
  *
  * Errors are contained per node: one unreachable agent must not cost the rest
  * of the fleet its correction.
@@ -215,8 +215,7 @@ export async function runStatusSweep(): Promise<StatusSweepResult> {
   }
 
   const work = nodes
-    .map((node) => ({ node, nodeServers: serversByNode.get(node.id) ?? [] }))
-    .filter(({ node, nodeServers }) => !node.isActive || nodeServers.length > 0);
+    .map((node) => ({ node, nodeServers: serversByNode.get(node.id) ?? [] }));
 
   let next = 0;
   const workers = Array.from(
@@ -228,20 +227,19 @@ export async function runStatusSweep(): Promise<StatusSweepResult> {
           result.nodesSkipped += 1;
           continue;
         }
-        // Read intent again: a node can be activated while this fleet pass is
-        // queued. Drained nodes are included even when they have no game rows.
-        if (!job.node.isActive) {
-          const current = await getNode(job.node.id);
-          if (!current) continue;
-          if (!current.isActive) {
-            try {
-              await enforceNodeMaintenance(current.id);
-            } catch (error) {
-              result.nodesUnreachable += 1;
-              noteNodeUnreachable("status-sweeper", current.id, current.name, error);
-              continue;
-            }
-          }
+        // The service re-reads intent inside the activation/drain queue. Check
+        // active and empty nodes too: a reachable agent can retain a stale latch.
+        try {
+          await reconcileNodeMaintenance(job.node.id);
+        } catch (error) {
+          result.nodesUnreachable += 1;
+          noteNodeUnreachable("status-sweeper", job.node.id, job.node.name, error);
+          continue;
+        }
+        if (job.nodeServers.length === 0) {
+          result.nodesScanned += 1;
+          noteNodeReachable("status-sweeper", job.node.id, job.node.name);
+          continue;
         }
         await sweepNode(job.node.id, job.node.name, job.nodeServers, result);
       }

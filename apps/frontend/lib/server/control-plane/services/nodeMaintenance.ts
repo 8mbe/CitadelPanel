@@ -4,6 +4,7 @@ import { getNodeServerStates } from "../nodes/nodeServerApi";
 import { getNode, setNodeActive } from "../nodes/nodeRegistry";
 import { cancelStartWatch } from "./startWatchdog";
 import { NodeMaintenanceControl } from "./nodeMaintenanceControl";
+import { recordAudit } from "./auditLog";
 
 const MAINTENANCE_TIMEOUT_MS = 10 * 60_000;
 
@@ -37,10 +38,22 @@ const control = new NodeMaintenanceControl({
   setActive: setNodeActive,
   enter: enterNodeMaintenance,
   leave: leaveNodeMaintenance,
+  isMaintained: async (nodeId) => {
+    const health = await nodeRequest<{ maintenance?: boolean }>(nodeId, "/v1/health", {
+      timeoutMs: 5_000,
+    });
+    return health.maintenance === true;
+  },
 });
 
-export function enforceNodeMaintenance(nodeId: string): Promise<void> {
-  return control.enforce(nodeId);
+export async function reconcileNodeMaintenance(nodeId: string): Promise<void> {
+  if (await control.reconcile(nodeId)) {
+    console.warn(`[status-sweeper] cleared stale agent maintenance on active node ${nodeId}`);
+    void recordAudit({
+      action: "node.update", targetType: "node", targetId: nodeId,
+      metadata: { isActive: true, maintenance: false, trigger: "maintenance-reconciliation" },
+    });
+  }
 }
 
 export function setNodeActiveWithMaintenance(
