@@ -24,6 +24,7 @@ function fixture() {
     },
     enter: async (id: string) => { events.push(`drain:${id}`); agent.set(id, true); },
     leave: async (id: string) => { events.push(`activate:${id}`); agent.set(id, false); },
+    isMaintained: async (id: string) => agent.get(id) === true,
   };
   const control = new NodeMaintenanceControl(operations);
   const audit = async () => { events.push("audit"); };
@@ -46,7 +47,7 @@ describe("panel node maintenance coordination", () => {
     await cleared.promise;
     expect(f.agent.get("node")).toBe(false);
     expect(f.nodes.get("node")!.isActive).toBe(false);
-    const enforcement = f.control.enforce("node");
+    const enforcement = f.control.reconcile("node");
     store.release();
     await Promise.all([activation, enforcement]);
 
@@ -65,7 +66,7 @@ describe("panel node maintenance coordination", () => {
       await stop.promise;
       await enter(id);
     };
-    const drain = f.control.enforce("node");
+    const drain = f.control.reconcile("node");
     await started.promise;
     const activation = f.control.setActive("node", true, f.audit);
     await Promise.resolve();
@@ -106,7 +107,7 @@ describe("panel node maintenance coordination", () => {
     const started = gate();
     const stop = gate();
     f.operations.enter = async () => { started.release(); await stop.promise; };
-    const drain = f.control.enforce("node");
+    const drain = f.control.reconcile("node");
     await started.promise;
     try {
       await f.control.setActive("other", true, f.audit);
@@ -118,11 +119,64 @@ describe("panel node maintenance coordination", () => {
     }
   });
 
-  test("enforcement ignores active and deleted nodes", async () => {
+  test("reconciliation leaves healthy active and deleted nodes alone", async () => {
     const f = fixture();
     f.nodes.set("node", { isActive: true });
-    await f.control.enforce("node");
-    await f.control.enforce("deleted");
+    f.agent.set("node", false);
+    expect(await f.control.reconcile("node")).toBe(false);
+    expect(await f.control.reconcile("deleted")).toBe(false);
     expect(f.events).toEqual([]);
+  });
+
+  test("an already-active node with persistent agent maintenance is recovered", async () => {
+    const f = fixture();
+    f.nodes.set("node", { isActive: true });
+    expect(await f.control.reconcile("node")).toBe(true);
+    expect(f.agent.get("node")).toBe(false);
+    expect(f.nodes.get("node")!.isActive).toBe(true);
+    // Repeated sweeps do not send redundant activation calls or rewrite intent.
+    expect(await f.control.reconcile("node")).toBe(false);
+    expect(f.events).toEqual(["activate:node"]);
+  });
+
+  test("an inactive node is drained without probing or reopening it", async () => {
+    const f = fixture();
+    f.agent.set("node", false);
+    f.operations.isMaintained = async () => { throw new Error("must not probe"); };
+    expect(await f.control.reconcile("node")).toBe(false);
+    expect(f.agent.get("node")).toBe(true);
+    expect(f.events).toEqual(["drain:node"]);
+  });
+
+  test("failed health probes do not activate a node, and the next sweep can recover", async () => {
+    const f = fixture();
+    f.nodes.set("node", { isActive: true });
+    const probe = f.operations.isMaintained;
+    f.operations.isMaintained = async () => { throw new Error("health unreachable"); };
+    await expect(f.control.reconcile("node")).rejects.toThrow("health unreachable");
+    expect(f.agent.get("node")).toBe(true);
+    expect(f.events).toEqual([]);
+    f.operations.isMaintained = probe;
+    expect(await f.control.reconcile("node")).toBe(true);
+  });
+
+  test("a drain queued during automatic recovery keeps the node drained", async () => {
+    const f = fixture();
+    f.nodes.set("node", { isActive: true });
+    const probing = gate();
+    const answer = gate();
+    f.operations.isMaintained = async () => {
+      probing.release();
+      await answer.promise;
+      return true;
+    };
+    const recovery = f.control.reconcile("node");
+    await probing.promise;
+    const drain = f.control.setActive("node", false, f.audit);
+    answer.release();
+    await Promise.all([recovery, drain]);
+    expect(f.nodes.get("node")!.isActive).toBe(false);
+    expect(f.agent.get("node")).toBe(true);
+    expect(f.events).toEqual(["activate:node", "intent:node:false", "audit", "drain:node"]);
   });
 });
