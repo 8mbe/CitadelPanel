@@ -18,11 +18,19 @@ import {
   parseKeepMax,
   parseReason,
   parseRepoTarget,
+  parseRequireComplete,
   parseSnapshotId,
   parseSubject,
 } from "./wire";
 
 const SERVER = "3f2b7c1e-0000-4000-8000-000000000001";
+
+test("complete-copy validation cannot be disabled by an incorrectly typed flag", () => {
+  expect(parseRequireComplete({ requireComplete: true })).toBe(true);
+  expect(parseRequireComplete({})).toBe(false);
+  expect(parseRequireComplete({ requireComplete: false })).toBe(false);
+  expect(() => parseRequireComplete({ requireComplete: "true" })).toThrow("must be a boolean");
+});
 const NODE = "9a1b2c3d-0000-4000-8000-0000000000ff";
 
 const validRepo = () => ({

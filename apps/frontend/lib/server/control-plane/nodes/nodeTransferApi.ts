@@ -15,6 +15,7 @@
 
 import { nodeRequest, nodeRequestRaw } from "./nodeApi";
 import { HttpError } from "../lib/http";
+import { countTransferStream } from "./transferStream";
 
 /**
  * How long a single transfer leg may run.
@@ -25,6 +26,11 @@ import { HttpError } from "../lib/http";
  * whichever side gives up first, both sides give up.
  */
 const TRANSFER_TIMEOUT_MS = 6 * 60 * 60_000;
+
+/** Refuse occupied destinations before the migration owns anything there. */
+export async function prepareMigrationDestination(nodeId: string, serverId: string): Promise<void> {
+  await nodeRequest(nodeId, `/v1/servers/${serverId}/transfer/prepare`, { method: "POST" });
+}
 
 /** The size of a server's data directory on the node that currently holds it. */
 export async function measureServerData(
@@ -81,62 +87,48 @@ export async function transferServerData(options: {
   const compress = options.compress === true;
   const query = compress ? { compress: 1 } : undefined;
 
-  const source = await nodeRequestRaw(
-    options.sourceNodeId,
-    `/v1/servers/${options.serverId}/transfer/export`,
-    { query, timeoutMs: TRANSFER_TIMEOUT_MS },
-  );
-
-  if (!source.body) {
-    throw new HttpError(502, "The source node returned no data to transfer.");
-  }
-
   let bytesTransferred = 0;
-  const body = source.body;
+  const cancellation = new AbortController();
+  const signal = AbortSignal.any([
+    cancellation.signal,
+    AbortSignal.timeout(TRANSFER_TIMEOUT_MS),
+    ...(options.signal ? [options.signal] : []),
+  ]);
+  let counted: ReadableStream<Uint8Array> | undefined;
+  try {
+    const source = await nodeRequestRaw(
+      options.sourceNodeId,
+      `/v1/servers/${options.serverId}/transfer/export`,
+      { query, timeoutMs: TRANSFER_TIMEOUT_MS, signal },
+    );
+    if (!source.body) {
+      throw new HttpError(502, "The source node returned no data to transfer.");
+    }
 
-  // A counting pass-through rather than a `tee`: the panel must not retain a
-  // copy of anything it forwards, and progress is the only thing it needs from
-  // the bytes.
-  const counted = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const reader = body.getReader();
-      try {
-        for (;;) {
-          if (options.signal?.aborted) {
-            await reader.cancel().catch(() => undefined);
-            controller.error(new Error("The transfer was cancelled."));
-            return;
-          }
-          const { done, value } = await reader.read();
-          if (done) break;
-          bytesTransferred += value.byteLength;
-          options.onProgress?.(bytesTransferred);
-          controller.enqueue(value);
-        }
-        controller.close();
-      } catch (error) {
-        // The source's `tar` failed part-way through, which it can only report
-        // by breaking the stream (the headers went out long ago). Propagating
-        // the error rather than closing is what makes the destination's import
-        // fail instead of accepting a truncated archive.
-        controller.error(error);
-      } finally {
-        reader.releaseLock();
-      }
-    },
-  });
+    // No tee and no eager read loop: the destination controls consumption.
+    counted = countTransferStream(source.body, (bytes) => {
+      bytesTransferred += bytes;
+      options.onProgress?.(bytesTransferred);
+    }, signal);
 
-  const response = await nodeRequestRaw(
-    options.destinationNodeId,
-    `/v1/servers/${options.serverId}/transfer/import`,
-    {
-      method: "POST",
-      query,
-      rawBody: counted,
-      timeoutMs: TRANSFER_TIMEOUT_MS,
-    },
-  );
+    const response = await nodeRequestRaw(
+      options.destinationNodeId,
+      `/v1/servers/${options.serverId}/transfer/import`,
+      {
+        method: "POST",
+        query,
+        rawBody: counted,
+        timeoutMs: TRANSFER_TIMEOUT_MS,
+        signal,
+      },
+    );
 
-  const result = (await response.json()) as { sizeBytes: number };
-  return { bytesTransferred, destinationSizeBytes: result.sizeBytes };
+    const result = (await response.json()) as { sizeBytes: number };
+    return { bytesTransferred, destinationSizeBytes: result.sizeBytes };
+  } finally {
+    // Abort the destination upload even when it rejected the body before
+    // reading it. Its cancellation propagates to the source's tar stream.
+    cancellation.abort();
+    await counted?.cancel().catch(() => undefined);
+  }
 }

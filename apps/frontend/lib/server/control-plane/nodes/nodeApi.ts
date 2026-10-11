@@ -346,6 +346,8 @@ export async function nodeRequestRaw(
 
 export interface NodeHealth {
   reachable: boolean;
+  /** Can restore a migration snapshot while refusing an occupied destination. */
+  snapshotMigration?: boolean;
   maintenance?: boolean;
   dockerVersion?: string;
   containersRunning?: number;
@@ -417,6 +419,7 @@ export interface NodeDockerSocketStatus {
 
 interface AgentHealthResponse {
   status: string;
+  snapshotMigration?: boolean;
   maintenance?: boolean;
   dockerVersion?: string;
   containersRunning?: number;
@@ -443,6 +446,7 @@ export async function checkNodeHealth(node: NodeWithSecrets): Promise<NodeHealth
 
     return {
       reachable: true,
+      snapshotMigration: health.snapshotMigration,
       maintenance: health.maintenance,
       dockerVersion: health.dockerVersion,
       containersRunning: health.containersRunning,

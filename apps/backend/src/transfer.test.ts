@@ -16,6 +16,7 @@ const root = (await import("../test-setup")).testRoot;
 
 const {
   dataRootSpace,
+  assertEmptyMigrationDestination,
   exportServerData,
   importServerData,
   measureServerData,
@@ -187,6 +188,12 @@ describe("importServerData refuses to merge", () => {
       await readFile(join(root, OCCUPIED_ID, "someone-elses-world.dat"), "utf8"),
     ).toBe("do not merge");
   });
+});
+
+test("S3 migration destinations refuse existing files and allow an absent directory", async () => {
+  await expect(assertEmptyMigrationDestination(OCCUPIED_ID)).rejects.toMatchObject({ status: 409 });
+  expect(await readFile(join(root, OCCUPIED_ID, "someone-elses-world.dat"), "utf8")).toBe("do not merge");
+  await assertEmptyMigrationDestination(MISSING_ID);
 });
 
 describe("dataRootSpace", () => {

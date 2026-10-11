@@ -22,8 +22,9 @@ import { NodeMaintenance } from "./nodeMaintenance";
 import { maintenanceState } from "./maintenanceState";
 import { allowedDuringNodeMaintenance } from "../../../shared/nodeMaintenance";
 import { config } from "./config";
+import { HTTP_SERVER_OPTIONS } from "./httpServerOptions";
 import { validateConsoleSession, recordConsoleCommand } from "./consoleAudit";
-import { probeDataRoot, reportDataRootAtBoot } from "./dataRoot";
+import { ensureServerDataDir, probeDataRoot, reportDataRootAtBoot } from "./dataRoot";
 import { docker, readDaemonInfo, reportContainerRuntimeAtBoot } from "./docker/client";
 import { reportUsernsAtBoot } from "./docker/userns";
 import { probeDockerSocket, reportDockerSocketAtBoot } from "./docker/socket";
@@ -64,6 +65,7 @@ import {
   parseKeepMax,
   parseReason,
   parseRepoTarget,
+  parseRequireComplete,
   parseSnapshotId,
   parseSubject,
 } from "./backup/wire";
@@ -72,6 +74,7 @@ import { createSftpServer } from "./sftp";
 import type { Server as SshServer } from "ssh2";
 import {
   dataRootSpace,
+  assertEmptyMigrationDestination,
   exportServerData,
   importServerData,
   measureServerData,
@@ -326,6 +329,7 @@ interface ConsoleSocket {
 }
 
 const server = Bun.serve<ConsoleSocket, never>({
+  ...HTTP_SERVER_OPTIONS,
   port: config.port,
 
   // Optional TLS. When both cert + key paths are set the agent serves HTTPS/WSS,
@@ -387,6 +391,7 @@ const server = Bun.serve<ConsoleSocket, never>({
         return json({
           status: dockerSocket.reachable ? "ok" : "degraded",
           maintenance: maintenanceState.enabled,
+          snapshotMigration: true,
           dockerVersion: info?.serverVersion,
           containersRunning: info?.containersRunning,
           capacity: info ? { ncpu: info.ncpu, memTotalMb: info.memTotalMb } : undefined,
@@ -1132,6 +1137,43 @@ const server = Bun.serve<ConsoleSocket, never>({
       }),
     },
 
+    /** Restore a migration snapshot into a new destination, never an overlay. */
+    "/v1/servers/:id/transfer/restore": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const body = await parseJsonBody(request);
+        const restore = {
+          repo: parseRepoTarget(body, "server", serverId),
+          snapshotId: parseSnapshotId(body.snapshotId),
+        };
+        const state = await getServerState(serverId).catch((error: unknown) => {
+          if ((error as { status?: number }).status === 404) return "missing";
+          throw error;
+        });
+        if (state !== "missing") throw conflict("This node already holds a container for this server.");
+        await assertEmptyMigrationDestination(serverId);
+        if (hasRunningJob(serverSubject(serverId))) {
+          throw conflict("A backup or restore is already running for this server on this node.");
+        }
+        return json({ jobId: startServerRestore(serverId, restore, { migration: true }) }, 202);
+      }),
+    },
+
+    /** Reserve an empty destination before a stream can create partial files. */
+    "/v1/servers/:id/transfer/prepare": {
+      POST: route(async (request) => {
+        const serverId = serverIdOf(request);
+        const state = await getServerState(serverId).catch((error: unknown) => {
+          if ((error as { status?: number }).status === 404) return "missing";
+          throw error;
+        });
+        if (state !== "missing") throw conflict("This node already holds a container for this server.");
+        await assertEmptyMigrationDestination(serverId);
+        await ensureServerDataDir(serverId);
+        return json({ prepared: true }, 201);
+      }),
+    },
+
     // --- File manager: download ----------------------------------------------
     //
     // GET ?path= streams a single file's raw bytes. A directory, or multiple
@@ -1269,6 +1311,7 @@ const server = Bun.serve<ConsoleSocket, never>({
           keepMax: parseKeepMax(body),
           reason: parseReason(body),
           exclude: parseExclude(body),
+          requireComplete: parseRequireComplete(body),
         });
 
         return json({ jobId }, 202);
