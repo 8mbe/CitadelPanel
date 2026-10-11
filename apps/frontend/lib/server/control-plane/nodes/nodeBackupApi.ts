@@ -103,6 +103,7 @@ export async function startNodeServerBackup(
     /** Tags the snapshot. `archive` marks the one that is the only copy. */
     reason: "manual" | "scheduled" | "archive";
     exclude: string[];
+    requireComplete?: boolean;
   },
 ): Promise<{ jobId: string }> {
   return nodeRequest(nodeId, `/v1/backups/servers/${serverId}`, {
@@ -120,6 +121,17 @@ export async function startNodeServerRestore(
   return nodeRequest(nodeId, `/v1/backups/servers/${serverId}/restore`, {
     method: "POST",
     body: request,
+  });
+}
+
+/** Migration-only restore: the agent refuses existing data or a container. */
+export async function startNodeMigrationRestore(
+  nodeId: string,
+  serverId: string,
+  request: { repo: AgentRepoTarget; snapshotId: string },
+): Promise<{ jobId: string }> {
+  return nodeRequest(nodeId, `/v1/servers/${serverId}/transfer/restore`, {
+    method: "POST", body: request,
   });
 }
 

@@ -56,6 +56,7 @@ import { checkPortNumbersFree } from "../nodes/nodePortsApi";
 import {
   measureServerData,
   transferServerData,
+  prepareMigrationDestination,
 } from "../nodes/nodeTransferApi";
 import {
   deleteServerContainer,
@@ -70,8 +71,10 @@ import {
   type ServerStatus,
 } from "./serverManager";
 import { rewireServerLinks } from "./serverLinks";
-import { getBackupSettings } from "./settings";
-import { getServerBackup, startServerBackup } from "./serverBackups";
+import { getBackupSettings, isBackupConfigUsable } from "./settings";
+import { getServerBackup, startServerBackup, startMigrationRestore } from "./serverBackups";
+import { checkNodeBackupRepository, readNodeBackupJob } from "../nodes/nodeBackupApi";
+import { buildRepoTarget, type BackupRunView } from "./backupCore";
 import { reconcileBackupRuns } from "../nodes/backupScheduler";
 import { recordAudit } from "./auditLog";
 import {
@@ -202,6 +205,7 @@ const STOP_TIMEOUT_SECONDS = 60;
 
 /** How long a safety backup may take before the migration gives up on it. */
 const BACKUP_WAIT_MS = 60 * 60_000;
+const SNAPSHOT_TRANSFER_WAIT_MS = 7 * 60 * 60_000;
 
 /** How often the safety backup's progress is checked. */
 const BACKUP_POLL_MS = 3_000;
@@ -804,10 +808,26 @@ export async function preflightMigration(
 
   // --- The safety backup ----------------------------------------------------
   const backupSettings = await getBackupSettings();
-  const backupsUsable =
-    backupSettings.enabled &&
-    Boolean(backupSettings.bucket) &&
-    Boolean(backupSettings.accessKeyId);
+  const backupsUsable = isBackupConfigUsable(backupSettings);
+
+  if (backupsUsable) {
+    const sourceHealth = await checkNodeHealth((await getNodeWithSecrets(server.nodeId))!);
+    add("snapshot_transport", "S3 migration", sourceHealth.snapshotMigration && destinationHealth.snapshotMigration ? "ok" : "fail",
+      sourceHealth.snapshotMigration && destinationHealth.snapshotMigration
+        ? "The stopped server will be snapshotted completely and restored from S3 on the destination."
+        : "Rebuild both node agents to enable complete S3 migration snapshots and destination restores.");
+    if (destinationHealth.snapshotMigration) {
+      try {
+        const repo = await buildRepoTarget("server", serverId, backupSettings);
+        const probe = await checkNodeBackupRepository(destinationNodeId, { scope: "server", id: serverId }, repo);
+        add("s3_destination", "Destination S3 access", probe.reachable ? "ok" : "fail", probe.detail);
+      } catch (error) {
+        add("s3_destination", "Destination S3 access", "fail", error instanceof Error ? error.message : String(error));
+      }
+    }
+  } else if (destinationHealth.snapshotMigration !== true) {
+    add("stream_transport", "Direct migration", "fail", "Rebuild the destination agent to enable large streaming imports and safe destination preparation.");
+  }
 
   if (backupsUsable) {
     add(
@@ -1016,6 +1036,8 @@ interface RunState {
   cutoverDone: boolean;
   sourcePorts: MigratedPort[];
   sourceContainerId: string | null;
+  useSnapshotTransport: boolean;
+  destinationRestoreJobId: string | null;
 }
 
 async function runMigration(
@@ -1036,6 +1058,8 @@ async function runMigration(
     cutoverDone: false,
     sourcePorts,
     sourceContainerId: server.containerId,
+    useSnapshotTransport: false,
+    destinationRestoreJobId: null,
   };
 
   let phase: MigrationPhase = "preflight";
@@ -1044,7 +1068,7 @@ async function runMigration(
     // --- Safety backup ------------------------------------------------------
     phase = "backup";
     await setPhase(migrationId, phase, 2);
-    await takeSafetyBackup(migrationId, serverId, input);
+    state.useSnapshotTransport = await takeSafetyBackup(migrationId, serverId, input);
     await checkpoint(migrationId);
 
     // --- Stop the source ----------------------------------------------------
@@ -1148,10 +1172,9 @@ async function takeSafetyBackup(
   migrationId: string,
   serverId: string,
   input: StartMigrationInput,
-): Promise<void> {
+): Promise<boolean> {
   const settings = await getBackupSettings();
-  const usable =
-    settings.enabled && Boolean(settings.bucket) && Boolean(settings.accessKeyId);
+  const usable = isBackupConfigUsable(settings);
 
   if (!usable) {
     await log(
@@ -1160,7 +1183,7 @@ async function takeSafetyBackup(
       "No backup destination is configured, so no safety backup was taken " +
         "(acknowledged when the migration was started).",
     );
-    return;
+    return false;
   }
 
   await log(migrationId, "info", "Taking a backup of the server's files first…");
@@ -1193,7 +1216,7 @@ async function takeSafetyBackup(
         "info",
         `Backup complete (snapshot ${current.snapshotId ?? "unknown"}).`,
       );
-      return;
+      return true;
     }
     if (current.status === "failed") {
       throw new HttpError(
@@ -1270,33 +1293,62 @@ async function transferPhase(
   await log(
     migrationId,
     "info",
-    `Copying ${formatBytes(sourceSize)} to the destination node…`,
+    `Copying ${formatBytes(sourceSize)} to the destination node${state.useSnapshotTransport ? " through S3" : " by direct streaming"}…`,
   );
 
   let lastWrite = 0;
-  const result = await transferServerData({
-    sourceNodeId: state.sourceNodeId,
-    destinationNodeId: state.destinationNodeId,
-    serverId,
-    compress: input.compress,
-    onProgress: (bytes) => {
-      const now = Date.now();
-      if (now - lastWrite < PROGRESS_WRITE_MS) return;
-      lastWrite = now;
-      // Percent spans 15-70: the transfer is most of the wall clock but not all
-      // of the work, and a bar that sits at 100% through a five-minute build is
-      // worse than one that never got there.
-      const percent =
-        sourceSize > 0
-          ? 15 + Math.min(55, Math.floor((bytes / sourceSize) * 55))
-          : 15;
-      void sql`
-        UPDATE server_migrations
-        SET bytes_transferred = ${bytes}, percent = ${percent}, updated_at = now()
-        WHERE id = ${migrationId}
-      `.catch(() => undefined);
-    },
-  });
+  const reportProgress = (bytes: number, percent?: number) => {
+    const now = Date.now();
+    if (now - lastWrite < PROGRESS_WRITE_MS) return;
+    lastWrite = now;
+    // The copy spans 15-70; leave room for the build, verification and cutover.
+    const currentPercent = percent ?? (
+      sourceSize > 0
+        ? 15 + Math.min(55, Math.floor((bytes / sourceSize) * 55))
+        : 15);
+    void sql`
+      UPDATE server_migrations
+      SET bytes_transferred = ${bytes}, percent = ${currentPercent}, updated_at = now()
+      WHERE id = ${migrationId}
+    `.catch(() => undefined);
+  };
+
+  let snapshot: BackupRunView | undefined;
+  if (state.useSnapshotTransport) {
+    await log(migrationId, "info", "Taking a complete snapshot of the stopped server for migration; backup exclusions do not apply…");
+    const run = await startServerBackup({ serverId, actorId: input.actorId, trigger: "manual", forMigration: true });
+    snapshot = await waitForMigrationTransferRun(migrationId, serverId, run.id, "The complete migration snapshot", true,
+      (percent) => reportProgress(0, 15 + Math.floor(percent / 4)));
+    if (!snapshot.snapshotId) throw new HttpError(502, "The complete migration snapshot did not report a snapshot id.");
+    await sql`UPDATE server_migrations SET backup_run_id = ${snapshot.id}, updated_at = now() WHERE id = ${migrationId}`;
+    await log(migrationId, "info", `Complete snapshot ready (${snapshot.snapshotId}).`);
+    await checkpoint(migrationId);
+  }
+
+  // Only claim ownership after the agent has refused any existing destination
+  // data/container. This lets rollback remove a partial copy even on failure.
+  await prepareMigrationDestination(state.destinationNodeId, serverId);
+  state.destinationHasData = true;
+
+  let result: { bytesTransferred: number; destinationSizeBytes: number };
+  if (snapshot) {
+    await log(migrationId, "info", "Restoring the complete snapshot directly from S3 on the destination…");
+    const run = await startMigrationRestore({
+      serverId, backupRunId: snapshot.id, destinationNodeId: state.destinationNodeId, actorId: input.actorId,
+      onAccepted: (_runId, jobId) => { state.destinationRestoreJobId = jobId; },
+    });
+    // Cancellation is cooperative. Wait for restic to settle before allowing
+    // rollback to remove its target; deleting a directory it is writing is unsafe.
+    await waitForMigrationTransferRun(migrationId, serverId, run.id, "The destination's S3 restore", false,
+      (percent) => reportProgress(Math.floor(sourceSize * percent / 100), 40 + Math.floor(percent * 0.3)));
+    state.destinationRestoreJobId = null;
+    result = { bytesTransferred: sourceSize, destinationSizeBytes: await measureServerData(state.destinationNodeId, serverId) };
+  } else {
+    result = await transferServerData({
+      sourceNodeId: state.sourceNodeId, destinationNodeId: state.destinationNodeId,
+      serverId, compress: input.compress, onProgress: reportProgress,
+    });
+  }
 
   await sql`
     UPDATE server_migrations
@@ -1321,6 +1373,28 @@ async function transferPhase(
     `Copied ${formatBytes(result.bytesTransferred)}; the destination holds ` +
       `${formatBytes(result.destinationSizeBytes)}.`,
   );
+}
+
+/** Durable backup/restore jobs use the normal reconciler and retain their logs. */
+async function waitForMigrationTransferRun(
+  migrationId: string,
+  serverId: string,
+  runId: string,
+  label: string,
+  canCancel: boolean,
+  onProgress: (percent: number) => void,
+): Promise<BackupRunView> {
+  const deadline = Date.now() + SNAPSHOT_TRANSFER_WAIT_MS;
+  for (;;) {
+    await reconcileBackupRuns().catch(() => undefined);
+    const current = await getServerBackup(serverId, runId);
+    onProgress(current.percent);
+    if (current.status === "succeeded") return current;
+    if (current.status === "failed") throw new HttpError(502, `${label} failed: ${current.error ?? "no reason given"}`);
+    if (Date.now() > deadline) throw new HttpError(504, `${label} did not settle within seven hours.`);
+    if (canCancel) await checkpoint(migrationId);
+    await new Promise((resolve) => setTimeout(resolve, BACKUP_POLL_MS));
+  }
 }
 
 /**
@@ -1769,6 +1843,12 @@ async function rollbackMigration(
   //    failure costs nothing.
   if (state.destinationHasData || state.destinationContainerId) {
     try {
+      if (state.destinationRestoreJobId) {
+        const restore = await readNodeBackupJob(state.destinationNodeId, state.destinationRestoreJobId, 0);
+        if (restore.status === "running") {
+          throw new Error("The destination restore is still running. Its partial files must be retained until the job has stopped.");
+        }
+      }
       await deleteServerContainer(state.destinationNodeId, serverId, true);
       await log(
         migrationId,

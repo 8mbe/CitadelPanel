@@ -80,6 +80,8 @@ export interface ServerBackupRequest {
   reason: string;
   /** Data-directory-relative glob patterns to leave out. Admin-configured. */
   exclude: string[];
+  /** Migration transport snapshots must fail rather than skip unreadable files. */
+  requireComplete?: boolean;
 }
 
 /** What the panel sends to restore a server's files. */
@@ -327,7 +329,7 @@ async function measureRepository(
  */
 async function runBackup(
   target: RepoTarget,
-  options: { paths: string[]; reason: string; exclude: string[] },
+  options: { paths: string[]; reason: string; exclude: string[]; requireComplete?: boolean },
   reporter: JobReporter,
 ): Promise<{ snapshotId: string; bytesProcessed: number; bytesAdded: number }> {
   reporter.phase("uploading");
@@ -375,6 +377,10 @@ async function runBackup(
   }
 
   const parsed = parseResticOutput(result.output);
+
+  if (options.requireComplete && result.exitCode === 3) {
+    throw new Error("The migration snapshot skipped unreadable files. Refusing to use an incomplete snapshot to move the server.");
+  }
 
   // Exit code 3 means "completed, but some files could not be read". A snapshot
   // exists and is usable, so this is a warning, not a failure.
@@ -435,7 +441,7 @@ export function startServerBackup(serverId: string, request: ServerBackupRequest
 
     const summary = await runBackup(
       request.repo,
-      { paths: [DATA_MOUNT], reason: request.reason, exclude: request.exclude },
+      { paths: [DATA_MOUNT], reason: request.reason, exclude: request.exclude, requireComplete: request.requireComplete },
       reporter,
     );
 
@@ -456,6 +462,7 @@ export function startServerBackup(serverId: string, request: ServerBackupRequest
 export function startServerRestore(
   serverId: string,
   request: ServerRestoreRequest,
+  options: { migration?: boolean } = {},
 ): string {
   return startJob(serverSubject(serverId), "restore", async (reporter): Promise<JobResult> => {
     await ensureServerDataDir(serverId);
@@ -489,6 +496,11 @@ export function startServerRestore(
       throw new Error(explainResticFailure(result.exitCode, result.output));
     }
 
+    if (options.migration) {
+      // The snapshot carries the source node's numeric owners. Reapply this
+      // node's container ownership, including its user-namespace offset.
+      await alignOwnership(docker, serverDataPath(serverId), { recursive: true });
+    }
     reporter.log("Files restored.");
     reporter.phase("finished");
     return { snapshotId: request.snapshotId };

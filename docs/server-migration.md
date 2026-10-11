@@ -38,7 +38,7 @@ insists on headroom rather than on the world merely fitting.
 | `preflight` | Every check, while the server is still running | Nothing. Nothing has been touched |
 | `backup` | A restic snapshot of the server's files | Nothing; the migration is abandoned |
 | `stopping` | Stops the source container | The server is started again |
-| `transferring` | Streams the data directory to the destination | The partial copy is deleted |
+| `transferring` | A complete S3 snapshot and destination restore, or a direct stream | The partial copy is deleted once its writer has stopped |
 | `allocating_ports` | Chooses the destination's port numbers | Nothing is written yet |
 | `building` | Creates the container on the destination | The container is deleted |
 | `verifying` | Asks the destination about the container | As above |
@@ -136,6 +136,60 @@ race this rare, failing safe is the right answer, not a lock.
 
 ## The transfer
 
+### S3 when backups are configured
+
+S3 is the preferred transport when the panel has a usable backup destination.
+The ordinary safety backup still runs before stopping the source. Once the
+source is stopped, the panel takes a second, complete snapshot and restores
+that exact snapshot on the destination. Both snapshots use the same per-server
+repository, so restic uploads only missing chunks rather than uploading the
+whole world twice.
+
+The safety snapshot cannot be the migration copy: it may have been taken while
+the game was writing, and the operator's ordinary backup policy may exclude
+files. The migration snapshot disables exclusions and treats restic's
+skipped-file exit code as a failure. A copy that omitted an unreadable file is
+not a complete server, even when it would be an acceptable ordinary backup.
+The full snapshot becomes the migration's recorded backup once it succeeds.
+Snapshots retain the normal storage and retention policies.
+
+The destination's S3 connection is probed during preflight, before the source
+stops. Agent health advertises `snapshotMigration`; both agents must support
+complete snapshots and migration restores. An older destination is refused
+before an outage, rather than discovering a missing route halfway through.
+
+`POST /v1/servers/:id/transfer/prepare` reserves an empty destination.
+`POST /v1/servers/:id/transfer/restore` starts an ordinary asynchronous restic
+restore, with two additional guarantees: existing destination files or a
+container are refused, and restored ownership is realigned to the destination's
+container uid and user-namespace offset. Neither route accepts a host path.
+The panel supplies that server's repository credentials; neither node receives
+the other's agent token. The archive bytes flow through S3, not through a
+large HTTP upload to the destination agent.
+
+The restore has a normal `backup_runs` row naming the **destination** node,
+while `servers.node_id` continues to name the source. The ordinary backup
+reconciler therefore polls the right agent and preserves restore logs without
+changing server ownership. User backup mutations and scheduled backups are
+blocked while the server is migrating, so they cannot prune its transport
+snapshot or restore over the source during the move.
+
+Each snapshot/restore wait allows seven hours, beyond the agent's six-hour
+tool invocation limit. Cancellation during a destination restore waits for
+restic to settle before rollback can remove its target. If the job is still
+running or its state cannot be confirmed, rollback retains the destination's
+partial files and reports `partial`, while restoring the source's state. A
+directory must never be deleted underneath a restore that may still be writing.
+The restored directory is re-measured before building and cutover, using the
+same completeness check as direct streaming.
+
+### Direct streaming without S3
+
+A panel without a configured S3 destination uses direct streaming after the
+administrator acknowledges the missing safety backup. The destination is
+prepared before streaming starts, so rollback owns and can remove a partial
+copy; a refusal for existing destination data never grants that ownership.
+
 Two agent routes and one panel-side pipe:
 
 - `GET /v1/servers/:id/transfer/export` streams the data directory as a tar.
@@ -159,6 +213,22 @@ Nothing is buffered. The source's response body becomes the destination's
 request body in one pass, with a counting pass-through in between for the
 progress bar. A fifty-gigabyte world must not become a fifty-gigabyte allocation
 in the panel's process.
+
+Both the source archive reader and the panel's counting stream read one chunk
+per downstream pull. An eager loop inside a stream's `start` callback does not
+provide backpressure: it can queue the entire archive while a slower destination
+is still extracting it. Rejecting or cancelling the destination also cancels the
+source request and its tar process, rather than leaving an unwanted export running.
+
+The agent explicitly raises Bun's HTTP request-body ceiling. The runtime's
+default 128 MiB ceiling applies even to a streamed import, so a multi-gigabyte
+world otherwise fails with an empty HTTP 413 before extraction can finish.
+The ceiling is not a memory reservation; the import still feeds tar one chunk
+at a time. File-manager uploads retain their separate `AGENT_MAX_UPLOAD_BYTES`
+limit. A proxy in front of a destination agent must likewise allow whole-server
+request bodies and stream them instead of buffering them to disk. The public
+panel proxy does not carry the archive upload: the panel makes that outbound
+request directly to the destination's configured Agent URL.
 
 The stream is **uncompressed** by default. A game server's disk is mostly
 already-compressed data (region files, jars, mod archives), so gzip spends real

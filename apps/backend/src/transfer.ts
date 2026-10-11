@@ -188,21 +188,29 @@ export async function exportServerData(
   // holding the archive half-written.
   const stderr = new Response(proc.stderr).text();
 
-  const source = proc.stdout;
+  const reader = proc.stdout.getReader();
   let cancelled = false;
+  let released = false;
+  const abort = () => { proc.kill(); void reader.cancel().catch(() => undefined); };
+  const release = () => {
+    if (released) return;
+    released = true;
+    options.signal?.removeEventListener("abort", abort);
+    reader.releaseLock();
+  };
+  options.signal?.addEventListener("abort", abort, { once: true });
+  if (options.signal?.aborted) abort();
+
   const body = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const reader = source.getReader();
-      const abort = () => { proc.kill(); void reader.cancel().catch(() => undefined); };
-      options.signal?.addEventListener("abort", abort, { once: true });
+    async pull(controller) {
       try {
-        for (;;) {
-          options.signal?.throwIfAborted();
-          const { done, value } = await reader.read();
-          options.signal?.throwIfAborted();
-          if (cancelled) return;
-          if (done) break;
+        options.signal?.throwIfAborted();
+        const { done, value } = await reader.read();
+        options.signal?.throwIfAborted();
+        if (cancelled) return;
+        if (!done) {
           controller.enqueue(value);
+          return;
         }
 
         const code = await proc.exited;
@@ -210,27 +218,28 @@ export async function exportServerData(
           const message = (await stderr).trim().slice(0, STDERR_LIMIT);
           // The response headers are long gone by now, so the only way to tell
           // the panel this archive is not whole is to break the stream.
-          controller.error(
-            new Error(`tar exited ${code} while archiving ${serverId}: ${message}`),
-          );
-          return;
+          throw new Error(`tar exited ${code} while archiving ${serverId}: ${message}`);
         }
         controller.close();
+        release();
       } catch (error) {
         proc.kill();
         if (!cancelled) controller.error(error);
-      } finally {
-        options.signal?.removeEventListener("abort", abort);
-        reader.releaseLock();
+        release();
       }
     },
-    cancel() {
+    async cancel(reason) {
       cancelled = true;
       // The panel gave up (a cancelled migration, a dropped connection). Kill
       // the archiver rather than leaving it reading a world into a dead pipe.
       proc.kill();
+      try {
+        await reader.cancel(reason);
+      } finally {
+        release();
+      }
     },
-  });
+  }, { highWaterMark: 0 });
 
   return {
     body,
@@ -243,6 +252,17 @@ export interface ImportResult {
   path: string;
   /** Bytes on disk after extraction, so the panel can verify the transfer. */
   sizeBytes: number;
+}
+
+/** A migration restore must never overlay a destination's existing files. */
+export async function assertEmptyMigrationDestination(serverId: string): Promise<void> {
+  const entries = await readdir(serverDataPath(serverId)).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  });
+  if (entries.length > 0) {
+    throw new HttpError(409, `This node already holds data for server ${serverId}. Refusing to overwrite it during migration.`);
+  }
 }
 
 /**

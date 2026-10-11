@@ -16,6 +16,13 @@ import { badRequest } from "../http";
 import type { BackupScope, RepoTarget, S3Target } from "./restic";
 import type { DbAdminCredential } from "./dumps";
 
+/** A string such as "true" must not silently disable a complete-copy requirement. */
+export function parseRequireComplete(body: Record<string, unknown>): boolean {
+  if (body.requireComplete === undefined) return false;
+  if (typeof body.requireComplete !== "boolean") throw badRequest('"requireComplete" must be a boolean.');
+  return body.requireComplete;
+}
+
 function str(
   source: Record<string, unknown>,
   key: string,

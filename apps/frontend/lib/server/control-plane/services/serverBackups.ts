@@ -41,6 +41,7 @@ import {
   listNodeSnapshots,
   startNodeServerBackup,
   startNodeServerRestore,
+  startNodeMigrationRestore,
 } from "../nodes/nodeBackupApi";
 import {
   getServerState,
@@ -160,6 +161,8 @@ export interface StartServerBackupInput {
    * snapshot it leaves is an ordinary one that an ordinary restore can read.
    */
   trigger: BackupTrigger;
+  /** Internal migration snapshot: no exclusions, taken after the source stops. */
+  forMigration?: boolean;
 }
 
 /**
@@ -177,6 +180,10 @@ export async function startServerBackup(
 ): Promise<BackupRunView> {
   const server = await loadServer(input.serverId);
   await assertNodeActive(server.nodeId);
+
+  if (server.status === "migrating" && !input.forMigration) {
+    throw conflict("This server is being migrated. Wait for the migration to finish.");
+  }
 
   if (server.status === "suspended") {
     throw conflict(
@@ -224,7 +231,8 @@ export async function startServerBackup(
       repo,
       keepMax,
       reason: input.trigger,
-      exclude: settings.servers.exclude,
+      exclude: input.forMigration ? [] : settings.servers.exclude,
+      requireComplete: input.forMigration === true,
     });
 
     await markRunAccepted(run.id, jobId);
@@ -245,7 +253,7 @@ export async function startServerBackup(
     action: "server.backup.create",
     targetType: "server",
     targetId: input.serverId,
-    metadata: { runId: run.id, trigger: input.trigger, keepMax, bucket: settings.bucket },
+    metadata: { runId: run.id, trigger: input.trigger, keepMax, bucket: settings.bucket, ...(input.forMigration ? { forMigration: true } : {}) },
   });
 
   return getServerBackup(input.serverId, run.id);
@@ -273,6 +281,7 @@ export async function startServerRestore(
   input: StartServerRestoreInput,
 ): Promise<BackupRunView> {
   const server = await loadServer(input.serverId);
+  if (server.status === "migrating") throw conflict("This server is being migrated. Wait for the migration to finish.");
   await assertNodeActive(server.nodeId);
   const source = await getServerBackup(input.serverId, input.runId);
 
@@ -426,6 +435,44 @@ export async function startArchiveRestore(input: {
   return getServerBackup(input.serverId, run.id);
 }
 
+/** Restore to the destination while the server's authoritative row stays on the source. */
+export async function startMigrationRestore(input: {
+  serverId: string;
+  backupRunId: string;
+  destinationNodeId: string;
+  actorId: string | null;
+  onAccepted: (runId: string, jobId: string) => void;
+}): Promise<BackupRunView> {
+  const server = await loadServer(input.serverId);
+  if (server.status !== "migrating" || server.nodeId === input.destinationNodeId) {
+    throw conflict("A migration restore requires a migrating server and a different destination node.");
+  }
+  await assertNodeActive(input.destinationNodeId);
+  const backup = await getServerBackup(input.serverId, input.backupRunId);
+  if (backup.kind !== "backup" || backup.status !== "succeeded" || !backup.snapshotId || backup.nodeId !== server.nodeId) {
+    throw badRequest("The migration snapshot is not a completed backup from the source node.");
+  }
+  if (await hasActiveRun("server", input.serverId)) throw conflict("A backup or restore is already running for this server.");
+  const repo = await buildRepoTarget("server", input.serverId, await getBackupSettings());
+  const run = await createRun({
+    scope: "server", serverId: input.serverId, nodeId: input.destinationNodeId,
+    kind: "restore", trigger: "manual", requestedBy: input.actorId, snapshotId: backup.snapshotId,
+  });
+  try {
+    const { jobId } = await startNodeMigrationRestore(input.destinationNodeId, input.serverId, { repo, snapshotId: backup.snapshotId });
+    input.onAccepted(run.id, jobId);
+    await markRunAccepted(run.id, jobId);
+  } catch (error) {
+    await failRun(run.id, `The destination did not accept the migration restore: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
+  }
+  void recordAudit({
+    userId: input.actorId, action: "server.backup.restore", targetType: "server", targetId: input.serverId,
+    metadata: { runId: run.id, snapshotId: backup.snapshotId, destinationNodeId: input.destinationNodeId, forMigration: true },
+  });
+  return getServerBackup(input.serverId, run.id);
+}
+
 /**
  * Bring a server back up after a restore, on request.
  *
@@ -464,6 +511,7 @@ export async function deleteServerBackup(
   actorId: string | null,
 ): Promise<void> {
   const server = await loadServer(serverId);
+  if (server.status === "migrating") throw conflict("Backups cannot be deleted while this server is being migrated.");
   const run = await getServerBackup(serverId, runId);
 
   if (run.status === "pending" || run.status === "running") {
@@ -569,7 +617,7 @@ export async function listServersDueForBackup(): Promise<
     JOIN nodes n ON n.id = s.node_id AND n.is_active = TRUE
     WHERE s.backups_enabled = TRUE
       AND s.status NOT IN (
-        'suspended', 'installing', 'error',
+        'suspended', 'installing', 'error', 'migrating',
         -- Archived servers have no files on their node; archiving and restoring
         -- ones are already running a backup or a restore of their own.
         'archiving', 'archived', 'restoring'

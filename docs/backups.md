@@ -620,5 +620,11 @@ every snapshot. An S3 bucket alone cannot recover those passwords.
 Moving a server between nodes takes an ordinary server-scope backup first and
 refuses to continue without one, so a world that arrives subtly wrong is still
 recoverable days later, past every rollback the migration itself can perform. It
-is taken before the server is stopped, so a failed backup costs no outage. See
+is taken before the server is stopped, so a failed safety backup costs no outage.
+When S3 is configured, migration then takes a complete incremental snapshot of
+the stopped source and restores it on the destination. This transport snapshot
+ignores ordinary backup exclusions and refuses skipped files; it uses the same
+repository and normal quotas. Destination restores are tracked on the
+destination node even while the server row still names the source. Backup
+mutations and schedules wait while migration owns the server. See
 [server-migration.md](server-migration.md).
