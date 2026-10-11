@@ -66,6 +66,9 @@ Existing docs:
 - `docs/docker.md`: the two images and the two compose files. Which third of
   `bun run setup` runs where (host, container boot, browser), why the build
   context is the repo root, and why `/var/lib/citadel` is bind-mounted whole.
+- `docs/migration-guide.md`: moving the panel to a new host or transferring a
+  node to another panel. The setup recovery shortcut, portable export versus
+  PostgreSQL restore, callback/address cutover, ownership recovery and rollback.
 - `docs/direct-console.md`: browser → agent WebSocket console, capability-token
   auth.
 - `docs/sftp.md`: per-(user,server) SFTP credentials, panel-callback auth.

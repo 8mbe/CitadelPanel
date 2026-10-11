@@ -25,6 +25,33 @@ The wizard is server-gated: Next.js checks database-backed setup status before
 rendering it. Once completed, `/setup` redirects to the panel without sending
 wizard UI to the browser, and the bootstrap endpoint refuses further calls.
 
+### Restore an existing panel
+
+**Restore an existing panel** on the initial account screen opens a recovery
+shortcut. The operator creates a temporary administrator, then the wizard opens
+the same encrypted import dialog used under **Admin → Settings**. An
+administrator resuming unfinished setup can open that dialog directly from the
+identity step. **Set up a new panel**, or closing the import dialog before
+restoring, returns to the ordinary wizard.
+
+The temporary account is necessary because preview and import still require an
+administrator's browser session. Recovery does not introduce an unauthenticated
+restore endpoint. The shared dialog checks the file and passphrase, shows record
+counts and imported administrator emails, and requires `REPLACE PANEL` before
+replacing the destination metadata. The destination must have no server records.
+
+The shortcut uses `/setup?restore=1`, which retains the recovery choice across a
+reload or a required sign-in. Import clears existing sessions and replaces the
+temporary account. The operator continues to sign in with a restored
+administrator's password and two-factor authentication. The archive also
+restores the setup latch, so a completed source panel bypasses the wizard after
+sign-in; an unfinished source resumes setup.
+
+Recovery is an alternative to the six configuration steps. It neither registers
+a new node nor builds a first server. See [panel-export.md](panel-export.md) for
+the archive format and [migration-guide.md](migration-guide.md) for host moves,
+node addresses, callback configuration and rollback.
+
 ### Why only six of thirteen settings groups
 
 The panel has thirteen configurable settings groups (see

@@ -212,7 +212,7 @@ function ExportPanelDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-function ImportPanelDialog({ onClose }: { onClose: () => void }) {
+export function ImportPanelDialog({ onClose }: { onClose: () => void }) {
   const [archive, setArchive] = React.useState<Record<string, unknown> | null>(null);
   const [filename, setFilename] = React.useState("");
   const [passphrase, setPassphrase] = React.useState("");

@@ -17,7 +17,9 @@ Related: [backups.md](backups.md) covers files and node databases,
 [archive.md](archive.md) explains why an archived server's snapshot pointer must
 survive, [server-lifecycle.md](server-lifecycle.md) covers container recovery, and
 [node-recovery.md](node-recovery.md) covers reconnecting a node without a panel
-export.
+export. [migration-guide.md](migration-guide.md) gives the steps for moving a
+panel or transferring a node, including the recovery shortcut in
+[first-time setup](first-time-setup.md#restore-an-existing-panel).
 
 ## A portable archive without exporting the panel's boot secrets
 
@@ -49,7 +51,11 @@ name running containers. Guessing any of those can transfer a tenant's server to
 the wrong account or disconnect the panel from live files. Import instead keeps
 the original ids and replaces the destination's metadata in one transaction.
 The destination must contain no server records. Create and sign in with its
-temporary administrator first, then import before registering a fleet.
+temporary administrator first, then import before registering a fleet. On a
+fresh installation, **Restore an existing panel** at `/setup` creates that
+temporary administrator and opens import without completing the remaining
+wizard steps. An existing administrator can use the same shortcut while setup
+is unfinished, or use **Admin → Settings** after setup is complete.
 
 The preview shows the export time, record counts, and imported administrator
 emails. It requires at least one active imported administrator with a password

@@ -50,9 +50,13 @@ const RULES: Rule[] = [
 
 export function AdminStep({
   onDone,
+  recovery = false,
+  onRecoveryChange,
 }: {
   /** Hands the freshly-created account up: the wizard has no session context. */
   onDone: (admin: { id: string; email: string }) => void;
+  recovery?: boolean;
+  onRecoveryChange: (recovery: boolean) => void;
 }) {
   const [name, setName] = React.useState("");
   const [email, setEmail] = React.useState("");
@@ -100,11 +104,13 @@ export function AdminStep({
   return (
     <>
       <CardHeader>
-        <CardTitle>Create the admin account</CardTitle>
+        <CardTitle>
+          {recovery ? "Create a temporary admin account" : "Create the admin account"}
+        </CardTitle>
         <CardDescription>
-          The first account owns the panel: it manages nodes, provisions servers
-          and reviews security flags. There is no default password. You set the
-          only credential now.
+          {recovery
+            ? "Create an account to authorize recovery, then choose your encrypted panel export and enter its passphrase. Import replaces this temporary account with your restored accounts."
+            : "The first account owns the panel: it manages nodes, provisions servers and reviews security flags. There is no default password. You set the only credential now."}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -210,12 +216,25 @@ export function AdminStep({
             className="w-full"
           >
             {loading && <Spinner />}
-            Create account and continue
+            {recovery ? "Create account and restore panel" : "Create account and continue"}
             {!loading && <ArrowRight />}
           </Button>
           {issues.length > 0 && (
             <p className="text-center text-xs text-muted-foreground">
               {issues[0]}
+            </p>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            disabled={loading}
+            onClick={() => onRecoveryChange(!recovery)}
+          >
+            {recovery ? "Set up a new panel" : "Restore an existing panel"}
+          </Button>
+          {!recovery && (
+            <p className="text-center text-xs text-muted-foreground">
+              Have a panel export? Restore its accounts, settings and node records.
             </p>
           )}
         </form>
