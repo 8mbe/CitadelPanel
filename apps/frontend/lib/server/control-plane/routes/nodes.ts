@@ -37,7 +37,6 @@ import {
   listActiveNodesWithSecrets,
   listNodes,
   recordHeartbeat,
-  setNodeActive,
   updateNode,
 } from "../nodes/nodeRegistry";
 import { sampleNodeServers } from "../nodes/nodeServerApi";
@@ -51,7 +50,7 @@ import { getNodeAbuseSummary } from "../security/suspiciousList";
 import { recordAuditFromRequest } from "../services/auditLog";
 import { countServersOnNode, listServersForNode } from "../services/serverManager";
 import { recoverNodeServers } from "../services/nodeRecovery";
-import { enforceNodeMaintenance, leaveNodeMaintenance } from "../services/nodeMaintenance";
+import { setNodeActiveWithMaintenance } from "../services/nodeMaintenance";
 
 /**
  * Validate an agent base URL.
@@ -609,15 +608,7 @@ export async function handleUpdateNode(
   // unconditionally since it is a cheap map delete.
   invalidateNodeConnection(id);
 
-  if (hasActiveToggle) {
-    // Apply edited connection details first: an operator may be correcting a
-    // broken address and activating the node in the same request.
-    if (body.isActive === true) await leaveNodeMaintenance(id);
-    node = await setNodeActive(id, body.isActive as boolean);
-    if (!node) throw notFound("Node not found");
-  }
-
-  await recordAuditFromRequest(request, {
+  const recordUpdate = () => recordAuditFromRequest(request, {
     userId: admin.id,
     action: hasActiveToggle
       ? (body.isActive as boolean)
@@ -640,7 +631,14 @@ export async function handleUpdateNode(
     },
   });
 
-  if (hasActiveToggle && body.isActive === false) await enforceNodeMaintenance(id);
+  if (hasActiveToggle) {
+    // Connection edits take effect before activation. The service serializes
+    // both the agent call and the intent write against background drain calls.
+    node = await setNodeActiveWithMaintenance(id, body.isActive as boolean, recordUpdate);
+    if (!node) throw notFound("Node not found");
+  } else {
+    await recordUpdate();
+  }
 
   return json({ node });
 }
