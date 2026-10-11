@@ -296,6 +296,10 @@ Traefik to the panel adds that network to the `frontend` service themselves.
 
 ## Upgrading
 
+For moving the panel to another host or connecting an existing node to a new
+panel, follow [migration-guide.md](migration-guide.md). A frontend move leaves
+the old node's files and Docker workloads in place.
+
 ```bash
 git pull
 docker compose up -d --build

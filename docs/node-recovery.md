@@ -9,6 +9,8 @@ Related: [server-lifecycle.md](server-lifecycle.md) explains container rebuilds,
 [ports.md](ports.md) explains port identity and allocation, and
 [node-hardening.md](node-hardening.md) explains the tenant containment boundary.
 Panel export/import is described in [panel-export.md](panel-export.md).
+For the operator steps to transfer a node to another panel, including owner
+matching and isolating the old panel, see [migration-guide.md](migration-guide.md#move-an-existing-node-to-a-different-panel).
 
 ## The agent remembers identity, the panel still owns it
 

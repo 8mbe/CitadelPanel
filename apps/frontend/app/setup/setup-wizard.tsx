@@ -5,6 +5,7 @@ import {
   Castle,
   Check,
   Clock,
+  FileUp,
   Mail,
   ServerCog,
   ShieldCheck,
@@ -21,6 +22,7 @@ import {
   type SetupStatus,
 } from "@/lib/api";
 import { markSetupComplete } from "@/lib/setup-gate";
+import { ImportPanelDialog } from "@/components/admin/panel-transfer-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -95,11 +97,14 @@ const STEPS: StepMeta[] = [
 export default function SetupWizard({
   initialStatus: status,
   initialAdmin,
+  initialRecovery = false,
 }: {
   initialStatus: SetupStatus;
   initialAdmin: SetupAdmin | null;
+  initialRecovery?: boolean;
 }) {
   const [admin, setAdmin] = React.useState<SetupAdmin | null>(initialAdmin);
+  const [recovery, setRecovery] = React.useState(initialRecovery);
 
   const [step, setStep] = React.useState<StepId>(
     status.canCreateAdmin ? "admin" : "identity",
@@ -118,6 +123,12 @@ export default function SetupWizard({
   const [server, setServer] = React.useState<ApiServerSummary | null>(null);
   const [finished, setFinished] = React.useState(false);
   const [finishError, setFinishError] = React.useState<string | null>(null);
+
+  const chooseRecovery = (restore: boolean) => {
+    setRecovery(restore);
+    // Preserve the recovery shortcut across a reload or a required sign-in.
+    window.history.replaceState(null, "", restore ? "/setup?restore=1" : "/setup");
+  };
 
   const loadSettings = React.useCallback(async () => {
     // Nothing is set before the await: a synchronous setState here would make
@@ -196,22 +207,29 @@ export default function SetupWizard({
   return (
     <CenteredShell>
       <div className="flex w-full max-w-xl flex-col gap-6">
-        <WizardHeader siteName={settings?.branding.siteName ?? null} />
-
-        <Stepper
-          steps={STEPS}
-          currentIndex={currentIndex}
-          adminDone={adminDone}
-          onSelect={(id) => {
-            // Every later step needs an admin session, so nothing is reachable
-            // until the account exists.
-            if (adminDone && id !== "admin") goTo(id);
-          }}
+        <WizardHeader
+          siteName={settings?.branding.siteName ?? null}
+          recovery={recovery}
         />
+
+        {!recovery && (
+          <Stepper
+            steps={STEPS}
+            currentIndex={currentIndex}
+            adminDone={adminDone}
+            onSelect={(id) => {
+              // Every later step needs an admin session, so nothing is reachable
+              // until the account exists.
+              if (adminDone && id !== "admin") goTo(id);
+            }}
+          />
+        )}
 
         <Card className="w-full">
           {step === "admin" ? (
             <AdminStep
+              recovery={recovery}
+              onRecoveryChange={chooseRecovery}
               onDone={(created) => {
                 setAdmin(created);
                 setAdminDone(true);
@@ -264,7 +282,22 @@ export default function SetupWizard({
             </CardContent>
           )}
         </Card>
+
+        {adminDone && step === "identity" && (
+          <div className="flex flex-col items-center gap-2">
+            <Button variant="outline" onClick={() => chooseRecovery(true)}>
+              <FileUp data-icon="inline-start" className="size-4" />
+              Restore an existing panel
+            </Button>
+            <p className="text-center text-xs text-muted-foreground">
+              Import your encrypted panel export before creating any servers.
+            </p>
+          </div>
+        )}
       </div>
+      {recovery && adminDone && (
+        <ImportPanelDialog onClose={() => chooseRecovery(false)} />
+      )}
     </CenteredShell>
   );
 }
@@ -340,9 +373,11 @@ function CenteredShell({ children }: { children: React.ReactNode }) {
 function WizardHeader({
   siteName,
   done,
+  recovery,
 }: {
   siteName: string | null;
   done?: boolean;
+  recovery?: boolean;
 }) {
   return (
     <header className="flex flex-col items-center gap-2 text-center">
@@ -352,11 +387,15 @@ function WizardHeader({
       <h1 className="font-heading text-xl font-semibold tracking-tight">
         {done
           ? "You're all set"
+          : recovery
+          ? "Restore your panel"
           : `Welcome to ${siteName?.trim() || "CitadelPanel"}`}
       </h1>
       <p className="text-sm text-muted-foreground">
         {done
           ? "The wizard is closed. Everything here lives in the admin area from now on."
+          : recovery
+          ? "Recover your accounts, settings and nodes from a panel export."
           : "A few steps to configure your panel. This runs only once."}
       </p>
     </header>

@@ -9,7 +9,12 @@ import SetupWizard, { type SetupAdmin } from "./setup-wizard";
 
 export const dynamic = "force-dynamic";
 
-export default async function SetupPage() {
+export default async function SetupPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ restore?: string | string[] }>;
+}) {
+  const recovery = (await searchParams).restore === "1";
   const requestHeaders = await headers();
   const request = new Request("http://next.internal/api/setup/status", {
     headers: requestHeaders,
@@ -31,12 +36,20 @@ export default async function SetupPage() {
   let admin: SetupAdmin | null = null;
   if (!status.canCreateAdmin) {
     const session = await getAuthenticatedUser(request).catch(() => null);
-    if (!session) redirect("/login?next=/setup");
+    if (!session) {
+      redirect(recovery ? "/login?next=%2Fsetup%3Frestore%3D1" : "/login?next=/setup");
+    }
     if (session.role !== "admin") redirect("/");
     admin = { id: session.id, email: session.email };
   }
 
-  return <SetupWizard initialStatus={status} initialAdmin={admin} />;
+  return (
+    <SetupWizard
+      initialStatus={status}
+      initialAdmin={admin}
+      initialRecovery={recovery}
+    />
+  );
 }
 
 async function loadSetupStatus(): Promise<SetupStatus | null> {
