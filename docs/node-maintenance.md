@@ -84,6 +84,21 @@ the node remains drained. Activation permits placement and work again; it
 does not start game servers or the shared database. Start them explicitly
 after maintenance. Schedules resume at their next due time.
 
+The panel serializes each node's activation and drain operations, including
+background enforcement, across the agent call and the database write. Agent-side
+serialization alone is insufficient: after activation clears the latch but
+before the panel records `is_active = true`, a sweep can still observe a drained
+node and send a new drain. That late drain would close the latch again after
+activation succeeds, and could stop a migration's safety backup. Queued
+enforcement therefore re-reads the database intent inside the same panel queue
+and skips nodes that have since been activated. Failed operations release the
+queue so activation can recover them; different nodes proceed independently.
+This queue lives in the panel process, alongside the status sweeper.
+
+Activation uses the same ten-minute agent request budget as draining. The agent
+may still be finishing an earlier graceful stop when activation arrives; the
+ordinary fifteen-second API timeout is shorter than even one stop's grace period.
+
 Both the panel and agent need this version. An older agent without the
 maintenance endpoint cannot acknowledge shutdown or activation; its error is
 reported and the panel retains drain intent. No database migration or new
