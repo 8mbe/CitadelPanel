@@ -44,6 +44,7 @@ import {
 } from "../services/serverManager";
 import { sampleNodeServers } from "../nodes/nodeServerApi";
 import { getBlueprintByKey } from "../blueprints/registry";
+import type { MigrationPhase, MigrationStatus } from "../services/serverMigration";
 
 // --- Suspicious activity review ----------------------------------------------
 
@@ -1002,9 +1003,9 @@ export async function handleListAuditLogs(request: Request): Promise<Response> {
 /**
  * GET /api/admin/servers. Fleet-wide view for the admin dashboard.
  *
- * Extends the normal summary rows with owner context plus live CPU and memory
- * usage sampled from each node's agent (with graceful fallback when a node is
- * unreachable or a container is missing).
+ * Extends the normal summary rows with owner context, the latest migration,
+ * and live CPU and memory usage sampled from each node's agent (with graceful
+ * fallback when a node is unreachable or a container is missing).
  *
  * Sampling is batched **per node** rather than per server: one request per node
  * regardless of how many servers it hosts, so this page does not slow down
@@ -1024,16 +1025,44 @@ export async function handleListAdminServers(request: Request): Promise<Response
 
   const ownerIds = [...new Set(servers.map((server) => server.ownerId))];
   const ownersById = new Map<string, { email: string; name: string | null }>();
+  const migrationsByServer = new Map<
+    string,
+    { id: string; status: MigrationStatus; phase: MigrationPhase; percent: number }
+  >();
 
-  if (ownerIds.length > 0) {
+  if (servers.length > 0) {
     // One query for every owner, rather than one per server. The fleet-wide
     // list fans out across users, and a serial per-owner SELECT turned each
     // page load into a loop whose length was the number of distinct owners.
-    const ownerRows = (await sql`
-      SELECT id, email, name FROM "user" WHERE id = ANY(${sql.array(ownerIds)})
-    `) as { id: string; email: string; name: string | null }[];
+    const [ownerRows, migrationRows] = await Promise.all([
+      sql`
+        SELECT id, email, name FROM "user" WHERE id = ANY(${sql.array(ownerIds)})
+      ` as Promise<{ id: string; email: string; name: string | null }[]>,
+      // Server status stays unchanged during the safety backup. The migration
+      // row also keeps the progress/details action available after completion.
+      sql`
+        SELECT DISTINCT ON (server_id) server_id, id, status, phase, percent
+        FROM server_migrations
+        WHERE server_id = ANY(${sql.array(servers.map((server) => server.id), 2950)})
+        ORDER BY server_id, created_at DESC, id DESC
+      ` as Promise<{
+        server_id: string;
+        id: string;
+        status: MigrationStatus;
+        phase: MigrationPhase;
+        percent: number;
+      }[]>,
+    ]);
     for (const row of ownerRows) {
       ownersById.set(row.id, { email: row.email, name: row.name });
+    }
+    for (const row of migrationRows) {
+      migrationsByServer.set(row.server_id, {
+        id: row.id,
+        status: row.status,
+        phase: row.phase,
+        percent: row.percent,
+      });
     }
   }
 
@@ -1074,6 +1103,7 @@ export async function handleListAdminServers(request: Request): Promise<Response
       ownerName: owner?.name ?? null,
       cpuPercent: usage?.cpuPercent ?? null,
       memoryUsageMb: usage?.memoryUsageMb ?? null,
+      latestMigration: migrationsByServer.get(server.id) ?? null,
     };
   });
 

@@ -14,6 +14,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { MigrateServerDialog } from "@/components/admin/migrate-server-dialog";
 import { ArchiveServerCard } from "@/components/server/archive-server-card";
 import { ServerHeader } from "@/components/server/server-header";
 import { useServerData } from "@/components/server/server-data-context";
@@ -100,7 +101,9 @@ export function ServerShell({ children }: { children: React.ReactNode }) {
     <div className="flex flex-col gap-6">
       {status === "suspended" && <SuspendedBanner server={server} />}
       {isProvisioning(status) && <InstallingBanner />}
-      {status === "migrating" && <MigratingBanner />}
+      {isAdmin && (
+        <MigratingBanner server={server} migrating={status === "migrating"} />
+      )}
       <ServerHeader server={server} />
       <ServerTabs serverId={server.id} />
       {sectionGranted ? children : <SectionDenied />}
@@ -171,17 +174,45 @@ function MigratingNotice({ server }: { server: ServerView }) {
 }
 
 /** Compact migrating banner for admins, who keep the shell during a move. */
-function MigratingBanner() {
+function MigratingBanner({
+  server,
+  migrating,
+}: {
+  server: ServerView;
+  migrating: boolean;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const { refresh } = useServerData();
+
   return (
-    <Alert>
-      <Loader2 className="animate-spin" />
-      <AlertTitle>This server is being moved to another node</AlertTitle>
-      <AlertDescription>
-        Its owner sees a &ldquo;being moved&rdquo; notice until the migration
-        finishes, and every action on the server is refused while it runs.
-        Follow the migration from the admin servers list.
-      </AlertDescription>
-    </Alert>
+    <>
+      {migrating && (
+        <Alert>
+          <Loader2 className="animate-spin" />
+          <AlertTitle>This server is being moved to another node</AlertTitle>
+          <AlertDescription>
+            <p>
+              Its owner sees a &ldquo;being moved&rdquo; notice until the migration
+              finishes, and every action on the server is refused while it runs.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+              View migration progress
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+      {open && (
+        <MigrateServerDialog
+          serverId={server.id}
+          serverName={server.name}
+          currentNodeId={server.nodeId}
+          currentNodeName={server.nodeHostname}
+          open={open}
+          onOpenChange={setOpen}
+          onChanged={() => void refresh()}
+        />
+      )}
+    </>
   );
 }
 
