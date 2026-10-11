@@ -102,6 +102,9 @@ first, so a source-only change reuses the dependency layer. The agent's install
 is scoped (`--filter=backend --production`) so a node never carries the panel's
 Next.js tree.
 
+The agent runtime also copies `shared/`, which holds the maintenance endpoint
+policy used by both services. See [node-maintenance.md](node-maintenance.md).
+
 That scoping changes *where* the packages land, which the runtime stage has to
 respect. A filtered install does not hoist to the workspace root: bun writes
 the agent's dependencies to `apps/backend/node_modules` and leaves the root

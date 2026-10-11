@@ -16,6 +16,7 @@
  */
 
 import { sql } from "../db/client";
+import { assertNodeActive } from "../nodes/nodeApi";
 import { badRequest, conflict, notFound } from "../lib/http";
 import { recordAudit } from "./auditLog";
 import { getBackupSettings } from "./settings";
@@ -177,6 +178,7 @@ export interface StartDatabaseBackupInput {
 export async function startDatabaseBackup(
   input: StartDatabaseBackupInput,
 ): Promise<BackupRunView> {
+  await assertNodeActive(input.nodeId);
   const { name, admin } = await requireDbAdmin(input.nodeId);
 
   if (await hasActiveRun("node", input.nodeId)) {
@@ -272,6 +274,7 @@ export interface StartDatabaseRestoreInput {
 export async function startDatabaseRestore(
   input: StartDatabaseRestoreInput,
 ): Promise<BackupRunView> {
+  await assertNodeActive(input.nodeId);
   const { name, admin } = await requireDbAdmin(input.nodeId);
   const source = await getNodeDatabaseBackup(input.nodeId, input.runId);
 

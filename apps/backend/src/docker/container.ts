@@ -11,6 +11,7 @@
  */
 
 import type Docker from "dockerode";
+import { maintenanceState } from "../maintenanceState";
 import {
   buildHardenedContainerConfig,
   buildIsolatedNetworkConfig,
@@ -88,6 +89,8 @@ export async function createContainer(
   await ensureNetwork(client, spec.networkName);
   await ensureImage(client, spec.image);
 
+  maintenanceState.assertAvailable();
+
   const container = await client.createContainer(
     buildHardenedContainerConfig(spec),
   );
@@ -122,6 +125,8 @@ export async function runContainerToCompletion(
   await ensureNetwork(client, spec.networkName);
   await ensureImage(client, spec.image);
 
+  maintenanceState.assertAvailable();
+
   const container = await client.createContainer(
     buildHardenedContainerConfig(spec),
   );
@@ -135,7 +140,7 @@ export async function runContainerToCompletion(
   }
 
   try {
-    await container.start();
+    await maintenanceState.launch(() => container.start(), () => stopContainer(client, container.id));
     // dockerode resolves this once the container's main process exits.
     const result = (await container.wait()) as { StatusCode?: number };
     const logs = await getContainerLogs(client, container.id, 500);
@@ -153,7 +158,10 @@ export async function startContainer(
   containerId: string,
 ): Promise<void> {
   try {
-    await client.getContainer(containerId).start();
+    await maintenanceState.launch(
+      () => client.getContainer(containerId).start(),
+      () => stopContainer(client, containerId),
+    );
   } catch (error) {
     if (!isConflict(error)) throw error;
   }
@@ -184,7 +192,10 @@ export async function restartContainer(
   containerId: string,
   timeoutSeconds = 30,
 ): Promise<void> {
-  await client.getContainer(containerId).restart({ t: timeoutSeconds });
+  await maintenanceState.launch(
+    () => client.getContainer(containerId).restart({ t: timeoutSeconds }),
+    () => stopContainer(client, containerId),
+  );
 }
 
 /**

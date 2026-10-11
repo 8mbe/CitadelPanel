@@ -278,8 +278,8 @@ export async function findNodeByAgentToken(
 /**
  * Activate or drain a node.
  *
- * Draining (`isActive = false`) only stops NEW servers being scheduled onto it;
- * existing containers keep running so this is a safe, reversible operation.
+ * Store maintenance intent. The route and status sweeper enforce it on the
+ * agent; persist the intent first so an unreachable node stays out of rotation.
  */
 export async function setNodeActive(
   nodeId: string,
@@ -288,6 +288,7 @@ export async function setNodeActive(
   const rows = (await sql`
     UPDATE nodes SET is_active = ${isActive} WHERE id = ${nodeId} RETURNING *
   `) as NodeRow[];
+  invalidateNode(nodeId);
   return rows[0] ? toPublicNode(rows[0]) : null;
 }
 

@@ -485,6 +485,8 @@ function NodeHeader({
       await onChanged?.();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to update the node.");
+      // Drain intent persists even if the agent could not finish stopping.
+      await onChanged?.();
     } finally {
       setToggling(false);
     }
@@ -541,7 +543,7 @@ function NodeHeader({
           <ReachabilityBadge health={health} lastHeartbeatAt={node.lastHeartbeatAt} />
           {!node.isActive && (
             <Badge variant="destructive" className="bg-amber-500/10 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400">
-              Drained
+              Maintenance
             </Badge>
           )}
         </div>
@@ -594,6 +596,7 @@ function NodeHeader({
           size="sm"
           onClick={toggleActive}
           disabled={toggling}
+          title={node.isActive ? "Stop all servers and put this node into maintenance" : "Leave maintenance; servers stay stopped"}
         >
           {toggling ? <Spinner /> : node.isActive ? <PowerOff /> : <Power />}
           {node.isActive ? "Drain" : "Activate"}
@@ -643,7 +646,7 @@ function NodeHeader({
                     <span className="text-foreground">Drain</span> button above).
                   </>
                 ) : (
-                  "Node is drained."
+                  "Node is drained for maintenance."
                 )}
               </span>
             </li>

@@ -14,7 +14,7 @@
  * only resolves inside Next's bundler.
  */
 
-import { beforeAll, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 
 mock.module("server-only", () => ({}));
 
@@ -22,15 +22,44 @@ const { nodeRequestFor, unregisteredNode } = await import("./nodeApi");
 
 /** Headers of the last intercepted fetch. */
 let sent: Record<string, string> = {};
+const originalFetch = globalThis.fetch;
+let calls = 0;
+afterAll(() => { globalThis.fetch = originalFetch; });
 
 beforeAll(() => {
   globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    calls += 1;
     sent = (init.headers ?? {}) as Record<string, string>;
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
   }) as typeof fetch;
+});
+
+describe("drained node requests", () => {
+  test.each([
+    ["/v1/servers/test/start", "POST"],
+    ["/v1/servers/test/restart", "POST"],
+    ["/v1/servers/test/install", "POST"],
+    ["/v1/backups/servers/test", "POST"],
+    ["/v1/servers/test/files/content", "PUT"],
+    ["/v1/servers/test/transfer/export", "GET"],
+  ] as const)("rejects %s before contacting the agent", async (path, method) => {
+    const before = calls;
+    await expect(nodeRequestFor({ ...node(), isActive: false }, path, { method })).rejects.toThrow("drained for maintenance");
+    expect(calls).toBe(before);
+  });
+
+  test.each([
+    ["/v1/health", "GET"], ["/v1/maintenance", "POST"],
+    ["/v1/states", "POST"], ["/v1/servers/test/stop", "POST"],
+    ["/v1/backups/jobs/test", "GET"],
+  ] as const)("permits %s for observation or recovery", async (path, method) => {
+    const before = calls;
+    await nodeRequestFor({ ...node(), isActive: false }, path, { method });
+    expect(calls).toBe(before + 1);
+  });
 });
 
 const node = () => unregisteredNode("http://127.0.0.1:9", "t".repeat(40));

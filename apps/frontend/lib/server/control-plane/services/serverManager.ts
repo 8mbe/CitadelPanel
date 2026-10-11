@@ -53,7 +53,7 @@ import {
   portBindingsFor,
   type PortBinding,
 } from "../nodes/nodeServerApi";
-import { assertNodeReadyToProvision } from "../nodes/nodeApi";
+import { assertNodeActive, assertNodeReadyToProvision } from "../nodes/nodeApi";
 import { getNodeWithSecrets } from "../nodes/nodeRegistry";
 import { recordAudit } from "./auditLog";
 import {
@@ -1371,6 +1371,7 @@ export async function startServer(
   actorId: string | null,
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
+  await assertNodeActive(server.node_id);
   assertNotMigrating(server);
   assertNotArchived(server);
   assertNotSuspended(server);
@@ -1490,6 +1491,7 @@ export async function restartServer(
   actorId: string | null,
 ): Promise<ServerSummary> {
   const server = await loadServerRow(serverId);
+  await assertNodeActive(server.node_id);
   assertNotMigrating(server);
   assertNotArchived(server);
   assertNotSuspended(server);
@@ -2151,6 +2153,7 @@ export async function buildServerContainerOn(
  */
 export async function recreateServerContainer(serverId: string): Promise<void> {
   const server = await loadServerRow(serverId);
+  await assertNodeActive(server.node_id);
   const blueprintKey = await getBlueprintKeyById(server.blueprint_id);
   if (!blueprintKey) throw badRequest("Server blueprint is not available");
   const blueprint = await getBlueprintByKey(blueprintKey);

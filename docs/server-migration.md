@@ -1,5 +1,9 @@
 # Server migration
 
+A source or destination in [node maintenance](node-maintenance.md) refuses new
+transfers. Draining during a transfer aborts its stream and stops the agent's
+tar process; the migration's existing failure path retains the source copy.
+
 Moving a server from one node to another: the capacity checks that happen
 before anything is touched, why the whole thing is a copy rather than a move,
 what the panel does when a step fails, and the one kind of server that cannot

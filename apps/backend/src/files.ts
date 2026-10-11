@@ -13,6 +13,7 @@
 import { appendFile, readdir, rm, stat, mkdir, rename, cp } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 import { config } from "./config";
+import { maintenanceState } from "./maintenanceState";
 import { docker } from "./docker/client";
 import { alignOwnership } from "./docker/userns";
 import { badRequest, conflict, HttpError, notFound, payloadTooLarge } from "./http";
@@ -364,6 +365,7 @@ async function finalizeStagedFile(
   target: string,
 ): Promise<number> {
   try {
+    maintenanceState.assertAvailable();
     await mkdirAligned(dirname(target));
     await rename(staged, target);
     await alignOwnership(docker, target);
@@ -395,6 +397,8 @@ export async function uploadFile(
   body: ReadableStream<Uint8Array>,
   contentLength: number | null,
 ): Promise<{ path: string; sizeBytes: number }> {
+  const signal = maintenanceState.signal;
+  maintenanceState.assertAvailable();
   if (contentLength !== null && contentLength > config.maxUploadBytes) {
     throw payloadTooLarge(
       `Upload is ${contentLength} bytes, which exceeds the ${config.maxUploadBytes}-byte limit.`,
@@ -406,10 +410,14 @@ export async function uploadFile(
 
   try {
     const reader = body.getReader();
+    const cancel = () => { void reader.cancel().catch(() => undefined); };
+    signal.addEventListener("abort", cancel, { once: true });
     let received = 0;
     try {
       for (;;) {
+        signal.throwIfAborted();
         const { done, value } = await reader.read();
+        signal.throwIfAborted();
         if (done) break;
         received += value.byteLength;
         if (received > config.maxUploadBytes) {
@@ -423,6 +431,7 @@ export async function uploadFile(
         await appendFile(staged, value);
       }
     } finally {
+      signal.removeEventListener("abort", cancel);
       reader.releaseLock();
     }
 
@@ -458,12 +467,14 @@ export async function pullFromUrl(
   userPath: string,
   url: string,
 ): Promise<{ path: string; sizeBytes: number }> {
+  const signal = maintenanceState.signal;
+  maintenanceState.assertAvailable();
   const target = await resolveUploadTarget(serverId, userPath);
   const staged = `${target}.pull-${process.pid}-${Date.now()}.tmp`;
 
   let response: Response;
   try {
-    response = await ssrfSafeFetch(url);
+    response = await ssrfSafeFetch(url, 5, signal);
   } catch (error) {
     await rm(staged, { force: true });
     // A guard rejection (HttpError) already carries a clear message; surface it
@@ -492,10 +503,14 @@ export async function pullFromUrl(
 
   try {
     const reader = response.body.getReader();
+    const cancel = () => { void reader.cancel().catch(() => undefined); };
+    signal.addEventListener("abort", cancel, { once: true });
     let received = 0;
     try {
       for (;;) {
+        signal.throwIfAborted();
         const { done, value } = await reader.read();
+        signal.throwIfAborted();
         if (done) break;
         received += value.byteLength;
         if (received > config.maxUploadBytes) {
@@ -507,6 +522,7 @@ export async function pullFromUrl(
         await appendFile(staged, value);
       }
     } finally {
+      signal.removeEventListener("abort", cancel);
       reader.releaseLock();
     }
 

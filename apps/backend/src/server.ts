@@ -17,6 +17,10 @@
  */
 
 import { requireAuth } from "./auth";
+import { join } from "node:path";
+import { NodeMaintenance } from "./nodeMaintenance";
+import { maintenanceState } from "./maintenanceState";
+import { allowedDuringNodeMaintenance } from "../../../shared/nodeMaintenance";
 import { config } from "./config";
 import { validateConsoleSession, recordConsoleCommand } from "./consoleAudit";
 import { probeDataRoot, reportDataRootAtBoot } from "./dataRoot";
@@ -126,6 +130,8 @@ import {
 import type { Attachment } from "./docker/attach";
 import { parseRecoveryMetadata, parseServerContainerRequest } from "./serverRecovery";
 
+const nodeMaintenance = new NodeMaintenance(docker, join(config.serverDataRoot, ".citadel-maintenance"), maintenanceState);
+
 /** Wrap a handler so thrown `HttpError`s become responses. */
 function route<Args extends unknown[]>(
   handler: (request: Request, ...args: Args) => Promise<Response>,
@@ -133,6 +139,13 @@ function route<Args extends unknown[]>(
   return async (request: Request, ...args: Args): Promise<Response> => {
     try {
       requireAuth(request);
+      if (!allowedDuringNodeMaintenance(new URL(request.url).pathname, request.method)) {
+        return await maintenanceState.runWork(() => {
+          const cancellable = new Request(request, { signal: AbortSignal.any([request.signal, maintenanceState.signal]) });
+          Object.assign(cancellable, { params: (request as Request & { params?: unknown }).params });
+          return handler(cancellable, ...args);
+        });
+      }
       return await handler(request, ...args);
     } catch (error) {
       return toErrorResponse(error);
@@ -309,6 +322,7 @@ interface ConsoleSocket {
   userId: string;
   token: string;
   attachment: Attachment | null;
+  unsubscribeMaintenance?: () => void;
 }
 
 const server = Bun.serve<ConsoleSocket, never>({
@@ -331,6 +345,13 @@ const server = Bun.serve<ConsoleSocket, never>({
   idleTimeout: 0,
 
   routes: {
+    "/v1/maintenance": {
+      POST: route(async (request) => {
+        const body = await parseJsonBody(request);
+        if (typeof body.enabled !== "boolean") throw badRequest('"enabled" must be a boolean.');
+        return json(await nodeMaintenance.set(body.enabled));
+      }),
+    },
     // --- Health ---------------------------------------------------------------
     /**
      * Reports daemon reachability plus host capacity, which the panel uses to
@@ -365,6 +386,7 @@ const server = Bun.serve<ConsoleSocket, never>({
 
         return json({
           status: dockerSocket.reachable ? "ok" : "degraded",
+          maintenance: maintenanceState.enabled,
           dockerVersion: info?.serverVersion,
           containersRunning: info?.containersRunning,
           capacity: info ? { ncpu: info.ncpu, memTotalMb: info.memTotalMb } : undefined,
@@ -1080,7 +1102,7 @@ const server = Bun.serve<ConsoleSocket, never>({
       GET: route(async (request) => {
         const serverId = serverIdOf(request);
         const compress = parseCompress(queryOf(request).get("compress"));
-        const { body, contentType } = await exportServerData(serverId, { compress });
+        const { body, contentType } = await exportServerData(serverId, { compress, signal: request.signal });
         return new Response(body, {
           headers: {
             "content-type": contentType,
@@ -1105,7 +1127,7 @@ const server = Bun.serve<ConsoleSocket, never>({
         const serverId = serverIdOf(request);
         if (!request.body) throw badRequest("Request body is required.");
         const compressed = parseCompress(queryOf(request).get("compress"));
-        const result = await importServerData(serverId, request.body, { compressed });
+        const result = await importServerData(serverId, request.body, { compressed, signal: request.signal });
         return json({ sizeBytes: result.sizeBytes }, 201);
       }),
     },
@@ -1446,6 +1468,7 @@ const server = Bun.serve<ConsoleSocket, never>({
     const match = /^\/v1\/sessions\/([^/]+)\/console$/.exec(url.pathname);
 
     if (match) {
+      if (maintenanceState.enabled) return json({ error: "Node is drained for maintenance." }, 503);
       // Without a panel to call back to, the agent cannot validate the token.
       // 503 (not 401): nothing is wrong with the request, the node just isn't
       // configured for direct consoles.
@@ -1480,12 +1503,16 @@ const server = Bun.serve<ConsoleSocket, never>({
      * a console that silently shows nothing is worse than one that says why.
      */
     async open(ws) {
+      const unsubscribe = maintenanceState.onDrain(() => ws.close());
+      ws.data.unsubscribeMaintenance = unsubscribe;
       try {
+        maintenanceState.assertAvailable();
         // Validate the capability token against the panel before anything else.
         // This atomically marks it consumed (so a replayed token cannot open a
         // second console) and resolves the serverId/userId the socket needs.
         // A rejection closes the socket; the browser re-mints on reconnect.
         const { serverId, userId } = await validateConsoleSession(ws.data.token);
+        maintenanceState.assertAvailable();
         ws.data.serverId = serverId;
         ws.data.userId = userId;
 
@@ -1532,6 +1559,7 @@ const server = Bun.serve<ConsoleSocket, never>({
         // client the console is ready. Without this, input sent immediately
         // after "ready" races the handshake and loses its first byte.
         await ws.data.attachment.ready;
+        maintenanceState.assertAvailable();
         ws.send(JSON.stringify({ type: "ready" }));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1541,6 +1569,9 @@ const server = Bun.serve<ConsoleSocket, never>({
         const code = error instanceof HttpError ? error.code : undefined;
         ws.send(JSON.stringify({ type: "error", message, code }));
         ws.close();
+      } finally {
+        // The connection's lifetime can exceed this handshake.
+        if (!ws.data.attachment) unsubscribe();
       }
     },
 
@@ -1553,6 +1584,7 @@ const server = Bun.serve<ConsoleSocket, never>({
      * on the audit trail.
      */
     message(ws, message) {
+      if (maintenanceState.enabled) { ws.close(); return; }
       const attachment = ws.data.attachment;
       if (!attachment) return;
 
@@ -1580,6 +1612,7 @@ const server = Bun.serve<ConsoleSocket, never>({
     },
 
     close(ws) {
+      ws.data.unsubscribeMaintenance?.();
       // Releasing the connection matters: Docker holds it open server-side, and
       // leaking one per console visit would exhaust the daemon.
       ws.data.attachment?.close();
@@ -1619,6 +1652,11 @@ await reportContainerRuntimeAtBoot();
 // which fails every later backup of that subject. Boot is the only moment when
 // none of ours is running, so it is where they get swept.
 await removeOrphanedToolContainers();
+
+if (maintenanceState.enabled) {
+  // Keep HTTP alive so a failed stop is retryable.
+  await nodeMaintenance.set(true).catch((error) => console.error("[agent] maintenance stop failed:", error));
+}
 
 // --- SFTP server ------------------------------------------------------------
 //

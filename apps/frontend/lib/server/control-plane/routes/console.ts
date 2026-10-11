@@ -38,6 +38,7 @@ import {
   requireString,
   requireUuidParam,
   unauthorized,
+  serviceUnavailable,
 } from "@/lib/server/control-plane/lib/http";
 import {
   normalizeApiUrl,
@@ -141,6 +142,7 @@ export async function handleConsoleSession(
 
   const node = await getNodeWithSecrets(server.node_id);
   if (!node) return json({ error: "Server not found" }, 404);
+  if (!node.isActive) throw serviceUnavailable("Node is drained for maintenance. Activate it before opening a console.");
 
   const { url, scheme } = deriveWsUrl(server.api_url, server.console_url);
 

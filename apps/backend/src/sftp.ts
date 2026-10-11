@@ -33,6 +33,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { constants as fsConstants, type Stats, type Dirent } from "node:fs";
 import { Server, type SFTPWrapper, type Attributes } from "ssh2";
 import { config } from "./config";
+import { maintenanceState } from "./maintenanceState";
 import { docker } from "./docker/client";
 import { alignOwnership } from "./docker/userns";
 import { requireServerId } from "./http";
@@ -129,6 +130,7 @@ export async function createSftpServer(): Promise<Server> {
   const hostKey = await ensureHostKey();
 
   const server = new Server({ hostKeys: [hostKey] }, (client) => {
+    const unsubscribe = maintenanceState.onDrain(() => client.end());
     const state = {
       serverId: "",
       userId: "",
@@ -146,7 +148,9 @@ export async function createSftpServer(): Promise<Server> {
       }
 
       try {
+        maintenanceState.assertAvailable();
         const result = await validateSftpCredentials(ctx.username, ctx.password);
+        maintenanceState.assertAvailable();
         state.serverId = result.serverId;
         state.userId = result.userId;
         ctx.accept();
@@ -160,6 +164,7 @@ export async function createSftpServer(): Promise<Server> {
     });
 
     client.on("ready", () => {
+      if (maintenanceState.enabled) { client.end(); return; }
       client.on("session", (accept) => {
         const session = accept();
         session.on("sftp", (accept) => {
@@ -176,6 +181,7 @@ export async function createSftpServer(): Promise<Server> {
     });
 
     client.on("close", () => {
+      unsubscribe();
       // The connection is gone. Close any file handles the client left open.
       // ssh2 does not synthesize CLOSE events for a dropped connection, so
       // without this a client that disconnects mid-transfer would leak one fd

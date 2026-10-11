@@ -32,6 +32,7 @@ COPY --from=deps /app ./
 COPY package.json ./
 COPY apps/backend/package.json apps/backend/tsconfig.json ./apps/backend/
 COPY apps/backend/src ./apps/backend/src
+COPY shared ./shared
 
 # Runs as root on purpose: the agent's whole job is the Docker socket, whose
 # group id differs per host. Its containment boundary is `paths.ts` and the

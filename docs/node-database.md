@@ -5,6 +5,11 @@ to them. This doc is about that container's *existence*: creating it, starting
 it, stopping it. What lives inside it (per-server databases, scoped users, the
 explorer UI) is `docs/database-explorer.md`; backing it up is `docs/backups.md`.
 
+Draining a node also stops its managed MariaDB container and blocks database
+starts and SQL until activation. Activation leaves the database stopped; start
+it explicitly before starting games that use it. See
+[node-maintenance.md](node-maintenance.md).
+
 ## One button, because the agent already has the socket
 
 Setting a node up used to mean SSHing in, running `bun run setup-db`, copying

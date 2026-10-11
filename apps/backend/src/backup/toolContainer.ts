@@ -27,7 +27,9 @@ import {
   ensureNetwork,
   getContainerLogs,
   removeContainer,
+  startContainer,
 } from "../docker/container";
+import { maintenanceState } from "../maintenanceState";
 import { config } from "../config";
 import { randomBytes } from "node:crypto";
 
@@ -100,6 +102,8 @@ export async function runToolContainer(spec: ToolRunSpec): Promise<ToolRunResult
   await ensureNetwork(docker, config.backupNetwork);
   await ensureImage(docker, spec.image);
 
+  maintenanceState.assertAvailable();
+
   const container = await docker.createContainer(buildToolConfig(spec));
 
   let timedOut = false;
@@ -112,7 +116,7 @@ export async function runToolContainer(spec: ToolRunSpec): Promise<ToolRunResult
       await docker.getNetwork(networkName).connect({ Container: container.id });
     }
 
-    await container.start();
+    await startContainer(docker, container.id);
 
     // `wait()` resolves on exit; the poll loop runs alongside it and stops as
     // soon as either the container exits or the timeout fires.

@@ -716,7 +716,7 @@ export function NodeCard({
               variant="outline"
               className="bg-amber-500/10 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400"
             >
-              Drained
+              Maintenance
             </Badge>
           )}
         </div>

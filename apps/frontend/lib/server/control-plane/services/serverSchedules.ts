@@ -31,6 +31,7 @@ import {
 } from "./serverManager";
 import { startServerBackup } from "./serverBackups";
 import { sendServerCommand } from "../nodes/nodeServerApi";
+import { assertNodeActive } from "../nodes/nodeApi";
 
 // --- Shape --------------------------------------------------------------------
 
@@ -641,7 +642,9 @@ export async function listCandidateSchedules(): Promise<DueSchedule[]> {
            s.name AS server_name, s.node_id, s.status AS server_status
     FROM server_schedules sc
     JOIN servers s ON s.id = sc.server_id
+    JOIN nodes n ON n.id = s.node_id
     WHERE sc.enabled = TRUE
+      AND n.is_active = TRUE
       AND s.status NOT IN (
         'suspended', 'creating', 'installing', 'deleting',
         -- An archived server has no container and no files: every task kind a
@@ -880,6 +883,7 @@ export async function executeSchedule(
 
     const startedAt = new Date().toISOString();
     try {
+      await assertNodeActive(schedule.nodeId);
       await runTask(schedule, task, actorId);
       steps.push({
         position: index + 1,

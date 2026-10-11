@@ -104,6 +104,7 @@ export async function assertPublicHost(hostname: string): Promise<void> {
 export async function ssrfSafeFetch(
   initialUrl: string,
   maxRedirects = 5,
+  signal?: AbortSignal,
 ): Promise<Response> {
   let current = initialUrl;
 
@@ -120,7 +121,7 @@ export async function ssrfSafeFetch(
 
     await assertPublicHost(url.hostname);
 
-    const response = await fetch(current, { redirect: "manual" });
+    const response = await fetch(current, { redirect: "manual", signal });
 
     const isRedirect = response.status >= 300 && response.status < 400;
     const location = response.headers.get("location");

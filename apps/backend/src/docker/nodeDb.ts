@@ -34,7 +34,9 @@ import {
   ensureNetwork,
   removeContainer,
   removeNetwork,
+  startContainer,
 } from "./container";
+import { maintenanceState } from "../maintenanceState";
 import { execInContainer } from "./exec";
 import { config } from "../config";
 import { badRequest, conflict, notFound } from "../http";
@@ -437,7 +439,7 @@ export async function setUpNodeDb(
     // Start it before probing: a stopped container cannot answer, and "setup"
     // on an existing-but-stopped database should leave it usable.
     if (current.State !== "running") {
-      await docker.getContainer(current.Id).start();
+      await startContainer(docker, current.Id);
     }
     await waitUntilReady(current.Id, admin);
     return getNodeDbStatus(admin);
@@ -465,6 +467,7 @@ export async function setUpNodeDb(
   // root-equivalent secret that no one holds is one fewer thing to leak.
   const rootPassword = isRoot ? admin.password : generateRootPassword(32);
 
+  maintenanceState.assertAvailable();
   const container = await docker.createContainer(
     nodeDbContainerConfig({
       containerName,
@@ -474,7 +477,7 @@ export async function setUpNodeDb(
       rootPassword,
     }),
   );
-  await container.start();
+  await startContainer(docker, container.id);
 
   if (!freshData) {
     // Existing data: the accounts are already in the volume. Prove the panel's
@@ -592,7 +595,7 @@ export async function startNodeDb(admin?: NodeDbAdmin): Promise<NodeDbStatus> {
 
   if (info.State !== "running") {
     try {
-      await docker.getContainer(info.Id).start();
+      await startContainer(docker, info.Id);
     } catch (error) {
       // 304 = already started, which a concurrent request can produce.
       if ((error as { statusCode?: number }).statusCode !== 304) throw error;

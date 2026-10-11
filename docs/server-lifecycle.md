@@ -6,6 +6,10 @@ the power actions, the status the panel stores, how the panel recovers when its
 record of a container and the node's reality drift apart, and how an owner throws
 the whole thing away and starts again.
 
+Draining a node stops its workloads and blocks further execution until it is
+activated. See [node-maintenance.md](node-maintenance.md) for shutdown,
+startup-watch cancellation, and the handling of unreachable nodes.
+
 ## Status is a record, the node is the truth
 
 `servers.status` is what the panel last observed or intended

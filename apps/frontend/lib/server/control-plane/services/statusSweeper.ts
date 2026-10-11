@@ -34,7 +34,8 @@ import {
   noteNodeReachable,
   noteNodeUnreachable,
 } from "../nodes/nodeReachability";
-import { listActiveNodesWithSecrets } from "../nodes/nodeRegistry";
+import { getNode, listNodes } from "../nodes/nodeRegistry";
+import { enforceNodeMaintenance } from "./nodeMaintenance";
 import { getNodeServerStates } from "../nodes/nodeServerApi";
 import {
   statusCorrections,
@@ -187,7 +188,7 @@ async function sweepNode(
 }
 
 /**
- * Run one pass over every active node.
+ * Reconcile active nodes and enforce shutdown on drained nodes.
  *
  * Errors are contained per node: one unreachable agent must not cost the rest
  * of the fleet its correction.
@@ -202,7 +203,7 @@ export async function runStatusSweep(): Promise<StatusSweepResult> {
   };
 
   const [nodes, servers] = await Promise.all([
-    listActiveNodesWithSecrets(),
+    listNodes(),
     loadSweepableServers(),
   ]);
 
@@ -215,7 +216,7 @@ export async function runStatusSweep(): Promise<StatusSweepResult> {
 
   const work = nodes
     .map((node) => ({ node, nodeServers: serversByNode.get(node.id) ?? [] }))
-    .filter(({ nodeServers }) => nodeServers.length > 0);
+    .filter(({ node, nodeServers }) => !node.isActive || nodeServers.length > 0);
 
   let next = 0;
   const workers = Array.from(
@@ -226,6 +227,21 @@ export async function runStatusSweep(): Promise<StatusSweepResult> {
         if (isNodeInBackoff(job.node.id)) {
           result.nodesSkipped += 1;
           continue;
+        }
+        // Read intent again: a node can be activated while this fleet pass is
+        // queued. Drained nodes are included even when they have no game rows.
+        if (!job.node.isActive) {
+          const current = await getNode(job.node.id);
+          if (!current) continue;
+          if (!current.isActive) {
+            try {
+              await enforceNodeMaintenance(current.id);
+            } catch (error) {
+              result.nodesUnreachable += 1;
+              noteNodeUnreachable("status-sweeper", current.id, current.name, error);
+              continue;
+            }
+          }
         }
         await sweepNode(job.node.id, job.node.name, job.nodeServers, result);
       }

@@ -18,6 +18,11 @@ Related: `server-lifecycle.md` (the power actions a task calls), `backups.md`
 `subusers.md` (the `schedules` flag), `performance.md` (why the runner's tick is
 shaped the way it is).
 
+Drained nodes are excluded from candidates, including **Run now**. A task that
+has already waited its delay checks the node again before acting, so maintenance
+cannot be bypassed by an earlier scheduled start. See
+[node-maintenance.md](node-maintenance.md).
+
 ## Why a list of tasks, not one action
 
 This is the decision the whole feature is built around. What operators actually

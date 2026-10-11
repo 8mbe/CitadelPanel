@@ -54,7 +54,7 @@
 
 import { sql } from "../db/client";
 import { badRequest, conflict, HttpError, notFound } from "../lib/http";
-import { assertNodeReadyToProvision } from "../nodes/nodeApi";
+import { assertNodeActive, assertNodeReadyToProvision } from "../nodes/nodeApi";
 import {
   deleteServerContainer,
   getServerState,
@@ -174,6 +174,7 @@ export async function archiveServer(
   input: ArchiveServerInput,
 ): Promise<ServerSummary> {
   const server = await loadRow(input.serverId);
+  await assertNodeActive(server.node_id);
 
   if (server.status === "archived" || server.archived_at) {
     throw conflict("This server is already archived.");
@@ -715,6 +716,7 @@ export async function listServersDueForAutoArchive(
   const rows = (await sql`
     SELECT s.id, s.name, s.node_id, s.last_active_at
     FROM servers s
+    JOIN nodes n ON n.id = s.node_id AND n.is_active = TRUE
     WHERE s.status = 'stopped'
       AND s.container_id IS NOT NULL
       AND s.archived_at IS NULL

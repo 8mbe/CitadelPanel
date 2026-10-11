@@ -16,6 +16,7 @@
  */
 
 import { sql } from "../db/client";
+import { assertNodeActive } from "../nodes/nodeApi";
 import { badRequest, conflict, notFound } from "../lib/http";
 import { recordAudit } from "./auditLog";
 import { getBackupSettings } from "./settings";
@@ -175,6 +176,7 @@ export async function startServerBackup(
   input: StartServerBackupInput,
 ): Promise<BackupRunView> {
   const server = await loadServer(input.serverId);
+  await assertNodeActive(server.nodeId);
 
   if (server.status === "suspended") {
     throw conflict(
@@ -271,6 +273,7 @@ export async function startServerRestore(
   input: StartServerRestoreInput,
 ): Promise<BackupRunView> {
   const server = await loadServer(input.serverId);
+  await assertNodeActive(server.nodeId);
   const source = await getServerBackup(input.serverId, input.runId);
 
   if (server.status === "suspended") {
@@ -563,6 +566,7 @@ export async function listServersDueForBackup(): Promise<
   const rows = (await sql`
     SELECT s.id, s.name, s.node_id
     FROM servers s
+    JOIN nodes n ON n.id = s.node_id AND n.is_active = TRUE
     WHERE s.backups_enabled = TRUE
       AND s.status NOT IN (
         'suspended', 'installing', 'error',

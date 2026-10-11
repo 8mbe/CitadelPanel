@@ -16,6 +16,7 @@
 
 import { env } from "../config/env";
 import { HttpError } from "../lib/http";
+import { allowedDuringNodeMaintenance } from "../../../../../../shared/nodeMaintenance";
 import {
   getNodeWithSecrets,
   invalidateNode,
@@ -116,6 +117,19 @@ export interface NodeRequestOptions {
   signal?: AbortSignal;
 }
 
+function assertNodeRequestAllowed(node: NodeWithSecrets, path: string, options: NodeRequestOptions): void {
+  if (!node.isActive && !allowedDuringNodeMaintenance(path, options.method)) {
+    throw new HttpError(503, `Node "${node.name}" is drained for maintenance. Activate it before doing work.`);
+  }
+}
+
+/** Check before a service writes transitional state or starts preparatory work. */
+export async function assertNodeActive(nodeId: string): Promise<void> {
+  const node = await getNodeWithSecrets(nodeId);
+  if (!node) throw new HttpError(404, `Unknown node: ${nodeId}`);
+  assertNodeRequestAllowed(node, "/v1/work", { method: "POST" });
+}
+
 function buildUrl(
   baseUrl: string,
   path: string,
@@ -197,6 +211,7 @@ export async function nodeRequestFor<T>(
   path: string,
   options: NodeRequestOptions = {},
 ): Promise<T> {
+  assertNodeRequestAllowed(node, path, options);
   const connection = toConnection(node);
   const url = buildUrl(connection.baseUrl, path, options.query);
 
@@ -269,6 +284,7 @@ export async function nodeRequestRaw(
 ): Promise<Response> {
   const node = await getNodeWithSecrets(nodeId);
   if (!node) throw new HttpError(404, `Unknown node: ${nodeId}`);
+  assertNodeRequestAllowed(node, path, options);
 
   const connection = toConnection(node);
   const url = buildUrl(connection.baseUrl, path, options.query);
@@ -330,6 +346,7 @@ export async function nodeRequestRaw(
 
 export interface NodeHealth {
   reachable: boolean;
+  maintenance?: boolean;
   dockerVersion?: string;
   containersRunning?: number;
   /** Host capacity, used to auto-fill a node's totals at registration. */
@@ -400,6 +417,7 @@ export interface NodeDockerSocketStatus {
 
 interface AgentHealthResponse {
   status: string;
+  maintenance?: boolean;
   dockerVersion?: string;
   containersRunning?: number;
   capacity?: { ncpu: number; memTotalMb: number };
@@ -425,6 +443,7 @@ export async function checkNodeHealth(node: NodeWithSecrets): Promise<NodeHealth
 
     return {
       reachable: true,
+      maintenance: health.maintenance,
       dockerVersion: health.dockerVersion,
       containersRunning: health.containersRunning,
       capacity: health.capacity,
@@ -510,8 +529,10 @@ export function unregisteredNode(
 export async function assertNodeReadyToProvision(nodeId: string): Promise<void> {
   const node = await getNodeWithSecrets(nodeId);
   if (!node) throw new HttpError(404, `Unknown node: ${nodeId}`);
+  assertNodeRequestAllowed(node, "/v1/servers/provision", { method: "POST" });
 
   const health = await checkNodeHealth(node);
+  if (health.maintenance) throw new HttpError(503, `Node "${node.name}" is in maintenance. Activate it before provisioning.`);
 
   if (!health.reachable) {
     throw new HttpError(

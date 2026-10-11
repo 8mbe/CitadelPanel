@@ -91,6 +91,24 @@ describe("parseCompress", () => {
   });
 });
 
+test("cancelling a stalled import stops reading its body", async () => {
+  const cancellation = new AbortController();
+  let reading!: () => void;
+  const readStarted = new Promise<void>((resolve) => { reading = resolve; });
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    pull() { reading(); },
+    cancel() { cancelled = true; },
+  }, { highWaterMark: 0 });
+  const outcome = importServerData("eeeeeeee-1111-2222-3333-444444444444", body, {
+    signal: cancellation.signal,
+  }).catch((error: Error) => error);
+  await readStarted;
+  cancellation.abort();
+  expect(await outcome).toBeInstanceOf(Error);
+  expect(cancelled).toBe(true);
+});
+
 describe("measureServerData", () => {
   test("reports a size that accounts for the whole tree", async () => {
     const bytes = await measureServerData(SOURCE_ID);

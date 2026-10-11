@@ -168,9 +168,10 @@ export async function measureServerData(serverId: string): Promise<number> {
  */
 export async function exportServerData(
   serverId: string,
-  options: { compress?: boolean } = {},
+  options: { compress?: boolean; signal?: AbortSignal } = {},
 ): Promise<{ body: ReadableStream<Uint8Array>; contentType: string }> {
   const path = await requireDataDir(serverId);
+  options.signal?.throwIfAborted();
 
   const args = ["tar", "-c"];
   if (options.compress) args.push("-z");
@@ -188,12 +189,18 @@ export async function exportServerData(
   const stderr = new Response(proc.stderr).text();
 
   const source = proc.stdout;
+  let cancelled = false;
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
       const reader = source.getReader();
+      const abort = () => { proc.kill(); void reader.cancel().catch(() => undefined); };
+      options.signal?.addEventListener("abort", abort, { once: true });
       try {
         for (;;) {
+          options.signal?.throwIfAborted();
           const { done, value } = await reader.read();
+          options.signal?.throwIfAborted();
+          if (cancelled) return;
           if (done) break;
           controller.enqueue(value);
         }
@@ -211,12 +218,14 @@ export async function exportServerData(
         controller.close();
       } catch (error) {
         proc.kill();
-        controller.error(error);
+        if (!cancelled) controller.error(error);
       } finally {
+        options.signal?.removeEventListener("abort", abort);
         reader.releaseLock();
       }
     },
     cancel() {
+      cancelled = true;
       // The panel gave up (a cancelled migration, a dropped connection). Kill
       // the archiver rather than leaving it reading a world into a dead pipe.
       proc.kill();
@@ -256,7 +265,7 @@ export interface ImportResult {
 export async function importServerData(
   serverId: string,
   body: ReadableStream<Uint8Array>,
-  options: { compressed?: boolean } = {},
+  options: { compressed?: boolean; signal?: AbortSignal } = {},
 ): Promise<ImportResult> {
   const target = serverDataPath(serverId);
 
@@ -272,6 +281,7 @@ export async function importServerData(
   }
 
   await ensureServerDataDir(serverId);
+  options.signal?.throwIfAborted();
 
   const args = ["tar", "-x"];
   if (options.compressed) args.push("-z");
@@ -288,9 +298,13 @@ export async function importServerData(
   try {
     const reader = body.getReader();
     const writer = proc.stdin;
+    const abort = () => { proc.kill(); void reader.cancel().catch(() => undefined); };
+    options.signal?.addEventListener("abort", abort, { once: true });
     try {
       for (;;) {
+        options.signal?.throwIfAborted();
         const { done, value } = await reader.read();
+        options.signal?.throwIfAborted();
         if (done) break;
         writer.write(value);
         // Backpressure: without this the whole archive is buffered in the
@@ -298,11 +312,13 @@ export async function importServerData(
         await writer.flush();
       }
     } finally {
+      options.signal?.removeEventListener("abort", abort);
       reader.releaseLock();
       await writer.end();
     }
 
     const code = await proc.exited;
+    options.signal?.throwIfAborted();
     if (code !== 0) {
       throw serviceUnavailable(
         `Extracting the transferred data failed (tar exited ${code}): ` +

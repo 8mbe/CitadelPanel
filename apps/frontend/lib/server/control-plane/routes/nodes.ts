@@ -51,6 +51,7 @@ import { getNodeAbuseSummary } from "../security/suspiciousList";
 import { recordAuditFromRequest } from "../services/auditLog";
 import { countServersOnNode, listServersForNode } from "../services/serverManager";
 import { recoverNodeServers } from "../services/nodeRecovery";
+import { enforceNodeMaintenance, leaveNodeMaintenance } from "../services/nodeMaintenance";
 
 /**
  * Validate an agent base URL.
@@ -522,8 +523,7 @@ export async function handleAllNodesHealth(request: Request): Promise<Response> 
 /**
  * PATCH /api/admin/nodes/:id. Activates or drains a node.
  *
- * Draining is reversible and does not touch running containers; it only stops
- * new servers being scheduled onto the node.
+ * Draining closes placement and execution, then stops the node's workloads.
  */
 export async function handleUpdateNode(
   request: Request,
@@ -586,11 +586,8 @@ export async function handleUpdateNode(
   if (apiUrl !== undefined) assertValidApiUrl(apiUrl);
   if (consoleUrl !== undefined && consoleUrl.length > 0) assertValidApiUrl(consoleUrl);
 
-  let node = null;
-
-  if (hasActiveToggle) {
-    node = await setNodeActive(id, body.isActive as boolean);
-  }
+  let node = await getNode(id);
+  if (!node) throw notFound("Node not found");
 
   if (hasDetailEdit || hasReserveEdit) {
     node = await updateNode(id, {
@@ -611,6 +608,14 @@ export async function handleUpdateNode(
   // A changed URL or token invalidates the cached connection; safe to call
   // unconditionally since it is a cheap map delete.
   invalidateNodeConnection(id);
+
+  if (hasActiveToggle) {
+    // Apply edited connection details first: an operator may be correcting a
+    // broken address and activating the node in the same request.
+    if (body.isActive === true) await leaveNodeMaintenance(id);
+    node = await setNodeActive(id, body.isActive as boolean);
+    if (!node) throw notFound("Node not found");
+  }
 
   await recordAuditFromRequest(request, {
     userId: admin.id,
@@ -634,6 +639,8 @@ export async function handleUpdateNode(
       ...(allowOvercommit !== undefined ? { allowOvercommit } : {}),
     },
   });
+
+  if (hasActiveToggle && body.isActive === false) await enforceNodeMaintenance(id);
 
   return json({ node });
 }

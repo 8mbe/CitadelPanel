@@ -11,6 +11,10 @@ Both run asynchronously on the node, report live progress, keep a durable log, a
 can be driven by an admin-configured cron schedule. Both go to the same
 S3-compatible bucket, in separate encrypted restic repositories.
 
+Node maintenance stops active backup/restore tools and blocks new repository
+work. Scheduled backups skip drained nodes while job reconciliation remains
+available to record interrupted runs. See [node-maintenance.md](node-maintenance.md).
+
 Related: `archive.md` (taking an idle server's files *off* its node and leaving
 them only in the bucket, which is built on the server backup below and is why one
 snapshot in a repository is not a spare copy), `scheduler.md` (the per-server
