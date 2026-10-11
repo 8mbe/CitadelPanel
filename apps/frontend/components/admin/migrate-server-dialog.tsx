@@ -26,6 +26,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -38,12 +39,11 @@ import {
   adminListServerMigrations,
   adminPreflightServerMigration,
   adminStartServerMigration,
+  getServer,
   ApiError,
-  type MigratedPort,
   type MigrationLogLine,
   type MigrationPhase,
   type MigrationPreflight,
-  type MigrationRollback,
   type MigrationStatus,
   type ServerMigration,
 } from "@/lib/api";
@@ -52,6 +52,15 @@ import { cn } from "@/lib/utils";
 
 /** How often the live migration is re-read while it runs. */
 const POLL_MS = 2000;
+
+const MIGRATION_STATUS_LABELS: Record<MigrationStatus, string> = {
+  pending: "Queued", running: "In progress", cancelling: "Cancelling",
+  succeeded: "Completed", failed: "Failed", cancelled: "Cancelled",
+};
+
+function isActiveMigration(status: MigrationStatus) {
+  return status === "pending" || status === "running" || status === "cancelling";
+}
 
 const PHASE_LABELS: Record<MigrationPhase, string> = {
   queued: "Queued",
@@ -113,6 +122,20 @@ export function MigrateServerDialog({
   const [starting, setStarting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [migration, setMigration] = React.useState<ServerMigration | null>(null);
+  const [history, setHistory] = React.useState<ServerMigration[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = React.useState(0);
+  const [nodesReady, setNodesReady] = React.useState(false);
+  const [newMoveLoading, setNewMoveLoading] = React.useState(false);
+  const [location, setLocation] = React.useState({ id: currentNodeId, name: currentNodeName });
+  const onChangedRef = React.useRef(onChanged);
+  React.useEffect(() => { onChangedRef.current = onChanged; }, [onChanged]);
+  const finished = React.useCallback(() => onChangedRef.current(), []);
+  const updateMigration = React.useCallback((id: string, update: Partial<ServerMigration>) => {
+    setMigration(previous => previous?.id === id ? { ...previous, ...update } : previous);
+    setHistory(previous => previous.map(run => run.id === id ? { ...run, ...update } : run));
+  }, []);
 
   // A migration started in another tab, or before this dialog was opened, is
   // picked up rather than ignored: the row is the durable record, so opening
@@ -123,28 +146,62 @@ export function MigrateServerDialog({
 
     void (async () => {
       try {
-        const [nodeList, existing] = await Promise.all([
-          adminListNodes(),
-          adminListServerMigrations(serverId),
-        ]);
+        const existing = await adminListServerMigrations(serverId);
         if (cancelled) return;
-        setNodes(
-          nodeList
-            .map(({ node }) => ({ id: node.id, name: node.name }))
-            .filter((node) => node.id !== currentNodeId),
-        );
-        if (existing.active) setMigration(existing.active);
+        const runs = existing.active && !existing.migrations.some(run => run.id === existing.active!.id)
+          ? [existing.active, ...existing.migrations] : existing.migrations;
+        setHistory(runs);
+        setMigration(existing.active ?? runs[0] ?? null);
+        setLoadError(null);
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof ApiError ? err.message : "Failed to load nodes.");
+          setLoadError(err instanceof ApiError ? err.message : "Failed to load migration history.");
         }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [open, serverId, currentNodeId]);
+  }, [open, serverId, loadAttempt]);
+
+  React.useEffect(() => {
+    if (!open || loading || loadError || migration || nodesReady) return;
+    let cancelled = false;
+    void adminListNodes().then(result => {
+      if (cancelled) return;
+      setNodes(result.map(({ node }) => ({ id: node.id, name: node.name })));
+      setNodesReady(true);
+    }).catch(err => {
+      if (cancelled) return;
+      setError(err instanceof ApiError ? err.message : "Failed to load destination nodes.");
+      setNodesReady(true);
+    });
+    return () => { cancelled = true; };
+  }, [open, loading, loadError, migration, nodesReady]);
+
+  const newMove = async () => {
+    setNewMoveLoading(true);
+    setError(null);
+    try {
+      // A completed move changed the authoritative node. Fetch it before a
+      // new attempt so a stale table/dialog prop cannot exclude the wrong node.
+      const server = await getServer(serverId);
+      if (!server) throw new Error("Server not found.");
+      setLocation({ id: server.nodeId, name: server.nodeHostname });
+      setDestinationId("");
+      setPreflight(null);
+      setAcknowledged(false);
+      setNodesReady(false);
+      setMigration(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not prepare a new migration.");
+    } finally { setNewMoveLoading(false); }
+  };
+
+  const activeMigration = history.find(run => isActiveMigration(run.status));
 
   // The preflight talks to two agents, measures a directory and probes ports,
   // so it runs when a destination is chosen rather than on every render.
@@ -175,12 +232,12 @@ export function MigrateServerDialog({
     setStarting(true);
     setError(null);
     try {
-      setMigration(
-        await adminStartServerMigration(serverId, {
-          destinationNodeId: preflight.destinationNodeId,
-          acknowledgeNoBackup: acknowledged,
-        }),
-      );
+      const started = await adminStartServerMigration(serverId, {
+        destinationNodeId: preflight.destinationNodeId,
+        acknowledgeNoBackup: acknowledged,
+      });
+      setMigration(started);
+      setHistory(previous => [started, ...previous]);
       onChanged();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "The migration could not be started.");
@@ -198,29 +255,62 @@ export function MigrateServerDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Truck className="size-4" />
-            Move &ldquo;{serverName}&rdquo; to another node
+            {migration ? "Migration of" : "Move"} &ldquo;{serverName}&rdquo;{!migration && " to another node"}
           </DialogTitle>
           <DialogDescription>
-            {migration
-              ? "The server stays on its original node until the move has been " +
-                "checked, so a failure here is not an outage."
-              : `Currently on ${currentNodeName ?? "an unknown node"}. The server ` +
+            {loading
+              ? "Loading migration history…"
+              : migration
+              ? isActiveMigration(migration.status)
+                ? "Closing this dialog keeps the migration running. Reopen progress from the server list."
+                : "Saved progress and logs for this server's migrations."
+              : `Currently on ${location.name ?? "an unknown node"}. The server ` +
                 "will be stopped for the move and started again afterwards."}
           </DialogDescription>
         </DialogHeader>
 
-        {migration ? (
-          <MigrationProgress
-            serverId={serverId}
-            migration={migration}
-            onFinished={onChanged}
-          />
+        {loading ? (
+          <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm"><Spinner /> Loading migrations…</div>
+        ) : loadError ? (
+          <Alert variant="destructive">
+            <CircleAlert />
+            <AlertTitle>Could not load migrations</AlertTitle>
+            <AlertDescription>{loadError}</AlertDescription>
+          </Alert>
+        ) : migration ? (
+          <div className="flex flex-col gap-4">
+            <Field>
+              <FieldLabel>Migration history</FieldLabel>
+              <Select value={migration.id} onValueChange={id => {
+                const selected = history.find(run => run.id === id);
+                if (selected) { setMigration(selected); setError(null); }
+              }}>
+                <SelectTrigger aria-label="Migration history" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectGroup>
+                  {history.map(run => (
+                    <SelectItem key={run.id} value={run.id}>
+                      {run.destinationNodeName ?? "Destination node"} · {MIGRATION_STATUS_LABELS[run.status]} · {new Date(run.createdAt).toLocaleString()}
+                    </SelectItem>
+                  ))}
+                </SelectGroup></SelectContent>
+              </Select>
+            </Field>
+            <MigrationProgress
+              key={migration.id}
+              serverId={serverId}
+              migration={migration}
+              onUpdate={updateMigration}
+              onFinished={finished}
+            />
+            {error && <p className="text-destructive text-sm">{error}</p>}
+          </div>
         ) : (
           <div className="flex flex-col gap-4">
             <Field>
               <FieldLabel>Destination node</FieldLabel>
               <Select
                 value={destinationId}
+                disabled={!nodesReady || starting}
                 onValueChange={(value) => {
                   if (!value) return;
                   // Cleared here rather than in the effect that fetches: a
@@ -234,15 +324,15 @@ export function MigrateServerDialog({
                   setChecking(true);
                 }}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger aria-label="Destination node" className="w-full">
                   <SelectValue placeholder="Choose a node" />
                 </SelectTrigger>
                 <SelectContent>
-                  {nodes.map((node) => (
+                  <SelectGroup>{nodes.filter(node => node.id !== location.id).map((node) => (
                     <SelectItem key={node.id} value={node.id}>
                       {node.name}
                     </SelectItem>
-                  ))}
+                  ))}</SelectGroup>
                 </SelectContent>
               </Select>
               <FieldDescription>
@@ -279,12 +369,28 @@ export function MigrateServerDialog({
         )}
 
         <DialogFooter>
-          {migration ? (
-            <MigrationFooter
-              serverId={serverId}
-              migration={migration}
-              onClose={() => onOpenChange(false)}
-            />
+          {loading || loadError ? (
+            <>
+              {loadError && <Button variant="outline" onClick={() => { setLoading(true); setLoadError(null); setLoadAttempt(attempt => attempt + 1); }}>Retry</Button>}
+              <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+            </>
+          ) : migration ? (
+            <>
+              {activeMigration && activeMigration.id !== migration.id ? (
+                <Button variant="outline" onClick={() => setMigration(activeMigration)}>View active migration</Button>
+              ) : !activeMigration && (
+                <Button variant="outline" onClick={() => void newMove()} disabled={newMoveLoading}>
+                  {newMoveLoading && <Spinner />} New migration
+                </Button>
+              )}
+              <MigrationFooter
+                key={migration.id}
+                serverId={serverId}
+                migration={migration}
+                onClose={() => onOpenChange(false)}
+                onUpdate={updateMigration}
+              />
+            </>
           ) : (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -383,24 +489,21 @@ function MigrationProgress({
   serverId,
   migration,
   onFinished,
+  onUpdate,
 }: {
   serverId: string;
   migration: ServerMigration;
   onFinished: () => void;
+  onUpdate: (id: string, update: Partial<ServerMigration>) => void;
 }) {
   const [lines, setLines] = React.useState<MigrationLogLine[]>([]);
-  const [status, setStatus] = React.useState<MigrationStatus>(migration.status);
-  const [phase, setPhase] = React.useState<MigrationPhase>(migration.phase);
-  const [percent, setPercent] = React.useState(migration.percent);
-  const [bytesTotal, setBytesTotal] = React.useState(migration.bytesTotal);
-  const [bytesDone, setBytesDone] = React.useState(migration.bytesTransferred);
-  const [error, setError] = React.useState(migration.error);
-  const [failedPhase, setFailedPhase] = React.useState(migration.failedPhase);
-  const [rollback, setRollback] = React.useState<MigrationRollback | null>(
-    migration.rollback,
-  );
-  const [ports, setPorts] = React.useState<MigratedPort[]>(migration.destinationPorts);
+  const [pollError, setPollError] = React.useState(false);
+  const { status, phase, percent, bytesTotal, error, failedPhase, rollback } = migration;
+  const bytesDone = migration.bytesTransferred;
+  const ports = migration.destinationPorts;
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  const wasActive = React.useRef(isActiveMigration(migration.status));
+  const notified = React.useRef(false);
 
   // A ref, not state: the poll reads it every tick and must not re-subscribe
   // (or drop lines) each time it advances.
@@ -418,34 +521,36 @@ function MigrationProgress({
           cursor.current,
         );
         if (cancelled) return;
+        setPollError(false);
 
-        if (data.logs.length > 0) {
-          cursor.current = data.logs[data.logs.length - 1]!.seq;
+        const { logs, ...update } = data;
+        if (logs.length > 0) {
+          cursor.current = logs[logs.length - 1]!.seq;
           // Capped so a long move cannot grow the DOM without bound; the full
           // log stays in the database.
-          setLines((previous) => [...previous, ...data.logs].slice(-400));
+          setLines((previous) => [...previous, ...logs].slice(-400));
         }
-        setStatus(data.status);
-        setPhase(data.phase);
-        setPercent(data.percent);
-        setBytesTotal(data.bytesTotal);
-        setBytesDone(data.bytesTransferred);
-        setError(data.error);
-        setFailedPhase(data.failedPhase);
-        setRollback(data.rollback);
-        setPorts(data.destinationPorts);
+        onUpdate(migration.id, update);
 
         if (
           data.status === "succeeded" ||
           data.status === "failed" ||
           data.status === "cancelled"
         ) {
-          onFinished();
+          // The log API returns at most 500 rows. A completed history still
+          // needs its remaining pages so its final failure/success lines show.
+          if (logs.length === 500) {
+            timer = setTimeout(poll, 0);
+            return;
+          }
+          if (wasActive.current && !notified.current) {
+            notified.current = true;
+            onFinished();
+          }
           return;
         }
       } catch {
-        // A dropped poll is not worth surfacing: the row is the truth and the
-        // next tick either reads it or the move resolves.
+        if (!cancelled) setPollError(true);
       }
       if (!cancelled) timer = setTimeout(poll, POLL_MS);
     };
@@ -455,7 +560,7 @@ function MigrationProgress({
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [serverId, migration.id, onFinished]);
+  }, [serverId, migration.id, onFinished, onUpdate]);
 
   React.useEffect(() => {
     const node = scrollRef.current;
@@ -469,12 +574,19 @@ function MigrationProgress({
 
   return (
     <div className="flex flex-col gap-4">
+      {pollError && (
+        <Alert>
+          <TriangleAlert />
+          <AlertTitle>Could not refresh migration progress</AlertTitle>
+          <AlertDescription>The last saved update is shown. Retrying the connection…</AlertDescription>
+        </Alert>
+      )}
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2 text-sm font-medium">
           {running && <Spinner />}
           {status === "cancelling" ? "Cancelling…" : PHASE_LABELS[phase]}
         </div>
-        <Progress value={percent} />
+        <Progress value={percent} aria-label="Migration progress" />
         <div className="text-muted-foreground flex justify-between text-xs tabular-nums">
           <span>{percent}%</span>
           {phase === "transferring" && bytesTotal !== null && (
@@ -576,10 +688,12 @@ function MigrationFooter({
   serverId,
   migration,
   onClose,
+  onUpdate,
 }: {
   serverId: string;
   migration: ServerMigration;
   onClose: () => void;
+  onUpdate: (id: string, update: Partial<ServerMigration>) => void;
 }) {
   const [cancelling, setCancelling] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -588,7 +702,8 @@ function MigrationFooter({
     setCancelling(true);
     setError(null);
     try {
-      await adminCancelServerMigration(serverId, migration.id);
+      const updated = await adminCancelServerMigration(serverId, migration.id);
+      onUpdate(migration.id, updated);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not cancel.");
     } finally {
@@ -612,7 +727,7 @@ function MigrationFooter({
           Stop and put it back
         </Button>
       )}
-      <Button onClick={onClose}>Close</Button>
+      <Button onClick={onClose}>{isActiveMigration(migration.status) ? "Hide progress" : "Close"}</Button>
     </>
   );
 }

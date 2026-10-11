@@ -2693,13 +2693,19 @@ export async function adminProbeNodeConnection(payload: {
   return data.health;
 }
 
-/** Summary row enriched by the admin listing with owner and live usage. */
+/** Summary row enriched with owner, live usage and retained migration state. */
 export interface AdminServerSummary extends ApiServerSummary {
   ownerEmail: string;
   /** Owner's display name, or null when the account never set one. */
   ownerName: string | null;
   cpuPercent: number | null;
   memoryUsageMb: number | null;
+  latestMigration: {
+    id: string;
+    status: MigrationStatus;
+    phase: MigrationPhase;
+    percent: number;
+  } | null;
 }
 
 /**

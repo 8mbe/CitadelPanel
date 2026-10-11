@@ -68,6 +68,10 @@ import {
 import { formatMb } from "@/lib/format";
 import type { ServerStatus } from "@/lib/types";
 
+function hasActiveMigration(server: AdminServerSummary) {
+  return server.status === "migrating" || Boolean(server.latestMigration && ["pending", "running", "cancelling"].includes(server.latestMigration.status));
+}
+
 /**
  * Admin view of every server on the panel, across all users. This is also the
  * only place a server can be created: provisioning is an admin action.
@@ -130,7 +134,7 @@ export default function AdminServersPage() {
     };
   }, [trimmed, refreshKey]);
 
-  const refresh = () => setRefreshKey((k) => k + 1);
+  const refresh = React.useCallback(() => setRefreshKey((k) => k + 1), []);
   const searching = !loading && trimmed !== loadedQuery;
   const running = servers.filter((s) => s.status === "running").length;
 
@@ -251,7 +255,21 @@ export default function AdminServersPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <StatusBadge status={server.status as ServerStatus} />
+                        <div className="flex flex-col items-start gap-1.5">
+                          <StatusBadge status={server.status as ServerStatus} />
+                          {(server.latestMigration || server.status === "migrating") && (
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              aria-label={`View migration ${hasActiveMigration(server) ? "progress" : "details"} for ${server.name}`}
+                              onClick={() => setMigrateTarget(server)}
+                            >
+                              <Truck className="size-4" data-icon="inline-start" />
+                              {hasActiveMigration(server)
+                                ? "View progress" : "Migration details"}
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground tabular-nums">
                         {formatMb(server.memoryLimitMb)} ·{" "}
@@ -294,8 +312,10 @@ export default function AdminServersPage() {
                             */}
                             <DropdownMenuItem onClick={() => setMigrateTarget(server)}>
                               <Truck />
-                              {server.status === "migrating"
+                              {hasActiveMigration(server)
                                 ? "Follow migration"
+                                : server.latestMigration
+                                  ? "Migration history"
                                 : "Move to another node"}
                             </DropdownMenuItem>
                             {server.status === "suspended" ? (

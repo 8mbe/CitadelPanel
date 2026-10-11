@@ -355,6 +355,28 @@ owns. Refused once the cutover has begun: past that the server *is* on the
 destination, and the honest options are "let it finish" and "migrate it back",
 not "stop half way".
 
+### Reopening progress and saved results
+
+Closing the migration dialog stops only its browser polling. The panel's
+detached task continues and keeps writing progress and logs to PostgreSQL.
+**Admin → Servers** shows **View progress** beside the server's status, including
+the safety-backup phase when the server may still be recorded as running or
+stopped. The listing reads the newest migration for all matched servers in one
+batched query; it does not make a history request for every row. The admin-only
+migration banner on the server page also opens the same dialog.
+
+Reopening selects the active migration, or the latest saved result if the move
+finished while the dialog was closed. Earlier attempts remain selectable from
+the migration history field. Finished rows stop polling but keep their result
+and saved logs available through **Migration details**. A new migration first
+refreshes the server's current node, so a completed cutover cannot leave the
+destination picker using the old source.
+
+Progress and cancellation controls share the same live record. Once cutover
+or cleanup starts, or the move finishes, the stale initial state cannot keep
+offering cancellation. Closing an admin server-page dialog after completion is
+an explicit action; refreshing the server's status does not unmount its result.
+
 ### A panel restart mid-migration
 
 A migration runs in the panel's process, and it holds its server in `migrating`,
