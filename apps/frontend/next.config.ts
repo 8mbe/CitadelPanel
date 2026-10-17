@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
 import type { NextConfig } from "next";
+import { readGitRevision } from "./lib/build-revision";
 
 function getBuildCommit(): string {
   const supplied = process.env.PANEL_BUILD_COMMIT?.trim();
@@ -12,7 +14,8 @@ function getBuildCommit(): string {
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
   } catch {
-    return "unknown";
+    // Docker has only HEAD/refs, without Git or its config/object database.
+    return readGitRevision(resolve(__dirname, "../../.git")) ?? "unknown";
   }
 }
 

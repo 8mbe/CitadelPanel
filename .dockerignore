@@ -1,7 +1,8 @@
 # Build context for both images is the repository root (the workspace lockfile
 # lives here). Keep it to source + manifests.
 
-.git
+# Only revision pointers enter the build, never Git config, credentials, or objects.
+.git/**
 .gitignore
 **/node_modules
 **/.next
@@ -31,3 +32,9 @@ data/
 .zcode
 .vscode
 .idea
+
+# Keep these last so a branch named build or docs is still readable.
+!.git/HEAD
+!.git/refs/
+!.git/refs/**
+!.git/packed-refs

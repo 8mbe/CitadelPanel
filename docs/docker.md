@@ -135,8 +135,20 @@ all three. They are values that *parse*, not values that work.
 ### Build revision
 
 The footer shows the panel build's short commit, with the full revision in its
-title. Local builds read Git HEAD automatically. Docker's context excludes
-`.git`, so the frontend accepts `PANEL_BUILD_COMMIT` as a build argument:
+title. Local builds read Git HEAD automatically. Docker and Dokploy Compose
+builds also identify the checked-out revision automatically: `.dockerignore`
+allows only `.git/HEAD`, `.git/refs/`, and `.git/packed-refs` into the build.
+The config can read those pointers without a Git executable or object database,
+including detached HEAD and packed branch refs. Git config, credentials, logs,
+and history remain excluded. The frontend removes the pointers after the build,
+before the runtime image copies the workspace.
+
+This works when Dokploy runs Compose directly, without our `compose:up` helper
+or a platform-specific commit variable. The pointers also change Docker's cache
+key when HEAD moves, even if the source files happen to be identical.
+
+For a source archive or CI context without those pointers, pass the revision
+explicitly. `PANEL_BUILD_COMMIT` takes precedence over automatic detection:
 
 ```bash
 docker build -f apps/frontend/Dockerfile \
@@ -144,9 +156,10 @@ docker build -f apps/frontend/Dockerfile \
 PANEL_BUILD_COMMIT="$(git rev-parse HEAD)" docker compose up -d --build
 ```
 
-`bun run compose:up` supplies the current commit automatically. In a deployment
-platform or CI, set the build argument to the revision being deployed. Without
-it, the image still builds and the footer says `Build unknown`. The revision is
+`bun run compose:up` still supplies the current commit explicitly. If neither
+checkout metadata nor an override is available, the image builds and the footer
+says `Build unknown`. Linked worktree build contexts need the explicit override
+because their Git metadata lives outside the context. The revision is
 compiled into the application, so setting a runtime environment variable cannot
 relabel an existing build. See [site-settings.md](site-settings.md).
 

@@ -28,7 +28,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATABASE_URL=postgres://build:build@localhost:5432/build
 ENV PANEL_ENCRYPTION_KEY=build-only-placeholder-key-32-characters
 ENV BETTER_AUTH_SECRET=build-only-placeholder-auth-secret-32-chars
-RUN bun run --cwd apps/frontend build
+# The filtered Git pointers identify Dokploy/Compose checkouts without a build
+# argument. Remove them after Next has embedded the revision into its bundles.
+RUN bun run --cwd apps/frontend build && rm -rf .git
 
 FROM base AS runtime
 ENV NODE_ENV=production
