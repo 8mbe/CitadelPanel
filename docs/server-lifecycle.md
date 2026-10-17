@@ -529,14 +529,27 @@ A node that is never coming back would otherwise leave rows that can never be
 deleted, whether it is decommissioned hardware or a host that no longer exists.
 `DELETE /api/servers/:id?force=true` is the way out, and it is **admin-only**:
 an owner deleting their own server does not get to decide to leave a running
-container on an operator's node. The UI does not offer it up front either; the
-checkbox appears in the admin delete dialog only after a delete has actually
-been refused.
+container on an operator's node.
 
-A forced delete records what it abandoned in the `server.delete` audit entry,
-and logs the same: the node id, the container id, and any databases it could not
-drop. Once the row is gone that entry is the only thing that knows what is still
-sitting on that node, and manual cleanup starts by reading it.
+The admin delete dialog offers "Remove from panel without contacting the node"
+immediately. Waiting for a failed normal delete would make an operator spend
+the dead node's timeout before reaching the one action that does not need it.
+Selecting this option disables deletion of node files, since the panel cannot
+claim to erase files it never contacts.
+
+A forced delete does not contact the node at all. Retrying container deletion,
+unlinking each peer and dropping each database would repeat the dead host's
+timeout for every resource, which defeats the escape hatch. The panel deletes
+the row and lets its foreign keys remove ports, links and other server metadata.
+It leaves the node's container, recovery record, files, databases and link
+networks alone. If the host returns, those resources need manual cleanup or an
+intentional [recovery scan](node-recovery.md) before the node is used again.
+
+The `server.delete` audit entry records that cleanup was skipped, the node id,
+the known container id, the server-id data directory, database names and link
+pairs. These are possible leftovers, not a claim that a dead host still has
+them. `dataDeleted` remains false even if the original request asked to remove
+files. Once the row is gone that entry is the cleanup receipt.
 
 ## Reinstalling: the rebuild that *is* destructive
 
@@ -628,8 +641,10 @@ activity feed. It is the row someone reads when asking where a world went.
 
 ## A note on the read path
 
-The detail endpoint runs this reconcile on every page load and every poll behind
-one, so it shares a single read of the server row with everything else the view
-needs (`getServerReconciled`). The live resource sample the same page polls does
-*not* go through Docker's blocking stats call. Both are load-bearing, see
-[performance.md](performance.md).
+Initial rendering and the ordinary detail endpoint read only saved panel data.
+After mounting, the provider opts into `?reconcile=true` and polls live status;
+that read shares one server row with everything else the view needs
+(`getServerReconciled`). A node that cannot answer leaves the saved status
+intact and cannot block navigation or management. Live resource sampling is
+independent and avoids Docker's blocking stats call. See
+[performance.md](performance.md) for both boundaries.

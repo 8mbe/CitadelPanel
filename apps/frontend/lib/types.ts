@@ -106,7 +106,7 @@ export interface NodePortPoolEntry {
   createdAt: string;
 }
 
-/** The full node detail response, one round-trip for the whole page. */
+/** Saved node detail. Live usage is optional and loads after these records. */
 export interface NodeDetail {
   node: NodeView;
   allocation: NodeAllocation | null;

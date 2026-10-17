@@ -111,6 +111,12 @@ persistent latch closed until their first provision failed.
 Activation uses the same ten-minute agent request budget as draining. The agent
 may still be finishing an earlier graceful stop when activation arrives; the
 ordinary fifteen-second API timeout is shorter than even one stop's grace period.
+Both paths first probe health with a five-second deadline. An already-offline
+host should fail that probe rather than occupy the node's maintenance queue for
+ten minutes. This does not shorten a reachable agent's graceful shutdown. On a
+failed drain, the page refreshes the saved inactive flag, and an administrator
+can [remove its servers without contacting the node](server-lifecycle.md#forcing-it-and-the-receipt)
+before deleting the now-empty node. Node deletion itself reads only panel data.
 
 Both the panel and agent need this version. An older agent without the
 maintenance endpoint cannot acknowledge shutdown or activation; its error is

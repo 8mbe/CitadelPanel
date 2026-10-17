@@ -86,13 +86,17 @@ export function ServerDataProvider({
   React.useEffect(() => {
     if (recordPollMs === null) return;
 
+    const controller = new AbortController();
     let cancelled = false;
     let inFlight = false;
     const tick = async () => {
       if (inFlight) return;
       inFlight = true;
       try {
-        const fresh = await getServer(initial.id);
+        const fresh = await getServer(initial.id, {
+          reconcile: true,
+          signal: controller.signal,
+        });
         if (cancelled || !fresh) return;
         // The detail record seeds resource usage with zeros. Keep the live
         // sample until the separate stats poll replaces it.
@@ -109,10 +113,14 @@ export function ServerDataProvider({
         inFlight = false;
       }
     };
+    // Power controls set transitional status before their POST is persisted.
+    // Give that request time to land instead of immediately reading its old row.
+    if (status !== "starting" && status !== "stopping") void tick();
     const interval = setInterval(tick, recordPollMs);
 
     return () => {
       cancelled = true;
+      controller.abort();
       clearInterval(interval);
     };
   }, [initial.id, recordPollMs, status]);
@@ -155,7 +163,10 @@ export function ServerDataProvider({
     if (pollIntervalMs === null || !statsWanted) return;
 
     let cancelled = false;
+    let inFlight = false;
     const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const stats = await getServerStats(initial.id);
         if (cancelled || !stats) return;
@@ -167,6 +178,8 @@ export function ServerDataProvider({
         }));
       } catch {
         // A transient sample failure should not tear down the page.
+      } finally {
+        inFlight = false;
       }
     };
 

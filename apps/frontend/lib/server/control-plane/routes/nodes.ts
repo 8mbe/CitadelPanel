@@ -91,7 +91,7 @@ export async function handleListNodes(request: Request): Promise<Response> {
  * GET /api/admin/nodes/:id. Returns one node's full detail for the admin page.
  *
  * Aggregates the node row, its committed allocation, the servers on it (with
- * owner emails and a live usage sample), and an abuse summary, in a single
+ * owner emails), and an abuse summary, in a single
  * response so the page renders in one round-trip.
  *
  * Pure read: it does not probe the agent or record a heartbeat. Live
@@ -99,8 +99,8 @@ export async function handleListNodes(request: Request): Promise<Response> {
  * mount, via the existing `GET /api/admin/nodes/:id/health`. That keeps this
  * endpoint cacheable and free of side effects.
  *
- * Sampling uses a short timeout so a dead node cannot hang the page; the
- * servers/ports/abuse data still renders without the agent being reachable.
+ * `?includeUsage=true` adds a live usage sample. The page asks for that only
+ * after the stored data has rendered, so an offline node never delays controls.
  */
 /**
  * Email per owner id, in one query.
@@ -141,7 +141,7 @@ async function sampleNodeUsage(
   if (serverIds.length === 0) return byServer;
 
   try {
-    for (const sample of await sampleNodeServers(nodeId, serverIds, 10_000)) {
+    for (const sample of await sampleNodeServers(nodeId, serverIds, 5_000)) {
       byServer.set(sample.serverId, {
         cpuPercent: sample.cpuPercent,
         memoryUsageMb: sample.memoryUsageMb,
@@ -160,6 +160,7 @@ export async function handleGetNode(
 ): Promise<Response> {
   await requireAdmin(request);
   const id = requireUuidParam(nodeId, "nodeId");
+  const includeUsage = new URL(request.url).searchParams.get("includeUsage") === "true";
 
   // Everything the detail page needs, in one wave. `getNode` joins it rather
   // than gating it: the other five reads are keyed by node id and return empty
@@ -181,11 +182,13 @@ export async function handleGetNode(
   const ownerIds = [...new Set(servers.map((server) => server.ownerId))];
   const [ownersById, usageByServer] = await Promise.all([
     loadOwnerEmails(ownerIds),
-    sampleNodeUsage(id, servers.map((server) => server.id)),
+    includeUsage
+      ? sampleNodeUsage(id, servers.map((server) => server.id))
+      : Promise.resolve(null),
   ]);
 
   const enriched = servers.map((server) => {
-    const usage = usageByServer.get(server.id);
+    const usage = usageByServer?.get(server.id);
     return {
       ...server,
       ownerEmail: ownersById.get(server.ownerId) ?? "unknown",

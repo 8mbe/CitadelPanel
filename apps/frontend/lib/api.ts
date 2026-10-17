@@ -417,14 +417,20 @@ export function listServers(): Promise<ServerView[]> {
 /**
  * GET /api/servers/:id. One server's detail. Returns null on 404. The
  * response also carries the caller's access (`viewer`), which the server page
- * uses to hide sections the caller holds no permission for.
+ * uses to hide sections the caller holds no permission for. Saved metadata is
+ * node-independent; `reconcile` opts into a live status check after rendering.
  */
-export async function getServer(id: string): Promise<ServerView | null> {
+export async function getServer(
+  id: string,
+  options: { reconcile?: boolean; signal?: AbortSignal } = {},
+): Promise<ServerView | null> {
   try {
     const data = await request<{
       server: ApiServerSummary | null;
       viewer: ServerView["viewer"];
-    }>(`/api/servers/${id}`);
+    }>(`/api/servers/${id}${options.reconcile ? "?reconcile=true" : ""}`, {
+      signal: options.signal,
+    });
     return data.server
       ? { ...toServerView(data.server), viewer: data.viewer }
       : null;
@@ -441,8 +447,8 @@ export async function getServer(id: string): Promise<ServerView | null> {
  *
  * A node that cannot confirm the container was removed fails the delete with a
  * 502 and changes nothing. Retry it once the node is back. `force` (admin-only)
- * drops the panel's record anyway, for a node that is never coming back, and
- * accepts the container and files it leaves behind.
+ * drops the panel's record without any node calls, for a node that is never
+ * coming back. Containers, files, databases and link networks remain there.
  */
 export async function deleteServer(
   id: string,
@@ -479,20 +485,19 @@ export async function getServerStats(id: string): Promise<ServerStats | null> {
 /**
  * POST /api/servers/stats-batch. Returns one live sample per named server.
  *
- * The dashboard polls this once per tick for all its tiles instead of once per
- * server: the endpoint resolves access to every named id in one query and asks
- * each node's agent exactly once, so a page of running servers costs one
- * request per refresh rather than one per tile. Servers with no sample (not
- * accessible, no container, or their node unreachable) are absent from the
- * result.
+ * The dashboard batches tiles by node, so each node answers independently.
+ * The endpoint resolves access to every named id in one query and asks each
+ * node's agent once. Servers with no sample (not accessible, no container, or
+ * their node unreachable) are absent from the result.
  */
 export async function getServersStatsBatch(
   ids: string[],
+  signal?: AbortSignal,
 ): Promise<Record<string, ServerStats>> {
   if (ids.length === 0) return {};
   const data = await request<{ stats: Record<string, ServerStats | null> }>(
     "/api/servers/stats-batch",
-    { method: "POST", body: JSON.stringify({ ids }) },
+    { method: "POST", body: JSON.stringify({ ids }), signal },
   );
   const out: Record<string, ServerStats> = {};
   for (const [id, stats] of Object.entries(data.stats)) {
@@ -2269,12 +2274,16 @@ export async function adminHeartbeatAllNodes(): Promise<
 /**
  * GET /api/admin/nodes/:id. One node's full detail (admin only).
  *
- * Aggregates the node, its allocation, the servers on it (with owner emails and
- * a live usage sample), and an abuse summary. Server rows are mapped through
+ * Aggregates the node, its allocation, the servers on it with owner emails,
+ * and an abuse summary. Opt into live usage separately after rendering these
+ * stored values. Server rows are mapped through
  * {@link toServerView} and then overlaid with the admin-only live fields, which
  * stay `null` when the node was unreachable.
  */
-export async function adminGetNode(nodeId: string): Promise<NodeDetail> {
+export async function adminGetNode(
+  nodeId: string,
+  options?: { includeUsage?: boolean; signal?: AbortSignal },
+): Promise<NodeDetail> {
   const data = await request<{
     node: NodeView;
     allocation: NodeAllocation | null;
@@ -2286,7 +2295,9 @@ export async function adminGetNode(nodeId: string): Promise<NodeDetail> {
     })[];
     abuse: NodeAbuseSummary;
     portPool: NodePortPoolEntry[];
-  }>(`/api/admin/nodes/${nodeId}`);
+  }>(`/api/admin/nodes/${nodeId}${options?.includeUsage ? "?includeUsage=true" : ""}`, {
+    signal: options?.signal,
+  });
 
   return {
     node: data.node,
@@ -2714,10 +2725,18 @@ export interface AdminServerSummary extends ApiServerSummary {
  * `q` searches server names and owner names/emails server-side; omit it for
  * the whole fleet.
  */
-export function adminListServers(q?: string): Promise<AdminServerSummary[]> {
-  const query = q && q.trim().length > 0 ? `?q=${encodeURIComponent(q.trim())}` : "";
+export function adminListServers(
+  q?: string,
+  options?: { includeUsage?: boolean; nodeId?: string; signal?: AbortSignal },
+): Promise<AdminServerSummary[]> {
+  const params = new URLSearchParams();
+  if (q?.trim()) params.set("q", q.trim());
+  if (options?.includeUsage) params.set("includeUsage", "true");
+  if (options?.nodeId) params.set("nodeId", options.nodeId);
+  const query = params.size > 0 ? `?${params}` : "";
   return request<{ servers: AdminServerSummary[] }>(
     `/api/admin/servers${query}`,
+    { signal: options?.signal },
   ).then((data) => data.servers);
 }
 

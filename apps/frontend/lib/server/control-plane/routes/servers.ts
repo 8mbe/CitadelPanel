@@ -124,7 +124,7 @@ export async function handleListServers(request: Request): Promise<Response> {
   return json({ servers });
 }
 
-/** GET /api/servers/:id. Detail view, with a live status reconcile. */
+/** GET /api/servers/:id. Saved detail; ?reconcile=true also checks live status. */
 export async function handleGetServer(
   request: Request,
   serverId: string,
@@ -133,10 +133,10 @@ export async function handleGetServer(
   // Console permission is the baseline "can look at this server" grant.
   const { access } = await requireServerPermission(request, id, "console");
 
-  // One call: the record and the live status reconcile share a single read of
-  // the row and run their independent parts concurrently. See
-  // `getServerReconciled` for why this endpoint is shaped around round trips.
-  const server = await getServerReconciled(id);
+  // Ordinary record reads must work without a node. Live polling explicitly
+  // opts in after the saved details and management controls are on screen.
+  const reconcile = new URL(request.url).searchParams.get("reconcile") === "true";
+  const server = await (reconcile ? getServerReconciled(id) : getServer(id));
 
   // Tell the caller what they can do here so the UI can hide sections they
   // hold no permission for. Owners/admins have an empty permission set, and the
@@ -215,8 +215,8 @@ export async function handleKillServer(
  * Owner-or-admin only: deletion is not a delegable subuser permission.
  * World data is retained unless `?deleteData=true` is passed explicitly.
  *
- * `?force=true` deletes the panel's record even when the node cannot confirm the
- * container is gone, and is **admin-only**. An owner deleting their own server
+ * `?force=true` deletes the panel's record without contacting the node, and is
+ * **admin-only**. An owner deleting their own server
  * does not get to leave a running container and its files on an operator's node.
  * The 502 that a normal delete fails with names this as the way out.
  */
@@ -457,7 +457,7 @@ export async function handleListServerStatsBatch(
   await Promise.all(
     [...serverIdsByNode].map(async ([nodeId, nodeServerIds]) => {
       try {
-        for (const sample of await sampleNodeServers(nodeId, nodeServerIds, 10_000)) {
+        for (const sample of await sampleNodeServers(nodeId, nodeServerIds)) {
           samplesByServer.set(sample.serverId, sample);
         }
       } catch {

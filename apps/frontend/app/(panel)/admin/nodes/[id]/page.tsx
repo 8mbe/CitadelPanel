@@ -101,12 +101,11 @@ import { cn } from "@/lib/utils";
 /**
  * Node detail page.
  *
- * One aggregated fetch (`adminGetNode`) for the whole page, plus a parallel
+ * One stored-metadata fetch (`adminGetNode`) for the whole page, plus a parallel
  * `adminTestNodeConnection` on mount for live reachability, which also records
  * a heartbeat, so simply opening the node keeps its online status fresh. The
  * read endpoint works without the agent being reachable: capacity, servers and
- * ports still render; only the live usage sample and the reachability badge
- * reflect agent availability.
+ * ports render first. Usage loads afterwards and never gates management.
  */
 export default function NodeDetailPage() {
   const params = useParams<{ id: string }>();
@@ -114,6 +113,9 @@ export default function NodeDetailPage() {
   const router = useRouter();
 
   const [detail, setDetail] = React.useState<NodeDetail | null>(null);
+  const [usageLoading, setUsageLoading] = React.useState(true);
+  const detailRequest = React.useRef(0);
+  const loadedNodeId = React.useRef<string | null>(null);
   const [state, setState] = React.useState<"loading" | "ready" | "missing">(
     "loading",
   );
@@ -124,22 +126,71 @@ export default function NodeDetailPage() {
 
   const [refreshKey, setRefreshKey] = React.useState(0);
 
+  const loadDetail = React.useCallback(async (signal: AbortSignal) => {
+    const requestId = ++detailRequest.current;
+    const isCurrent = () => !signal.aborted && requestId === detailRequest.current;
+    const result = await adminGetNode(id, { signal });
+    if (!isCurrent()) return;
+    loadedNodeId.current = id;
+    setDetail((previous) => {
+      const samples = new Map(
+        previous?.node.id === id
+          ? previous.servers.map((server) => [server.id, server])
+          : [],
+      );
+      return {
+        ...result,
+        servers: result.servers.map((server) => {
+          const sample = samples.get(server.id);
+          return sample
+            ? { ...server, cpuPercent: sample.cpuPercent, memoryUsageMb: sample.memoryUsageMb, diskUsageMb: sample.diskUsageMb }
+            : server;
+        }),
+      };
+    });
+    setState("ready");
+    setUsageLoading(result.servers.length > 0);
+    if (result.servers.length === 0) return;
+
+    void adminGetNode(id, { includeUsage: true, signal }).then((live) => {
+      if (!isCurrent()) return;
+      const samples = new Map(live.servers.map((server) => [server.id, server]));
+      setDetail((current) => current && {
+        ...current,
+        servers: current.servers.map((server) => {
+          const sample = samples.get(server.id);
+          return sample
+            ? { ...server, cpuPercent: sample.cpuPercent, memoryUsageMb: sample.memoryUsageMb, diskUsageMb: sample.diskUsageMb }
+            : server;
+        }),
+      });
+    }).catch(() => {
+      // A failed live read leaves the saved node and server details usable.
+    }).finally(() => {
+      if (isCurrent()) setUsageLoading(false);
+    });
+  }, [id]);
+
   React.useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     (async () => {
       try {
-        const result = await adminGetNode(id);
-        if (cancelled) return;
-        setDetail(result);
-        setState("ready");
+        await loadDetail(controller.signal);
       } catch {
-        // 404 (missing/inaccessible) and transport failures both render the
-        // missing state rather than crashing, matching the server detail shell.
-        if (cancelled) return;
-        setState("missing");
+        if (controller.signal.aborted) return;
+        // A failed refresh keeps an already-rendered record. One effect owns
+        // initial reads and refreshes so a superseded failure cannot replace
+        // a newer success, or leave the initial skeleton waiting forever.
+        setUsageLoading(false);
+        setState(loadedNodeId.current === id ? "ready" : "missing");
       }
     })();
 
+    return () => controller.abort();
+  }, [id, loadDetail, refreshKey]);
+
+  React.useEffect(() => {
+    let cancelled = false;
     // Probe in parallel: live reachability + an implicit heartbeat.
     (async () => {
       try {
@@ -159,24 +210,6 @@ export default function NodeDetailPage() {
       cancelled = true;
     };
   }, [id]);
-
-  // Reload the read data when a probe or management action invalidates it.
-  React.useEffect(() => {
-    if (refreshKey === 0) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const result = await adminGetNode(id);
-        if (cancelled) return;
-        setDetail(result);
-      } catch {
-        // Best-effort refresh; the existing detail stays on screen.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [id, refreshKey]);
 
   if (state === "loading") {
     return (
@@ -217,6 +250,7 @@ export default function NodeDetailPage() {
   return (
     <NodeDetailBody
       detail={detail}
+      usageLoading={usageLoading}
       health={health}
       onDelete={() => router.push("/admin/nodes")}
       onChanged={() => setRefreshKey((k) => k + 1)}
@@ -271,12 +305,14 @@ function ReachabilityBadge({
 
 function NodeDetailBody({
   detail,
+  usageLoading,
   health,
   onDelete,
   onChanged,
   onTested,
 }: {
   detail: NodeDetail;
+  usageLoading: boolean;
   health: NodeHealthResult | null;
   onDelete: () => void;
   onChanged: () => void | Promise<void>;
@@ -375,7 +411,7 @@ function NodeDetailBody({
         </div>
       )}
 
-      <CapacityCards detail={detail} />
+      <CapacityCards detail={detail} usageLoading={usageLoading} />
 
       {/* Loads itself: the database status is an agent round trip and does not
         belong on this page's critical path. */}
@@ -396,7 +432,7 @@ function NodeDetailBody({
 
       <NodeRecoveryCard nodeId={detail.node.id} onChanged={onChanged} />
 
-      <ServersCard servers={servers} />
+      <ServersCard servers={servers} usageLoading={usageLoading} />
 
       <PortsCard ports={ports} />
 
@@ -924,7 +960,7 @@ function CapacityCard({
   );
 }
 
-function CapacityCards({ detail }: { detail: NodeDetail }) {
+function CapacityCards({ detail, usageLoading }: { detail: NodeDetail; usageLoading: boolean }) {
   const { node, allocation, servers } = detail;
 
   // Live usage: sum sampled CPU (converted to cores), memory and disk across
@@ -1000,7 +1036,9 @@ function CapacityCards({ detail }: { detail: NodeDetail }) {
         />
       </div>
       <p className="text-xs text-muted-foreground">
-        {hasSamples ? (
+        {usageLoading ? (
+          <>Loading live usage. Allocated resources are shown above.</>
+        ) : hasSamples ? (
           <>
             <span className="tabular-nums">{runningSampled}</span> of{" "}
             <span className="tabular-nums">{totalServers}</span> server
@@ -1154,8 +1192,10 @@ function AbuseStat({
 
 function ServersCard({
   servers,
+  usageLoading,
 }: {
   servers: NodeDetail["servers"];
+  usageLoading: boolean;
 }) {
   return (
     <Card>
@@ -1165,7 +1205,7 @@ function ServersCard({
           <span className="text-muted-foreground">({servers.length})</span>
         </CardTitle>
         <CardDescription>
-          Game servers hosted on this node, with a live usage sample.
+          Game servers hosted on this node. Live usage loads separately.
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0">
@@ -1220,12 +1260,12 @@ function ServersCard({
                     <TableCell className="text-right tabular-nums">
                       {server.cpuPercent !== null
                         ? `${Math.round(server.cpuPercent)}%`
-                        : "Unknown"}
+                        : usageLoading ? "Loading…" : "Unknown"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {server.memoryUsageMb !== null
                         ? formatMb(server.memoryUsageMb)
-                        : "Unknown"}
+                        : usageLoading ? "Loading…" : "Unknown"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">
                       {primary ? primary.port : "None"}

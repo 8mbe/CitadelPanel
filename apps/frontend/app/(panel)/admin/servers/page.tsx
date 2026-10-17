@@ -43,7 +43,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Field, FieldLabel } from "@/components/ui/field";
+import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
@@ -76,14 +76,14 @@ function hasActiveMigration(server: AdminServerSummary) {
  * Admin view of every server on the panel, across all users. This is also the
  * only place a server can be created: provisioning is an admin action.
  *
- * The listing comes from the backend and carries owner email plus a live CPU /
- * memory sample per server (null when the node is unreachable). Each row has a
+ * The listing carries stored metadata and owner emails. Live CPU / memory
+ * samples load independently per node after the rows are visible. Each row has a
  * management menu: edit resource limits, suspend/unsuspend, or delete.
  *
  * The search box matches a server's name or its owner's name/email, and is
  * resolved server-side: an admin looking for one customer's server should not
- * have to know which of the two they are typing. It is debounced because every
- * listing samples live usage from each node the matches live on.
+ * have to know which of the two they are typing. Search changes are debounced
+ * before refreshing metadata and live samples.
  */
 export default function AdminServersPage() {
   const [servers, setServers] = React.useState<AdminServerSummary[]>([]);
@@ -104,17 +104,40 @@ export default function AdminServersPage() {
   );
 
   const trimmed = query.trim();
+  const previousQuery = React.useRef(trimmed);
 
   React.useEffect(() => {
     let cancelled = false;
-    // Debounced: a listing costs one usage sample per node the matches sit on,
-    // so it should not fire on every keystroke.
+    const controller = new AbortController();
+    const delay = previousQuery.current === trimmed ? 0 : 250;
+    previousQuery.current = trimmed;
     const handle = setTimeout(async () => {
       try {
-        const result = await adminListServers(trimmed || undefined);
+        const result = await adminListServers(trimmed || undefined, {
+          signal: controller.signal,
+        });
         if (cancelled) return;
         setServers(result);
         setError(null);
+
+        for (const nodeId of new Set(result.map((server) => server.nodeId))) {
+          void adminListServers(trimmed || undefined, {
+            includeUsage: true,
+            nodeId,
+            signal: controller.signal,
+          }).then((samples) => {
+            if (cancelled) return;
+            const byId = new Map(samples.map((server) => [server.id, server]));
+            setServers((current) => current.map((server) => {
+              const sample = byId.get(server.id);
+              return sample && server.nodeId === nodeId
+                ? { ...server, cpuPercent: sample.cpuPercent, memoryUsageMb: sample.memoryUsageMb }
+                : server;
+            }));
+          }).catch(() => {
+            // Stored rows and their management actions remain available.
+          });
+        }
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof ApiError ? err.message : "Failed to load servers.");
@@ -126,10 +149,11 @@ export default function AdminServersPage() {
           setLoadedQuery(trimmed);
         }
       }
-    }, 250);
+    }, delay);
 
     return () => {
       cancelled = true;
+      controller.abort();
       clearTimeout(handle);
     };
   }, [trimmed, refreshKey]);
@@ -571,10 +595,6 @@ function DeleteServerForm({
   const [force, setForce] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  // Forcing is only offered once a delete has actually been refused by the node.
-  // It is the answer to a node that is gone for good, not a checkbox to tick on
-  // the way past a node that is merely restarting.
-  const [canForce, setCanForce] = React.useState(false);
 
   const confirm = async () => {
     setSubmitting(true);
@@ -584,7 +604,6 @@ function DeleteServerForm({
       onDeleted();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to delete server.");
-      setCanForce(true);
     } finally {
       setSubmitting(false);
     }
@@ -596,14 +615,17 @@ function DeleteServerForm({
         <DialogHeader>
           <DialogTitle>Delete server</DialogTitle>
           <DialogDescription>
-            {`Permanently delete "${target.name}" and its container. This cannot be undone.`}
+            {force
+              ? `Remove "${target.name}" from the panel and leave its resources on the node. This cannot be undone.`
+              : `Permanently delete "${target.name}" and its container. This cannot be undone.`}
           </DialogDescription>
         </DialogHeader>
         <ServerIdentity target={target} />
-        <Field orientation="horizontal">
+        <Field orientation="horizontal" data-disabled={force || submitting}>
           <Checkbox
             id="delete-data"
             checked={deleteData}
+            disabled={force || submitting}
             onCheckedChange={(checked) => setDeleteData(checked === true)}
           />
           <FieldLabel htmlFor="delete-data" className="font-normal">
@@ -611,19 +633,28 @@ function DeleteServerForm({
           </FieldLabel>
         </Field>
         {error && <p className="text-sm text-destructive">{error}</p>}
-        {canForce && (
-          <Field orientation="horizontal">
-            <Checkbox
-              id="delete-force"
-              checked={force}
-              onCheckedChange={(checked) => setForce(checked === true)}
-            />
+        <Field orientation="horizontal">
+          <Checkbox
+            id="delete-force"
+            aria-describedby="delete-force-description"
+            checked={force}
+            disabled={submitting}
+            onCheckedChange={(checked) => {
+              setForce(checked === true);
+              if (checked) setDeleteData(false);
+            }}
+          />
+          <FieldContent>
             <FieldLabel htmlFor="delete-force" className="font-normal">
-              Force: delete the panel&apos;s record anyway, leaving the container
-              and files on the node
+              Remove from panel without contacting the node
             </FieldLabel>
-          </Field>
-        )}
+            <FieldDescription id="delete-force-description">
+              Use this for a node that is permanently offline. Containers, files,
+              databases and link networks remain on the node and need manual cleanup
+              if it returns.
+            </FieldDescription>
+          </FieldContent>
+        </Field>
         <DialogFooter>
           <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
           <Button variant="destructive" onClick={confirm} disabled={submitting}>

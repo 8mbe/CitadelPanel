@@ -8,6 +8,7 @@
  */
 
 import {
+  NODE_READ_TIMEOUT_MS,
   nodeRequest,
   nodeRequestFor,
   nodeRequestRaw,
@@ -250,10 +251,12 @@ export async function deleteServerContainer(
 export async function getServerState(
   nodeId: string,
   serverId: string,
+  timeoutMs = NODE_READ_TIMEOUT_MS,
 ): Promise<ContainerState> {
   const result = await nodeRequest<{ state: ContainerState }>(
     nodeId,
     `/v1/servers/${serverId}/state`,
+    { timeoutMs },
   );
   return result.state;
 }
@@ -278,6 +281,7 @@ export async function getServerStats(
   const result = await nodeRequest<{ stats: ContainerStats | null }>(
     nodeId,
     `/v1/servers/${serverId}/stats`,
+    { timeoutMs: NODE_READ_TIMEOUT_MS },
   );
   return result.stats;
 }
@@ -303,13 +307,13 @@ export async function sendServerCommand(
  *   number that matters is not how slow a busy node can be but how long the
  *   *caller* can afford to wait for a node that will never answer: the watcher
  *   derives it from its sweep interval, and the admin node detail page keeps it
- *   short so a dead node cannot hold the page open. The default is the
- *   generous one, for a caller with nothing better to do than wait.
+ *   short so a dead node cannot hold the page open. Interactive callers use
+ *   the short default; unattended sweeps supply their own budget.
  */
 export async function sampleNodeServers(
   nodeId: string,
   serverIds: string[],
-  timeoutMs = 60_000,
+  timeoutMs = NODE_READ_TIMEOUT_MS,
 ): Promise<ServerStatsSample[]> {
   const result = await nodeRequest<{ samples: ServerStatsSample[] }>(
     nodeId,
@@ -334,7 +338,7 @@ export async function sampleNodeServers(
 export async function getNodeServerStates(
   nodeId: string,
   serverIds: string[],
-  timeoutMs = 15_000,
+  timeoutMs = NODE_READ_TIMEOUT_MS,
 ): Promise<Record<string, ContainerState>> {
   const result = await nodeRequest<{ states: Record<string, ContainerState> }>(
     nodeId,

@@ -71,29 +71,31 @@ mounted. The declaration lives in the component that renders the numbers, so
 moving the cards to another section moves the poll with them.
 
 Status polling is independent of resource subscriptions. Every server tab
-reads the reconciled record every five seconds while running and every 30
-seconds while stopped, errored or suspended. A resource sample has no status,
-so it cannot tell the header or power controls that the game crashed. The
+asks for a reconciled record after mounting, then every five seconds while
+running and every 30 seconds while stopped, errored or suspended. A resource
+sample has no status, so it cannot tell the header or power controls that the game crashed. The
 dashboard also re-reads its list every five seconds to show the fleet sweeper's
 corrections. These record reads retain the most recent resource sample so the
 seed zeros do not flicker through the meters. See `server-lifecycle.md`.
 
-The layout's seed fetch used to serve the same idea, until the layout stopped
-fetching at all. See Rule 3 for what replaced it.
+The layout seeds saved metadata without asking the node. See Rule 3 for why
+live status waits until after the provider mounts.
 
-### One request per tick, not per tile
+### Batch within a node, refresh nodes independently
 
-The dashboard's tiles poll every few seconds while a server is running, and the
-per-server `/stats` endpoint costs one authenticated round trip each. An owner
-with ten running servers paid ten requests per tick, each resolving access,
-re-reading the row, and reaching its node separately.
+The dashboard's tiles poll every few seconds while a server is running. One
+request per tile repeats authorization and row reads; one request for the whole
+fleet makes healthy nodes wait for the slowest node's timeout. The browser
+instead groups tiles by node, with at most 50 server ids per request. Each
+group applies its results as soon as that node answers and allows only one
+request in flight. Changing the set of running servers aborts the old requests.
 `POST /api/servers/stats-batch` (`routes/servers.ts`) resolves the caller's
 access to every named server in **one** statement (the subuser grant LEFT
 JOINed on, same decision `resolveServerAccess` makes), groups the allowed ones
 by node so each node's agent is asked exactly once, and returns a map. Servers
 the caller cannot reach are simply absent, the same hide-existence rule the
-individual endpoint applies with its 404. The abuse watcher's sweep had this
-shape first; the dashboard endpoint is the same idea pointed at owners.
+individual endpoint applies with its 404. The endpoint still supports callers
+batching across nodes, but the dashboard keeps each node's response independent.
 
 The sweep goes one step further: nodes are sampled concurrently, up to four at
 a time (`security/watcher.ts`). Nodes are independent machines, so waiting for
@@ -120,6 +122,16 @@ deliberately not power actions or streams: pulling an image, stopping a game
 server with a grace period, and an attached console are all legitimately slow.
 A stalled read now becomes a fast, explicit failure, which the panel can report
 and back off from instead of waiting on it.
+
+The panel also caps interactive state and resource reads at five seconds,
+including consuming a JSON response body. A caller's cancellation signal does
+not disable that deadline. Polls skip a tick while their previous read is still
+pending, rather than accumulating requests to a dead host. Concurrent health
+checks for the same node connection share their pending request; completed
+results are not cached, so an operator's next retry asks again. Updating a
+node's connection invalidates this pending check too. Long mutations and streams
+retain their own budgets because an image pull or a graceful stop can take much
+longer than an observation.
 
 ### A node that is down must not cost anything per tick
 
@@ -166,8 +178,9 @@ Everything a server detail view needs descends from one `servers` row. Read it
 once and pass it down; do not let each helper re-read the columns it happens to
 want.
 
-`getServerReconciled` is the worked example. It loads the row (joining
-`nodes.hostname` and `blueprints.key` in the same statement), then runs the
+`getServer` loads the saved detail without touching its node. The live-only
+`getServerReconciled` loads the row, joining `nodes.hostname` and `blueprints.key`
+in the same statement, then runs the
 ports lookup, the plugin-support probe, and the node's status reconcile
 concurrently. They are independent of each other, so the endpoint is two
 database round trips and one node round trip deep instead of a chain of seven.
@@ -178,19 +191,25 @@ rather than re-reading it.
 
 The list endpoints resolve every row's ports in one `WHERE server_id = ANY(...)`
 (`loadPortsForMany`) and every owner in one `WHERE id = ANY(...)`. The admin
-fleet list groups servers by node so each node's agent is asked exactly once
-(`sampleNodeServers`), rather than once per server. A per-row query inside a
-loop is the failure mode this codebase keeps rediscovering. See the history of
+fleet list's optional usage read groups servers by node so each node's agent is
+asked exactly once (`sampleNodeServers`), rather than once per server. A per-row
+query inside a loop is the failure mode this codebase keeps rediscovering. See the history of
 `summariesFromRows`.
 
 The same list's search (`GET /api/admin/servers?q=`) is filtered in SQL, in
-`listAllServers`, rather than in the page. The rows are cheap; the sampling that
-follows them is not, so narrowing the set before the fan-out means a search also
-narrows how many node agents get asked. For the same reason the admin page
-debounces the query by 250ms instead of refetching per keystroke: the users
-directory can afford a request per character because it is one query, and this
-page cannot because it is one query plus a round trip to every node still in
-the result.
+`listAllServers`, rather than in the page. This endpoint returns metadata and
+null usage by default, so it never needs an agent to render management actions.
+After rendering those rows, the browser requests
+`?includeUsage=true&nodeId=<id>` separately for each node and merges only usage
+fields. Both search and node scope apply in SQL before loading ports. A dead
+node therefore delays only its own sample. Search changes are debounced by
+250ms; the initial list and explicit refreshes start immediately. Superseded
+responses cannot overwrite a newer search or refresh.
+
+The node detail endpoint follows the same contract: its default response is
+saved capacity, server identities, owners, ports and abuse data. The page asks
+for `?includeUsage=true` after rendering them, with reachability checked
+independently. Missing live usage stays unknown rather than becoming zero.
 
 Batching also means one statement per *write* of a set. `writeEnvValues` upserts
 a whole env block through one `UNNEST`, because provisioning writes a
@@ -273,24 +292,30 @@ Two cheap habits keep this down:
   a previous measurement keeps polling, so close every existing target and let
   the old page go quiet before counting.
 
-### The fix that worked: resolve in a server component, seed the provider
+### Seed the provider with saved metadata, ask the node after mounting
 
 The server page was the worst offender: its layout was a client component that
 gated every section on its own `GET /api/servers/:id`, so nothing else on the
 page could even begin until that round trip came back. The layout is now a
 server component (`resolveServerView` in `lib/server/server-view.ts`) that
-authorizes and reads the record during rendering, the same move the panel
+authorizes and reads the saved record during rendering, the same move the panel
 layout already made for the session, and seeds `ServerDataProvider` with it.
 Sections fetch their own data from their first mount; the shell's fetch no
-longer exists to wait behind.
+longer exists to wait behind. This seed must use `getServer`, which reads only
+the panel database. Reconciliation during rendering made every section wait for
+a dead node before any of those independent sections could mount.
 
-One trade-off was accepted: the old client layout also pre-fetched a stats
-sample alongside the record (for sections that show one), because it knew the
-pathname and the server component does not. The first sample now comes from the
-provider's existing demand-driven poll instead. That is one poll later than the
-old seed, against every section loading ~a round trip sooner. If that ever
-matters, the seed can come back as a prop passed down from each section route,
-which knows what it renders.
+`GET /api/servers/:id` also returns saved metadata by default. The provider opts
+into `?reconcile=true` after mounting and on its status poll. Mutations refresh
+saved metadata without paying for another node lookup. A live lookup that fails
+keeps the last stored status; a failed observation is not evidence that the game
+stopped. Immediate polling skips optimistic `starting`/`stopping` transitions so
+it cannot replace them with a row read before the power request lands.
+
+The provider starts its resource sample immediately when a stats consumer
+mounts, independently of the status lookup. The layout does not know which
+section needs usage, so sampling there would make every tab pay for live data
+that only the console displays.
 
 ## What this does not fix
 

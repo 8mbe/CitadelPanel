@@ -38,6 +38,9 @@ interface CachedConnection {
 
 const connectionCache = new Map<string, CachedConnection>();
 
+/** Live reads must finish before the next poll instead of queueing behind it. */
+export const NODE_READ_TIMEOUT_MS = 5_000;
+
 /** Cheap identity for "has this node's connection config changed?". */
 function connectionFingerprint(node: NodeWithSecrets): string {
   return `${node.apiUrl}|${node.apiToken?.length ?? 0}`;
@@ -66,7 +69,7 @@ function toConnection(node: NodeWithSecrets): CachedConnection {
   const fingerprint = connectionFingerprint(node);
   const cached = connectionCache.get(node.id);
 
-  if (cached && cached.fingerprint === fingerprint) return cached;
+  if (cached && cached.fingerprint === fingerprint && cached.token === node.apiToken) return cached;
 
   const connection: CachedConnection = {
     baseUrl: normalizeApiUrl(node.apiUrl),
@@ -86,6 +89,7 @@ function toConnection(node: NodeWithSecrets): CachedConnection {
  */
 export function invalidateNodeConnection(nodeId: string): void {
   connectionCache.delete(nodeId);
+  healthChecks.delete(nodeId);
   invalidateNode(nodeId);
 }
 
@@ -106,13 +110,12 @@ export interface NodeRequestOptions {
   /** Override the default timeout, for calls that are legitimately slow. */
   timeoutMs?: number;
   /**
-   * Abort the call from the caller's own signal instead of a deadline.
+   * Also abort a JSON call when its caller cancels. The operation deadline
+   * remains in force, so an open browser tab cannot keep a dead-node read alive.
    *
-   * For an endpoint that is *meant* to stay open forever (the console SSE
-   * stream), a timeout is not a safety net but a guaranteed disconnect, so
-   * passing a signal replaces the default deadline rather than adding to it.
-   * The caller forwards the browser's `request.signal`, so a closed console
-   * tab propagates all the way through the agent to the Docker log stream.
+   * `nodeRequestRaw` is the exception: for a stream meant to stay open forever
+   * (console SSE), a supplied signal replaces the deadline. A closed console
+   * tab still propagates through the agent to its Docker log stream.
    */
   signal?: AbortSignal;
 }
@@ -232,13 +235,15 @@ export async function nodeRequestFor<T>(
 
   let response: Response;
   try {
+    const deadline = AbortSignal.timeout(options.timeoutMs ?? env.nodeApiTimeoutMs);
     response = await fetch(url, {
       method: options.method ?? "GET",
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      signal: AbortSignal.timeout(options.timeoutMs ?? env.nodeApiTimeoutMs),
+      signal: options.signal ? AbortSignal.any([options.signal, deadline]) : deadline,
     });
   } catch (error) {
+    if (options.signal?.aborted) throw error;
     throw agentCallFailed(node, path, options, error);
   }
 
@@ -255,7 +260,15 @@ export async function nodeRequestFor<T>(
   }
 
   if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+  try {
+    return (await response.json()) as T;
+  } catch (error) {
+    if (options.signal?.aborted) throw error;
+    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+      throw agentCallFailed(node, path, options, error);
+    }
+    throw error;
+  }
 }
 
 /** Call a node's agent by node id. */
@@ -327,6 +340,7 @@ export async function nodeRequestRaw(
     }
     response = await fetch(url, init);
   } catch (error) {
+    if (options.signal?.aborted) throw error;
     throw agentCallFailed(node, path, options, error);
   }
 
@@ -430,6 +444,13 @@ interface AgentHealthResponse {
   transferTools?: boolean;
 }
 
+interface PendingHealthCheck {
+  connection: CachedConnection;
+  result: Promise<NodeHealth>;
+}
+
+const healthChecks = new Map<string, PendingHealthCheck>();
+
 /**
  * Ping a node's agent.
  *
@@ -437,11 +458,32 @@ interface AgentHealthResponse {
  * admin UI needs to display, not an exception to propagate.
  */
 export async function checkNodeHealth(node: NodeWithSecrets): Promise<NodeHealth> {
+  let connection: CachedConnection;
+  try {
+    connection = toConnection(node);
+  } catch (error) {
+    return { reachable: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  const pending = healthChecks.get(node.id);
+  if (pending?.connection === connection) return pending.result;
+
+  const result = readNodeHealth(node);
+  const check = { connection, result };
+  healthChecks.set(node.id, check);
+  try {
+    return await result;
+  } finally {
+    if (healthChecks.get(node.id) === check) healthChecks.delete(node.id);
+  }
+}
+
+/** Share only in-flight probes; an explicit retry always asks the agent again. */
+async function readNodeHealth(node: NodeWithSecrets): Promise<NodeHealth> {
   try {
     const health = await nodeRequestFor<AgentHealthResponse>(node, "/v1/health", {
       // Health is polled for every node on the admin page; a slow node must not
       // hold that request open for the full default timeout.
-      timeoutMs: 5000,
+      timeoutMs: NODE_READ_TIMEOUT_MS,
     });
 
     return {

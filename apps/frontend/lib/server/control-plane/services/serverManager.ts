@@ -405,22 +405,25 @@ export async function listAccessibleServers(userId: string): Promise<ServerSumma
  * in the page) also keeps the admin listing's per-node usage sampling
  * proportional to the matches, not to the whole fleet.
  */
-export async function listAllServers(search?: string): Promise<ServerSummary[]> {
+export async function listAllServers(
+  search?: string,
+  nodeId?: string,
+): Promise<ServerSummary[]> {
   const q = search?.trim() ?? "";
   const pattern = q.length > 0 ? `%${q}%` : null;
+  const matchesSearch = pattern !== null
+    ? sql`(s.name ILIKE ${pattern}
+            OR u.email ILIKE ${pattern}
+            OR u.name ILIKE ${pattern})`
+    : sql`true`;
   const rows = (await sql`
     SELECT s.*, n.hostname AS node_hostname, b.key AS blueprint_key
     FROM servers s
     JOIN nodes n ON n.id = s.node_id
     JOIN blueprints b ON b.id = s.blueprint_id
     JOIN "user" u ON u.id = s.owner_id
-    ${
-      pattern !== null
-        ? sql`WHERE s.name ILIKE ${pattern}
-                 OR u.email ILIKE ${pattern}
-                 OR u.name ILIKE ${pattern}`
-        : sql``
-    }
+    WHERE ${matchesSearch}
+      AND ${nodeId ? sql`s.node_id = ${nodeId}` : sql`true`}
     ORDER BY s.created_at DESC
   `) as ServerRow[];
   return summariesFromRows(rows);
@@ -1620,10 +1623,10 @@ export async function unsuspendServer(
  * node is back. Retrying is safe because the agent's delete is idempotent.
  *
  * `force` is the escape hatch for the node that is never coming back
- * (decommissioned hardware, a lost host). It accepts the orphan knowingly, and
- * is admin-only for that reason, see `handleDeleteServer`. What was left behind
- * is written into the audit entry, because after the row is gone that log is the
- * only record of what still needs cleaning up by hand.
+ * (decommissioned hardware, a lost host). It skips node cleanup entirely rather
+ * than waiting through its timeouts again. It accepts the orphan knowingly, and
+ * is admin-only for that reason, see `handleDeleteServer`. The audit entry
+ * keeps a receipt of possible leftovers after their metadata is forgotten.
  *
  * A row with no container is exempt from the gate: there is nothing on the node
  * that can run or hold a port, so an unreachable node must not strand a failed
@@ -1640,11 +1643,55 @@ export async function deleteServer(
   assertNotMigrating(server);
   const previousStatus = server.status;
   const cleanupMustSucceed =
-    !force && (server.container_id !== null || deleteData);
+    server.container_id !== null || deleteData;
 
   // The row is about to go; a watch still polling it would only race the
   // delete to write a failure onto a server that no longer exists.
   cancelStartWatch(serverId);
+
+  if (force) {
+    // The operator explicitly chose to forget this server. Any node call here
+    // would turn that escape hatch into another wait for a dead host, including
+    // one timeout per link or database. Read the cleanup receipt from the panel
+    // alone; the FK cascades remove the link and database records below.
+    const [databases, links] = await Promise.all([
+      sql<{ db_name: string }[]>`SELECT db_name FROM server_databases WHERE server_id = ${serverId}`,
+      sql<{ server_id: string; target_id: string }[]>`
+        SELECT server_id, target_id FROM server_links
+        WHERE server_id = ${serverId} OR target_id = ${serverId}
+      `,
+    ]);
+    const orphaned = {
+      ...(server.container_id ? { container: server.container_id } : {}),
+      dataDirectory: serverId,
+      databases: databases.map((row) => row.db_name),
+      links: links.map((row) => ({
+        serverId: row.server_id,
+        targetId: row.target_id,
+      })),
+    };
+
+    await sql`DELETE FROM servers WHERE id = ${serverId}`;
+    console.warn(
+      `[serverManager] ${serverId} forgotten without node cleanup on ${server.node_id}:`,
+      orphaned,
+    );
+    await recordAudit({
+      userId: actorId,
+      action: "server.delete",
+      targetType: "server",
+      targetId: serverId,
+      metadata: {
+        forced: true,
+        nodeCleanupSkipped: true,
+        nodeId: server.node_id,
+        dataDeleted: false,
+        dataDeleteRequested: deleteData,
+        orphaned,
+      },
+    });
+    return;
+  }
 
   await setStatus(serverId, "deleting");
 
@@ -1661,7 +1708,7 @@ export async function deleteServer(
     );
   }
 
-  /** What the node still holds, when a forced delete walks away from it. */
+  /** What the node could not clean up before its panel record disappears. */
   const orphaned: { container?: string; databases?: string[] } = {};
 
   try {
@@ -1682,9 +1729,7 @@ export async function deleteServer(
     }
 
     console.error(
-      `[serverManager] node cleanup failed for ${serverId} (${
-        force ? "forced" : "no container"
-      }, continuing):`,
+      `[serverManager] node cleanup failed for ${serverId} (no container, continuing):`,
       error,
     );
     if (server.container_id) orphaned.container = server.container_id;
@@ -1742,7 +1787,6 @@ export async function deleteServer(
     targetId: serverId,
     metadata: {
       dataDeleted: deleteData,
-      ...(force ? { forced: true } : {}),
       // The row is gone after this; the audit entry is the only place an
       // operator can later find what is still sitting on the node.
       ...(leftBehind ? { nodeId: server.node_id, orphaned } : {}),
@@ -1789,8 +1833,9 @@ export async function reconcileServerStatus(serverId: string): Promise<ServerSta
 /**
  * {@link getServer} plus a live status reconcile, off a single read of the row.
  *
- * This is the server detail endpoint, so it runs on every page load and every
- * poll behind one. The ports, the plugin-support probe, and asking the node
+ * The detail endpoint uses this only when a caller opts into live status;
+ * initial rendering uses the saved record instead. The ports, the
+ * plugin-support probe, and asking the node
  * what the container is actually doing all follow from the row, and each is
  * independent of the others, so they all run at once; the whole endpoint is two
  * database round trips and one node round trip deep.

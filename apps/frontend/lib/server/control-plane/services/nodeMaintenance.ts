@@ -10,6 +10,11 @@ const MAINTENANCE_TIMEOUT_MS = 10 * 60_000;
 
 /** Stop game, install, DB, and tool containers while keeping the agent reachable. */
 async function enterNodeMaintenance(nodeId: string): Promise<void> {
+  // Keep the long budget for a real graceful shutdown, but first establish
+  // that the agent answers. Otherwise a dead host holds both the admin request
+  // and this node's maintenance queue for ten minutes. Drain intent is already
+  // stored, so a failed probe still leaves the node out of placement.
+  await nodeRequest(nodeId, "/v1/health", { timeoutMs: 5_000 });
   const servers = await sql`SELECT id FROM servers WHERE node_id = ${nodeId}` as { id: string }[];
   for (const server of servers) cancelStartWatch(server.id);
   await nodeRequest(nodeId, "/v1/maintenance", {
@@ -28,6 +33,7 @@ async function enterNodeMaintenance(nodeId: string): Promise<void> {
 
 /** Clear the agent latch before advertising the node as active. */
 async function leaveNodeMaintenance(nodeId: string): Promise<void> {
+  await nodeRequest(nodeId, "/v1/health", { timeoutMs: 5_000 });
   await nodeRequest(nodeId, "/v1/maintenance", {
     method: "POST", body: { enabled: false }, timeoutMs: MAINTENANCE_TIMEOUT_MS,
   });

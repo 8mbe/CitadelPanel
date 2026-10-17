@@ -8,7 +8,7 @@ import {
   accessAllows,
   resolveServerAccess,
 } from "@/lib/server/control-plane/auth/rbac";
-import { getServerReconciled } from "@/lib/server/control-plane/services/serverManager";
+import { getServer } from "@/lib/server/control-plane/services/serverManager";
 import type { ServerView } from "@/lib/types";
 
 /**
@@ -38,7 +38,9 @@ export async function resolveServerView(
   if (!user) return null;
 
   const accessPromise = resolveServerAccess(user, serverId);
-  const summaryPromise = getServerReconciled(serverId).catch(() => null);
+  // Rendering depends only on panel metadata. The provider asks for live node
+  // status after mounting, so an unavailable agent cannot hold every tab up.
+  const summaryPromise = getServer(serverId).catch(() => null);
 
   const access = await accessPromise;
   if (!access || !accessAllows(access, "console")) return null;

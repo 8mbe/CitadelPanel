@@ -1003,9 +1003,9 @@ export async function handleListAuditLogs(request: Request): Promise<Response> {
 /**
  * GET /api/admin/servers. Fleet-wide view for the admin dashboard.
  *
- * Extends the normal summary rows with owner context, the latest migration,
- * and live CPU and memory usage sampled from each node's agent (with graceful
- * fallback when a node is unreachable or a container is missing).
+ * Returns stored summaries with owner context and the latest migration without
+ * contacting any agent. `?includeUsage=true` opts into live CPU and memory
+ * sampling; `?nodeId=` scopes that read so clients can load nodes independently.
  *
  * Sampling is batched **per node** rather than per server: one request per node
  * regardless of how many servers it hosts, so this page does not slow down
@@ -1020,8 +1020,13 @@ export async function handleListAdminServers(request: Request): Promise<Response
 
   const url = new URL(request.url);
   const q = url.searchParams.get("q")?.trim() ?? "";
+  const includeUsage = url.searchParams.get("includeUsage") === "true";
+  const nodeIdParam = url.searchParams.get("nodeId");
+  const requestedNodeId = nodeIdParam === null
+    ? null
+    : requireUuidParam(nodeIdParam, "nodeId");
 
-  const servers = await listAllServers(q);
+  const servers = await listAllServers(q, requestedNodeId ?? undefined);
 
   const ownerIds = [...new Set(servers.map((server) => server.ownerId))];
   const ownersById = new Map<string, { email: string; name: string | null }>();
@@ -1068,10 +1073,12 @@ export async function handleListAdminServers(request: Request): Promise<Response
 
   // Group by node so each node is asked exactly once.
   const serverIdsByNode = new Map<string, string[]>();
-  for (const server of servers) {
-    const list = serverIdsByNode.get(server.nodeId) ?? [];
-    list.push(server.id);
-    serverIdsByNode.set(server.nodeId, list);
+  if (includeUsage) {
+    for (const server of servers) {
+      const list = serverIdsByNode.get(server.nodeId) ?? [];
+      list.push(server.id);
+      serverIdsByNode.set(server.nodeId, list);
+    }
   }
 
   const usageByServer = new Map<
@@ -1082,7 +1089,7 @@ export async function handleListAdminServers(request: Request): Promise<Response
   await Promise.all(
     [...serverIdsByNode].map(async ([nodeId, serverIds]) => {
       try {
-        for (const sample of await sampleNodeServers(nodeId, serverIds)) {
+        for (const sample of await sampleNodeServers(nodeId, serverIds, 5_000)) {
           usageByServer.set(sample.serverId, {
             cpuPercent: sample.cpuPercent,
             memoryUsageMb: sample.memoryUsageMb,

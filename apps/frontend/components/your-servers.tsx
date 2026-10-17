@@ -316,56 +316,64 @@ export function YourServers() {
     };
   }, []);
 
-  // Poll live resource samples for running servers so the tiles' CPU, memory,
-  // and disk meters reflect current usage rather than the zeros the list
-  // endpoint seeds. One batched request per tick regardless of how many servers
-  // are running: the endpoint resolves access to every id in one query and asks
-  // each node's agent exactly once. Stops re-arming once no servers are running.
+  // Batch by node so a dead agent cannot delay another node's meters. Metadata
+  // loads independently above, and each node updates its own tiles as it answers.
   //
   // The effect depends on a stable signature of WHICH servers are running, not
   // the live `servers` array. Otherwise each poll's state update would
   // re-trigger it and re-arm a fresh interval every tick.
-  const runningIds = servers
+  const runningKey = JSON.stringify(servers
     .filter((s) => s.status === "running")
-    .map((s) => s.id);
-  const runningKey = runningIds.join(",");
+    .map((s) => [s.nodeId, s.id]));
 
   React.useEffect(() => {
-    if (runningIds.length === 0) return;
-    // Re-resolve from the current key so the closure captures stable ids.
-    const ids = runningKey ? runningKey.split(",") : [];
+    const groups = new Map<string, string[]>();
+    for (const [nodeId, id] of JSON.parse(runningKey) as [string, string][]) {
+      const ids = groups.get(nodeId) ?? [];
+      ids.push(id);
+      groups.set(nodeId, ids);
+    }
 
     let cancelled = false;
-    const tick = async () => {
-      try {
-        const statsById = await getServersStatsBatch(ids);
-        if (cancelled || Object.keys(statsById).length === 0) return;
+    const controller = new AbortController();
+    const intervals: ReturnType<typeof setInterval>[] = [];
+    for (const nodeIds of groups.values()) {
+      // The endpoint accepts at most 50 ids. Large fleets still sample every
+      // tile, without making one node's response depend on another's.
+      for (let offset = 0; offset < nodeIds.length; offset += 50) {
+        const ids = nodeIds.slice(offset, offset + 50);
+        let inFlight = false;
+        const tick = async () => {
+          if (inFlight) return;
+          inFlight = true;
+          try {
+            const statsById = await getServersStatsBatch(ids, controller.signal);
+            if (cancelled) return;
+            setServers((prev) => prev.map((server) => {
+              const stats = statsById[server.id];
+              return stats ? {
+                ...server,
+                cpuPercent: Math.round(stats.cpuPercent),
+                memoryUsedMb: Math.round(stats.memoryUsageMb),
+                diskUsedMb: Math.round(stats.diskUsageMb),
+              } : server;
+            }));
+          } catch {
+            // Keep the last sample until this node answers again.
+          } finally {
+            inFlight = false;
+          }
+        };
 
-        setServers((prev) =>
-          prev.map((server) => {
-            const stats = statsById[server.id];
-            if (!stats) return server;
-            return {
-              ...server,
-              cpuPercent: Math.round(stats.cpuPercent),
-              memoryUsedMb: Math.round(stats.memoryUsageMb),
-              diskUsedMb: Math.round(stats.diskUsageMb),
-            };
-          }),
-        );
-      } catch {
-        // A dropped refresh is not worth surfacing. The next tick either
-        // succeeds or keeps failing quietly, as before.
+        void tick();
+        intervals.push(setInterval(tick, 5_000));
       }
-    };
-
-    void tick();
-    const interval = setInterval(tick, 5_000);
+    }
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      controller.abort();
+      intervals.forEach(clearInterval);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runningKey]);
 
   const running = servers.filter((s) => s.status === "running").length;
