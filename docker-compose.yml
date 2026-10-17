@@ -47,6 +47,8 @@ services:
       # Repo root: the workspace lockfile is what pins the install.
       context: .
       dockerfile: apps/frontend/Dockerfile
+      args:
+        PANEL_BUILD_COMMIT: ${PANEL_BUILD_COMMIT:-}
     restart: unless-stopped
     depends_on:
       postgres:

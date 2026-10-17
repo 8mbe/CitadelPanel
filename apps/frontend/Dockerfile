@@ -18,6 +18,8 @@ RUN bun install --frozen-lockfile
 FROM base AS builder
 COPY --from=deps /app ./
 COPY . .
+ARG PANEL_BUILD_COMMIT
+ENV PANEL_BUILD_COMMIT=${PANEL_BUILD_COMMIT}
 ENV NEXT_TELEMETRY_DISABLED=1
 # `config/env.ts` validates at import time and Next evaluates route modules
 # while collecting build metadata, so the build needs values that parse, not

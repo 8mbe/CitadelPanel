@@ -132,6 +132,24 @@ collecting build metadata, so the build sets throwaway `DATABASE_URL`,
 build, because the database clients are lazy, and runtime environment replaces
 all three. They are values that *parse*, not values that work.
 
+### Build revision
+
+The footer shows the panel build's short commit, with the full revision in its
+title. Local builds read Git HEAD automatically. Docker's context excludes
+`.git`, so the frontend accepts `PANEL_BUILD_COMMIT` as a build argument:
+
+```bash
+docker build -f apps/frontend/Dockerfile \
+  --build-arg PANEL_BUILD_COMMIT="$(git rev-parse HEAD)" -t citadel-panel .
+PANEL_BUILD_COMMIT="$(git rev-parse HEAD)" docker compose up -d --build
+```
+
+`bun run compose:up` supplies the current commit automatically. In a deployment
+platform or CI, set the build argument to the revision being deployed. Without
+it, the image still builds and the footer says `Build unknown`. The revision is
+compiled into the application, so setting a runtime environment variable cannot
+relabel an existing build. See [site-settings.md](site-settings.md).
+
 ## The node agent
 
 The agent is the only container with the Docker socket, and its token is

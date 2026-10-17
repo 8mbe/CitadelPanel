@@ -10,6 +10,17 @@ The admin surface is `components/admin/general-settings.tsx`
 
 ## Branding: the site name is not a constant
 
+The shared footer pairs the site name and year with `Build <short commit>`.
+`next.config.ts` reads Git HEAD, or `PANEL_BUILD_COMMIT` when supplied, and Next
+inlines it into both server and browser bundles. This identifies the code that
+was built even if the checkout or runtime environment later changes. The full
+revision is available in the label's title. A build without Git or a supplied
+revision shows `Build unknown` rather than guessing. This is build metadata,
+so it does not belong in the operator's runtime branding settings.
+
+Container builds receive the revision as a build argument because `.git` is
+excluded from the image context. See [docker.md](docker.md#build-revision).
+
 `branding` holds two strings: `siteName` and `tagline`. `siteName` defaults to
 "CitadelPanel" and everything user-facing reads it from here:
 

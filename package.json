@@ -16,7 +16,7 @@
     "migrate": "bun run --cwd apps/frontend migrate",
     "setup-db": "bun run --cwd apps/backend setup-db",
     "rescue": "bun run --cwd apps/frontend rescue",
-    "compose:up": "docker compose up -d --build",
+    "compose:up": "PANEL_BUILD_COMMIT=$(git rev-parse HEAD) docker compose up -d --build",
     "compose:down": "docker compose down"
   }
 }
